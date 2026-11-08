@@ -16,11 +16,12 @@ final class LyricsEditorTests: XCTestCase {
         editor.perform(NSSelectorFromString("addClip"))
         XCTAssertEqual(editor.track.clips.count, 1)
         XCTAssertEqual(editor.track.clips.first?.start, 1)
+        seeks.removeAll()
         var playbackTime = 1.5
         editor.onCapturePlaybackTime = { playbackTime }
         editor.perform(NSSelectorFromString("setStartFromPlayback"))
         XCTAssertEqual(editor.track.clips.first?.start, 1.5)
-        XCTAssertEqual(editor.track.clips.first?.end, 3)
+        XCTAssertEqual(editor.track.clips.first?.end, 3.5)
         playbackTime = 4.25
         editor.perform(NSSelectorFromString("setEndFromPlayback"))
         XCTAssertEqual(editor.track.clips.first?.end, 4.25)
@@ -63,7 +64,7 @@ final class LyricsEditorTests: XCTestCase {
         XCTAssertEqual(start.stringValue, "1.25", "入力中に表示を書き換えない")
         end.stringValue = ""
         editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: end))
-        XCTAssertEqual(editor.track.clips.first?.end, 3)
+        XCTAssertEqual(editor.track.clips.first?.end, 3.25)
         XCTAssertEqual(saved.count, 2)
         end.stringValue = "4.5"
         editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: end))

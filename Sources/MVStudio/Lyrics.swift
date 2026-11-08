@@ -22,6 +22,7 @@ struct LyricClip: Codable, Sendable, Equatable, Identifiable {
     var start: Double
     var end: Double
     var text: String
+    var predecessorID: UUID? = nil
 }
 
 struct LyricsTrack: Codable, Sendable, Equatable {
@@ -38,15 +39,18 @@ struct LyricsTrack: Codable, Sendable, Equatable {
             throw StudioError.message("縁取りの設定が不正です。")
         }
         var previousEnd = 0.0
+        var previousID: UUID?
         var ids = Set<UUID>()
         for clip in clips {
             guard clip.start.isFinite, clip.end.isFinite, clip.start >= previousEnd,
                   clip.end - clip.start >= 1.0 / 30 - 1e-9,
                   duration.map({ clip.end <= $0 + 1e-9 }) ?? true,
-                  ids.insert(clip.id).inserted else {
+                  ids.insert(clip.id).inserted,
+                  clip.predecessorID == nil || (clip.predecessorID == previousID && abs(clip.start - previousEnd) < 1e-9) else {
                 throw StudioError.message("歌詞の区間は曲の範囲内で、重ならないように設定してください（最小1フレーム）。")
             }
             previousEnd = clip.end
+            previousID = clip.id
         }
     }
 }

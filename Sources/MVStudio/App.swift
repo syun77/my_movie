@@ -108,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             guard let self else { return }
             self.stopPlayback(); self.preview.lyrics = value; self.preview.needsDisplay = true; _ = self.saveProject()
         }
+        lyricsEditor.onPreview = { [weak self] value in
+            self?.preview.lyrics = value; self?.preview.needsDisplay = true
+        }
         lyricsEditor.onCapturePlaybackTime = { [weak self] in
             guard let self else { return 0 }
             self.stopPlayback()
@@ -301,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"
             return false
         }
+        lyricsEditor.cancelTimelineEdit()
         guard window.makeFirstResponder(nil) else { return false }
         readSceneSettings()
         guard saveProject() else { NSSound.beep(); return false }
