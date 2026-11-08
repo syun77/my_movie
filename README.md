@@ -52,3 +52,7 @@ swift test --disable-sandbox --cache-path /tmp/my_movie-spm-cache
 無音、逆相ステレオの1kHz帯域検出、拍と開始位置、補間、音声付きMP4生成・読み戻しをテストします。書き出しテストにはmacOSのメディアエンコーダへのアクセスが必要です。
 
 構成は `Sources/MVStudio`（UI、解析、共通描画、書出し）と `Tests/MVStudioTests` に分離しています。継続的な進捗は `PROGRESS.md` を参照してください。
+
+## タイムラインの設計
+
+次の段階として、歌詞テロップを時間軸に並べる機能を [タイムライン設計書](docs/TIMELINE.md) にまとめています。歌詞クリップ、時間編集、文字描画、自動保存、Undo、実装順序を定義しています。現時点では設計のみです。
