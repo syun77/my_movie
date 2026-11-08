@@ -5,16 +5,19 @@ struct ProjectFile: Codable {
     let audio: AssetReference
     let image: AssetReference?
     let settings: SceneSettings
+    let lyrics: LyricsTrack
 
-    init(audioURL: URL, imageURL: URL?, settings: SceneSettings, projectURL: URL) {
-        version = 1
+    init(audioURL: URL, imageURL: URL?, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), projectURL: URL) {
+        version = 2
         audio = AssetReference(url: audioURL, projectURL: projectURL)
         image = imageURL.map { AssetReference(url: $0, projectURL: projectURL) }
         self.settings = settings
+        self.lyrics = lyrics
     }
 
     func validate() throws {
-        guard version == 1 else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
+        try lyrics.validate()
+        guard version == 2 else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
               settings.beatOffset.isFinite, settings.beatOffset >= 0,
               settings.pulse.isFinite, (0...0.25).contains(settings.pulse) else {

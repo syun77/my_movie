@@ -7,6 +7,7 @@ final class PreviewView: NSView {
     var image: CGImage?
     var features: AudioFeatures?
     var settings = SceneSettings()
+    var lyrics = LyricsTrack()
     var time = 0.0
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -16,7 +17,7 @@ final class PreviewView: NSView {
         let size = CGSize(width: width, height: width * 9 / 16)
         context.saveGState()
         context.translateBy(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-        SceneRenderer.draw(in: context, size: size, image: image, features: features, settings: settings, time: time)
+        SceneRenderer.draw(in: context, size: size, image: image, features: features, settings: settings, time: time, lyrics: lyrics)
         context.restoreGState()
     }
 }
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var imageURL: URL?
     private var projectURL: URL?
     private let storage = ProjectStorage()
+    private let lyricsEditor = LyricsEditor()
     private var timer: Timer?
     private var analysisTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
@@ -53,9 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 960), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "MV Studio"
-        window.minSize = NSSize(width: 900, height: 650)
+        window.minSize = NSSize(width: 1000, height: 850)
         let root = NSStackView()
         root.orientation = .vertical
         root.spacing = 14
@@ -75,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         imageName.lineBreakMode = .byTruncatingMiddle
         audioName.lineBreakMode = .byTruncatingMiddle
         preview.translatesAutoresizingMaskIntoConstraints = false
-        preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         bpm.widthAnchor.constraint(equalToConstant: 64).isActive = true
         offset.widthAnchor.constraint(equalToConstant: 64).isActive = true
         pulse.widthAnchor.constraint(equalToConstant: 140).isActive = true
@@ -94,8 +96,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         progress.style = .bar; progress.isIndeterminate = false; progress.maxValue = 1
         progress.widthAnchor.constraint(equalToConstant: 180).isActive = true
         let output = row([export, NSTextField(labelWithString: "1280 × 720 · 30fps · H.264 / AAC"), progress, cancel])
-        for view in [title, subtitle, files, preview, options, transport, output, status] { root.addArrangedSubview(view) }
-        for view in [files, preview, options, transport, output, status] { view.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -48).isActive = true }
+        let lyricsView = lyricsEditor.view
+        lyricsEditor.onChange = { [weak self] value in
+            guard let self else { return }
+            self.stopPlayback(); self.preview.lyrics = value; self.preview.needsDisplay = true; _ = self.saveProject()
+        }
+        lyricsEditor.onSeek = { [weak self] time in
+            guard let self else { return }
+            self.stopPlayback(); self.seek.doubleValue = time; self.scrub()
+        }
+        for view in [title, subtitle, files, preview, options, transport, lyricsView, output, status] { root.addArrangedSubview(view) }
+        for view in [files, preview, options, transport, lyricsView, output, status] { view.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -48).isActive = true }
         controls = [imageButton, audioButton, bpm, offset, pulse, spectrum, play, seek, export]
         refreshControls()
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
@@ -149,7 +160,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         do {
             let project = try storage.read(from: url)
             loadAudio(at: project.audio.resolve(projectURL: url), projectURL: url, restoring: project)
-        } catch { showError(error) }
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.informativeText += "\n既存プロジェクトを残して新しく始める場合は、バックアップを作成してください。"
+            alert.addButton(withTitle: "キャンセル")
+            alert.addButton(withTitle: "バックアップして新規作成")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+            do {
+                let backup = url.appendingPathExtension(UUID().uuidString + ".backup")
+                try FileManager.default.moveItem(at: url, to: backup)
+                let audio = url.deletingPathExtension()
+                loadAudio(at: audio, projectURL: url, restoring: nil)
+            } catch { showError(error) }
+        }
     }
     private func loadAudio(at url: URL, projectURL: URL, restoring project: ProjectFile?) {
         stopPlayback(); setBusy(true); status.stringValue = "音声を解析しています…"; progress.isIndeterminate = true; progress.startAnimation(nil)
@@ -167,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     restoredImageURL = assetURL
                     do { restoredImage = try readImage(at: assetURL) } catch { imageError = error }
                 }
+                try project?.lyrics.validate(duration: features.duration)
                 player = loaded; audioURL = url; preview.features = features; preview.time = 0
                 self.projectURL = projectURL
                 if let project {
@@ -176,6 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
                     preview.image = restoredImage; imageURL = restoredImageURL
                     imageName.stringValue = "画像: " + (restoredImageURL?.lastPathComponent ?? "未選択")
                 }
+                preview.lyrics = project?.lyrics ?? LyricsTrack()
+                lyricsEditor.load(preview.lyrics); lyricsEditor.duration = features.duration
                 seek.maxValue = features.duration; seek.doubleValue = 0; updateTime()
                 audioName.stringValue = "音声: " + url.lastPathComponent
                 if saveProject(), let imageError { showError(imageError) }
@@ -187,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     @discardableResult private func saveProject() -> Bool {
         guard let audioURL, let projectURL else { return true }
         do {
-            try storage.save(ProjectFile(audioURL: audioURL, imageURL: imageURL, settings: preview.settings, projectURL: projectURL), to: projectURL)
+            try storage.save(ProjectFile(audioURL: audioURL, imageURL: imageURL, settings: preview.settings, lyrics: preview.lyrics, projectURL: projectURL), to: projectURL)
             status.stringValue = "自動保存済み: " + projectURL.lastPathComponent
             return true
         } catch {
@@ -218,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         play.title = player.isPlaying ? "一時停止" : "再生"; updateTime()
     }
     private func updateTime() {
+        lyricsEditor.currentTime = preview.time
         func format(_ value: Double) -> String { String(format: "%d:%02d", Int(value) / 60, Int(value) % 60) }
         timeLabel.stringValue = "\(format(preview.time)) / \(format(preview.features?.duration ?? 0))"
     }
@@ -229,10 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         stopPlayback(); setBusy(true); progress.doubleValue = 0; status.stringValue = "動画を書き出しています…"
         let token = ExportCancellation(); cancellation = token
         let settings = preview.settings
+        let lyrics = preview.lyrics
         let progressIndicator = progress
         exportTask = Task {
             do {
-                try await VideoExporter.export(image: image, audioURL: audioURL, features: features, settings: settings, destination: destination, cancellation: token) { value in
+                try await VideoExporter.export(image: image, audioURL: audioURL, features: features, settings: settings, lyrics: lyrics, destination: destination, cancellation: token) { value in
                     Task { @MainActor in progressIndicator.doubleValue = value }
                 }
                 status.stringValue = "書き出し完了: " + destination.lastPathComponent
@@ -245,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     @objc private func cancelWork() { analysisTask?.cancel(); cancellation?.cancel() }
     private func setBusy(_ value: Bool) { busy = value; cancel.isHidden = !value; refreshControls() }
     private func refreshControls() {
+        lyricsEditor.setAvailable(!busy && player != nil)
         for control in controls { control.isEnabled = !busy }
         play.isEnabled = !busy && player != nil; seek.isEnabled = !busy && player != nil
         export.isEnabled = !busy && preview.image != nil && preview.features != nil

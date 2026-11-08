@@ -40,7 +40,8 @@ final class StudioTests: XCTestCase {
         let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         let output = directory.appendingPathComponent("result.mp4")
-        try await VideoExporter.export(image: context.makeImage()!, audioURL: url, features: features, settings: SceneSettings(), destination: output, cancellation: ExportCancellation(), progress: { _ in })
+        let lyrics = LyricsTrack(clips: [LyricClip(start: 0, end: 1, text: "歌詞の縁取り")], outlineWidth: 6, outlineColor: LyricsColor(red: 0, green: 1, blue: 0))
+        try await VideoExporter.export(image: context.makeImage()!, audioURL: url, features: features, settings: SceneSettings(), lyrics: lyrics, destination: output, cancellation: ExportCancellation(), progress: { _ in })
         let asset = AVURLAsset(url: output)
         let duration = try await asset.load(.duration)
         let videos = try await asset.loadTracks(withMediaType: .video)
@@ -50,6 +51,11 @@ final class StudioTests: XCTestCase {
         let generator = AVAssetImageGenerator(asset: asset)
         let frame = try generator.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil)
         XCTAssertEqual(frame.width, 1280); XCTAssertEqual(frame.height, 720)
+        let decoded = CGContext(data: nil, width: 1280, height: 720, bitsPerComponent: 8, bytesPerRow: 1280 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        decoded.draw(frame, in: CGRect(x: 0, y: 0, width: 1280, height: 720))
+        let pixels = decoded.data!.assumingMemoryBound(to: UInt8.self)
+        let greenCount = (0..<(1280 * 720)).filter { pixels[$0 * 4] < 100 && pixels[$0 * 4 + 1] > 160 && pixels[$0 * 4 + 2] < 100 }.count
+        XCTAssertGreaterThan(greenCount, 100, "書出し動画に緑の縁取りを保持")
         let token = ExportCancellation(); token.cancel()
         XCTAssertThrowsError(try token.check())
     }

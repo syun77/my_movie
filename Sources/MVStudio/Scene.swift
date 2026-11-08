@@ -29,7 +29,7 @@ struct AudioFeatures: Sendable {
 }
 
 enum SceneRenderer {
-    static func draw(in context: CGContext, size: CGSize, image: CGImage?, features: AudioFeatures?, settings: SceneSettings, time: Double) {
+    static func draw(in context: CGContext, size: CGSize, image: CGImage?, features: AudioFeatures?, settings: SceneSettings, time: Double, lyrics: LyricsTrack = LyricsTrack()) {
         let rect = CGRect(origin: .zero, size: size)
         context.setFillColor(CGColor(red: 0.025, green: 0.035, blue: 0.065, alpha: 1))
         context.fill(rect)
@@ -44,16 +44,18 @@ enum SceneRenderer {
             context.draw(image, in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height))
             context.restoreGState()
         }
-        guard settings.spectrum, let features else { return }
-        let bands = features.bands(at: time)
-        let margin = size.width * 0.075
-        let stride = (size.width - margin * 2) / CGFloat(bands.count)
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.5))
-        context.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height * 0.28))
-        for (index, value) in bands.enumerated() {
-            let height = max(2, CGFloat(value) * size.height * 0.2)
-            context.setFillColor(CGColor(red: 0.2, green: 0.85, blue: 0.95, alpha: 0.9))
-            context.fill(CGRect(x: margin + CGFloat(index) * stride, y: size.height * 0.04, width: stride * 0.72, height: height))
+        if settings.spectrum, let features {
+            let bands = features.bands(at: time)
+            let margin = size.width * 0.075
+            let stride = (size.width - margin * 2) / CGFloat(bands.count)
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.5))
+            context.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height * 0.28))
+            for (index, value) in bands.enumerated() {
+                let height = max(2, CGFloat(value) * size.height * 0.2)
+                context.setFillColor(CGColor(red: 0.2, green: 0.85, blue: 0.95, alpha: 0.9))
+                context.fill(CGRect(x: margin + CGFloat(index) * stride, y: size.height * 0.04, width: stride * 0.72, height: height))
+            }
         }
+        LyricsRenderer.draw(in: context, size: size, track: lyrics, time: time)
     }
 }
