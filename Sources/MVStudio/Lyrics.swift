@@ -43,9 +43,8 @@ struct LyricsTrack: Codable, Sendable, Equatable {
             guard clip.start.isFinite, clip.end.isFinite, clip.start >= previousEnd,
                   clip.end - clip.start >= 1.0 / 30 - 1e-9,
                   duration.map({ clip.end <= $0 + 1e-9 }) ?? true,
-                  !clip.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   ids.insert(clip.id).inserted else {
-                throw StudioError.message("歌詞の区間は曲の範囲内で、重ならないように設定してください（最小1フレーム）。本文は空にできません。")
+                throw StudioError.message("歌詞の区間は曲の範囲内で、重ならないように設定してください（最小1フレーム）。")
             }
             previousEnd = clip.end
         }

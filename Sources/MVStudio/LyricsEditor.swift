@@ -1,9 +1,10 @@
 import AppKit
 
 @MainActor
-final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate, NSTextFieldDelegate {
     var onChange: ((LyricsTrack) -> Void)?
     var onSeek: ((Double) -> Void)?
+    var onCapturePlaybackTime: (() -> Double)?
     var currentTime = 0.0
     var duration = 0.0
     private(set) var track = LyricsTrack()
@@ -17,6 +18,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private let message = NSTextField(labelWithString: "音声を読み込んで歌詞を追加してください")
     private var editControls: [NSControl] = []
     private var available = false
+    private var refreshingSelection = false
 
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 8
@@ -36,6 +38,11 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         table.addTableColumn(column); table.delegate = self; table.dataSource = self
         let list = NSScrollView(); list.documentView = table; list.hasVerticalScroller = true
         list.widthAnchor.constraint(equalToConstant: 350).isActive = true
+        body.identifier = NSUserInterfaceItemIdentifier("lyrics.body")
+        start.identifier = NSUserInterfaceItemIdentifier("lyrics.start")
+        end.identifier = NSUserInterfaceItemIdentifier("lyrics.end")
+        body.delegate = self
+        start.delegate = self; end.delegate = self
         body.font = .systemFont(ofSize: 14); body.isRichText = false
         body.isAutomaticQuoteSubstitutionEnabled = false
         let textScroll = NSScrollView(); textScroll.documentView = body; textScroll.hasVerticalScroller = true
@@ -43,16 +50,18 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         body.autoresizingMask = [.width]; body.textContainer?.widthTracksTextView = true
         start.widthAnchor.constraint(equalToConstant: 65).isActive = true
         end.widthAnchor.constraint(equalToConstant: 65).isActive = true
-        let apply = NSButton(title: "歌詞を適用", target: self, action: #selector(applyClip))
-        let timing = NSStackView(views: [NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end, apply])
+        let timing = NSStackView(views: [NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end])
         timing.spacing = 8
-        let detail = NSStackView(views: [textScroll, timing]); detail.orientation = .vertical; detail.spacing = 6
+        let setStart = NSButton(title: "現在位置を開始に", target: self, action: #selector(setStartFromPlayback))
+        let setEnd = NSButton(title: "現在位置を終了に", target: self, action: #selector(setEndFromPlayback))
+        let capture = NSStackView(views: [setStart, setEnd]); capture.spacing = 8
+        let detail = NSStackView(views: [textScroll, timing, capture]); detail.orientation = .vertical; detail.spacing = 6
         textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
         let content = NSStackView(views: [list, detail]); content.spacing = 12; content.distribution = .fill
-        content.heightAnchor.constraint(equalToConstant: 105).isActive = true
+        content.heightAnchor.constraint(equalToConstant: 135).isActive = true
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor
         for child in [style, content, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
-        editControls = [add, remove, apply, start, end, color, width]
+        editControls = [add, remove, start, end, color, width, setStart, setEnd]
         setAvailable(false)
     }
 
@@ -75,17 +84,26 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         return label
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !refreshingSelection else { return }
+        displaySelection()
+        guard track.clips.indices.contains(table.selectedRow) else { return }
+        onSeek?(track.clips[table.selectedRow].start)
+    }
+    private func displaySelection() {
         guard track.clips.indices.contains(table.selectedRow) else { return }
         let clip = track.clips[table.selectedRow]
         body.string = clip.text; start.stringValue = String(format: "%.3f", clip.start); end.stringValue = String(format: "%.3f", clip.end)
-        onSeek?(clip.start)
     }
-    private func commit(_ value: LyricsTrack, selectedID: UUID?) {
+    private func commit(_ value: LyricsTrack, selectedID: UUID?, refreshEditor: Bool = true) {
         do {
             try value.validate(duration: duration)
+            message.stringValue = "変更は自動で反映・保存されます。"
+            guard value != track else { return }
+            refreshingSelection = true
+            defer { refreshingSelection = false }
             track = value; table.reloadData()
             if let id = selectedID, let index = track.clips.firstIndex(where: { $0.id == id }) { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
-            message.stringValue = "歌詞を反映しました。文字・時刻の編集後は「歌詞を適用」を押してください。"
+            if refreshEditor { displaySelection() }
             onChange?(track)
         } catch { message.stringValue = error.localizedDescription }
     }
@@ -105,13 +123,36 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         var value = track; value.clips.remove(at: table.selectedRow)
         commit(value, selectedID: nil); body.string = ""
     }
-    @objc private func applyClip() {
-        guard available, track.clips.indices.contains(table.selectedRow) else { return }
+    @objc private func setStartFromPlayback() { capturePlaybackTime(isStart: true) }
+    @objc private func setEndFromPlayback() { capturePlaybackTime(isStart: false) }
+    private func capturePlaybackTime(isStart: Bool) {
+        guard available, track.clips.indices.contains(table.selectedRow) else {
+            message.stringValue = "設定する歌詞を一覧から選択してください。"
+            return
+        }
+        let time = onCapturePlaybackTime?() ?? currentTime
+        guard time.isFinite else { return }
+        if isStart { start.doubleValue = time } else { end.doubleValue = time }
+        applyEditorChanges()
+    }
+    func textDidChange(_ notification: Notification) {
+        guard !body.hasMarkedText() else { return }
+        applyEditorChanges()
+    }
+    func textDidEndEditing(_ notification: Notification) { applyEditorChanges() }
+    func controlTextDidChange(_ obj: Notification) {
+        if let field = obj.object as? NSTextField,
+           let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
+        applyEditorChanges()
+    }
+    func controlTextDidEndEditing(_ obj: Notification) { applyEditorChanges() }
+    private func applyEditorChanges() {
+        guard available, !refreshingSelection, !body.hasMarkedText(), track.clips.indices.contains(table.selectedRow) else { return }
         guard let begin = Double(start.stringValue), let finish = Double(end.stringValue) else { message.stringValue = "開始・終了を秒数で入力してください。"; return }
         var value = track
         let id = value.clips[table.selectedRow].id
         value.clips[table.selectedRow] = LyricClip(id: id, start: begin, end: finish, text: body.string)
-        value.clips.sort { $0.start < $1.start }; commit(value, selectedID: id)
+        value.clips.sort { $0.start < $1.start }; commit(value, selectedID: id, refreshEditor: false)
     }
     private func updateWidthLabel() { widthLabel.stringValue = String(format: "%.1f px", track.outlineWidth) }
     @objc private func changeStyle() {

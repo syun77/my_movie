@@ -1,7 +1,7 @@
 # 作業進捗
 
-- 最終更新: 2026-11-08 21:26 JST
-- 現在の状態: 歌詞テロップの縁取り設定と、必要な歌詞の一覧編集・描画・保存を実装済み。テスト成功、最新app生成済み。
+- 最終更新: 2026-11-08 21:39 JST
+- 現在の状態: 終了時クラッシュを修正。回帰テスト9件成功、実アプリの閉じる操作確認、最新app生成済み。
 
 ## 目的・ユーザーの要件
 
@@ -9,6 +9,35 @@
 - 拍に同期したアニメーションと帯域ごとの可視化を簡単に利用できること。
 - 今回は設計を基に機能を絞ったツールを作成する。
 - コード修正後は追加指示なしで起動用appを生成する。
+
+## 終了時クラッシュの修正
+
+- ユーザー添付レポート: 最後のウィンドウを閉じた後、applicationShouldTerminate内のmakeFirstResponderでEXC_BAD_ACCESS。NSWindowの自動解放とSwift側の所有の競合を確認。
+- `App.swift`: isReleasedWhenClosed=falseを設定。NSWindowDelegateで閉じる前に保存/処理中チェック。共通prepareToCloseへ集約し、SceneSettingsのUI読取と保存を分離。終了時はタイマー無効化・音声停止。テスト用にProjectStorageを注入可能とし、ユーザーの復元設定とテストを分離。
+- `AppLifecycleTests.swift`: 実ウィンドウを閉じautoreleasepool後に保持を確認し、終了判定を呼ぶ回帰テストを追加。
+- 全9テスト成功（`/tmp/my_movie-exit-test.log`）。releaseビルド成功（`/tmp/my_movie-exit-release.log`）。`dist/MV Studio.app`更新済み。
+- 別bundle IDの `/tmp/MV Exit Check.app` をCUAで起動・閉じるボタンで終了し、プロセス消失を確認。検証後のDiagnosticReportsに新規MVStudioクラッシュなし（最新はユーザー報告時の21:36:51）。既存ユーザーアプリは操作していない。
+- 整理フェーズで終了前の状態確認を共通化し、二重の明示的保存を除去。`git diff --check`成功。実行中のテスト/ビルドなし。
+
+## 歌詞の自動反映
+
+- ユーザー要件: 「歌詞を適用」を押さず編集を反映する。
+- `LyricsEditor.swift`: 適用ボタンを削除。本文・開始/終了のdelegate通知から検証・即時反映・自動保存を実行。IME変換中は保留。確定モデル更新時に本文/時刻欄を書き換えず、カーソルと入力文字列を維持。
+- `Lyrics.swift`: 全文削除を反映できるよう空本文を許可。区間検証は維持。
+- `LyricsEditorTests.swift`: 自動反映・全文削除・カーソル維持・時刻空欄からの復帰・IME変換保留を追加検証。
+- 整理フェーズ: 現在位置取込と自動反映を同じ検証経路へ集約。同内容の保存通知を抑制し、無効入力から元の値に戻した際のエラー表示も解除。
+- 全8テスト成功（`/tmp/my_movie-auto-lyrics-test.log`）。最終整理後の編集テスト2件も成功（`/tmp/my_movie-auto-lyrics-final-test.log`）。最新版appビルドログは `/tmp/my_movie-auto-lyrics-release.log`。
+- README、設計書、AGENTSを更新。`git diff --check`を確認。GUIでの実入力は今回未検証。
+
+## 再生位置からの区間指定
+
+- 要件: テロップ表示の開始・終了を現在の再生位置から指定可能にする。
+- `LyricsEditor.swift`: 「現在位置を開始に」「現在位置を終了に」を追加。選択した歌詞へ編集欄の本文・区間とともに即時適用し、既存の検証/保存コールバックを利用。不正区間は保存しない。
+- `App.swift`: ボタン押下時に音声を一時停止し、AVAudioPlayerの現在位置を取得してプレビューと再生ヘッドを同期。
+- 整理フェーズ: 開始/終了の取込処理を共通化。一覧の確定時再選択とユーザー選択を分離し、適用時に開始へ戻る意図しないシークを解消。
+- `LyricsEditorTests.swift`: 開始/終了設定、即時変更通知、逆転/曲末超過の拒否、編集中無効状態、確定時にシークしないことを検証。
+- README、タイムライン設計、AGENTSを更新。テスト7件成功（`/tmp/my_movie-capture-test.log`）、releaseビルド成功（`/tmp/my_movie-capture-release.log`）。`git diff --check`成功。
+- 最新 `dist/MV Studio.app` を生成。実行中のビルド/テストなし。今回の追加ボタンはAppKitコントローラのテストで確認し、GUIでの実音声の再生操作は未検証。
 
 ## 歌詞・縁取りの実装
 
@@ -78,6 +107,6 @@
 
 ## 次に実行する具体的な手順
 
-- 更新した `dist/MV Studio.app` を再起動し、音声を読込後「＋歌詞」→本文/時刻を「歌詞を適用」→縁取り色/太さの操作を試す。
+- 更新した `dist/MV Studio.app` を使い、ユーザー素材で編集した後の終了と次回の復元を確認する。
 - ドラッグ式タイムライン、tickモデル、Undo、枠超過警告は今後の実装対象。現状の本文は枠に入り切らない場合に末尾が表示されないため、短いフレーズを使う。
 - 旧version 1プロジェクトの設定自動移行は未対応。新規作成時の別名バックアップを利用する。

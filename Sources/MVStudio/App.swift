@@ -23,8 +23,8 @@ final class PreviewView: NSView {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
-    private var window: NSWindow!
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, NSWindowDelegate {
+    private(set) var window: NSWindow!
     private let preview = PreviewView()
     private let status = NSTextField(labelWithString: "画像と音声を読み込んでください")
     private let imageName = NSTextField(labelWithString: "画像: 未選択")
@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var audioURL: URL?
     private var imageURL: URL?
     private var projectURL: URL?
-    private let storage = ProjectStorage()
+    private let storage: ProjectStorage
     private let lyricsEditor = LyricsEditor()
     private var timer: Timer?
     private var analysisTask: Task<Void, Never>?
@@ -52,10 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var busy = false
     private var controls = [NSControl]()
 
+    init(storage: ProjectStorage = ProjectStorage()) {
+        self.storage = storage
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 960), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         window.title = "MV Studio"
         window.minSize = NSSize(width: 1000, height: 850)
         let root = NSStackView()
@@ -100,6 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         lyricsEditor.onChange = { [weak self] value in
             guard let self else { return }
             self.stopPlayback(); self.preview.lyrics = value; self.preview.needsDisplay = true; _ = self.saveProject()
+        }
+        lyricsEditor.onCapturePlaybackTime = { [weak self] in
+            guard let self else { return 0 }
+            self.stopPlayback()
+            let time = self.player?.currentTime ?? self.preview.time
+            self.seek.doubleValue = time; self.scrub()
+            return time
         }
         lyricsEditor.onSeek = { [weak self] time in
             guard let self else { return }
@@ -223,13 +237,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     }
     func controlTextDidEndEditing(_ obj: Notification) { updateSettings() }
     @objc private func updateSettings() {
+        readSceneSettings()
+        _ = saveProject()
+    }
+    private func readSceneSettings() {
         let bpmValue = Double(bpm.stringValue) ?? 120
         let offsetValue = Double(offset.stringValue) ?? 0
         preview.settings = SceneSettings(bpm: bpmValue.isFinite ? min(300, max(20, bpmValue)) : 120, beatOffset: offsetValue.isFinite ? max(0, offsetValue) : 0, pulse: pulse.doubleValue / 100, spectrum: spectrum.state == .on)
         bpm.stringValue = String(format: "%.1f", preview.settings.bpm)
         offset.stringValue = String(format: "%.2f", preview.settings.beatOffset)
         preview.needsDisplay = true
-        _ = saveProject()
     }
     @objc private func togglePlay() {
         guard let player else { return }
@@ -279,12 +296,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         export.isEnabled = !busy && preview.image != nil && preview.features != nil
     }
     private func showError(_ error: Error) { status.stringValue = "エラー: " + error.localizedDescription; let alert = NSAlert(error: error); alert.beginSheetModal(for: window) }
+    private func prepareToClose() -> Bool {
+        guard !busy else {
+            NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"
+            return false
+        }
+        guard window.makeFirstResponder(nil) else { return false }
+        readSceneSettings()
+        guard saveProject() else { NSSound.beep(); return false }
+        return true
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { prepareToClose() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if busy { NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"; return .terminateCancel }
-        window.makeFirstResponder(nil)
-        updateSettings()
-        guard saveProject() else { NSSound.beep(); return .terminateCancel }
-        return .terminateNow
+        prepareToClose() ? .terminateNow : .terminateCancel
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate(); timer = nil
+        player?.stop()
     }
 }
