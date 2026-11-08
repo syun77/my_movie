@@ -22,7 +22,7 @@ final class PreviewView: NSView {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     private var window: NSWindow!
     private let preview = PreviewView()
     private let status = NSTextField(labelWithString: "画像と音声を読み込んでください")
@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let progress = NSProgressIndicator()
     private var player: AVAudioPlayer?
     private var audioURL: URL?
+    private var imageURL: URL?
+    private var projectURL: URL?
+    private let storage = ProjectStorage()
     private var timer: Timer?
     private var analysisTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
@@ -76,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bpm.widthAnchor.constraint(equalToConstant: 64).isActive = true
         offset.widthAnchor.constraint(equalToConstant: 64).isActive = true
         pulse.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        bpm.delegate = self; offset.delegate = self
         spectrum.state = .on
         for control in [bpm, offset, pulse, spectrum] as [NSControl] { control.target = self; control.action = #selector(updateSettings) }
         let options = row([NSTextField(labelWithString: "BPM"), bpm, NSTextField(labelWithString: "拍開始（秒）"), offset, NSTextField(labelWithString: "拡大の強さ"), pulse, spectrum])
@@ -98,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.tick() }
         }
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        if let url = storage.lastProjectURL { openProject(at: url) }
     }
 
     private func row(_ views: [NSView]) -> NSStackView { let stack = NSStackView(views: views); stack.spacing = 12; stack.alignment = .centerY; return stack }
@@ -115,12 +120,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = NSOpenPanel(); panel.allowedContentTypes = types; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
         return panel.runModal() == .OK ? panel.url : nil
     }
+    private func readImage(at url: URL) throws -> CGImage {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw StudioError.message("画像を読み込めません: " + url.lastPathComponent)
+        }
+        return image
+    }
     @objc private func importImage() {
-        guard let url = choose([.png, .jpeg, .tiff]), let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
-        preview.image = image; imageName.stringValue = "画像: " + url.lastPathComponent; preview.needsDisplay = true; refreshControls()
+        guard let url = choose([.png, .jpeg, .tiff]) else { return }
+        do {
+            preview.image = try readImage(at: url); imageURL = url
+            imageName.stringValue = "画像: " + url.lastPathComponent
+            preview.needsDisplay = true; refreshControls(); _ = saveProject()
+        } catch { showError(error) }
     }
     @objc private func importAudio() {
-        guard let url = choose([.audio]) else { return }
+        window.makeFirstResponder(nil)
+        guard saveProject(), let url = choose([.audio]) else { return }
+        let project = ProjectStorage.projectURL(for: url)
+        if FileManager.default.fileExists(atPath: project.path) {
+            openProject(at: project)
+        } else {
+            loadAudio(at: url, projectURL: project, restoring: nil)
+        }
+    }
+    private func openProject(at url: URL) {
+        do {
+            let project = try storage.read(from: url)
+            loadAudio(at: project.audio.resolve(projectURL: url), projectURL: url, restoring: project)
+        } catch { showError(error) }
+    }
+    private func loadAudio(at url: URL, projectURL: URL, restoring project: ProjectFile?) {
         stopPlayback(); setBusy(true); status.stringValue = "音声を解析しています…"; progress.isIndeterminate = true; progress.startAnimation(nil)
         analysisTask = Task {
             do {
@@ -128,15 +159,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let features = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
                 try Task.checkCancellation()
                 let loaded = try AVAudioPlayer(contentsOf: url); loaded.prepareToPlay()
+                var restoredImage: CGImage?
+                var restoredImageURL: URL?
+                var imageError: Error?
+                if let reference = project?.image {
+                    let assetURL = reference.resolve(projectURL: projectURL)
+                    restoredImageURL = assetURL
+                    do { restoredImage = try readImage(at: assetURL) } catch { imageError = error }
+                }
                 player = loaded; audioURL = url; preview.features = features; preview.time = 0
-                seek.maxValue = features.duration; seek.doubleValue = 0
+                self.projectURL = projectURL
+                if let project {
+                    preview.settings = project.settings
+                    bpm.doubleValue = project.settings.bpm; offset.doubleValue = project.settings.beatOffset
+                    pulse.doubleValue = project.settings.pulse * 100; spectrum.state = project.settings.spectrum ? .on : .off
+                    preview.image = restoredImage; imageURL = restoredImageURL
+                    imageName.stringValue = "画像: " + (restoredImageURL?.lastPathComponent ?? "未選択")
+                }
+                seek.maxValue = features.duration; seek.doubleValue = 0; updateTime()
                 audioName.stringValue = "音声: " + url.lastPathComponent
-                status.stringValue = "解析完了。BPMを合わせて再生してください。"
+                if saveProject(), let imageError { showError(imageError) }
             } catch is CancellationError { status.stringValue = "解析をキャンセルしました。" }
             catch { showError(error) }
             progress.stopAnimation(nil); progress.isIndeterminate = false; progress.doubleValue = 0; setBusy(false); preview.needsDisplay = true
         }
     }
+    @discardableResult private func saveProject() -> Bool {
+        guard let audioURL, let projectURL else { return true }
+        do {
+            try storage.save(ProjectFile(audioURL: audioURL, imageURL: imageURL, settings: preview.settings, projectURL: projectURL), to: projectURL)
+            status.stringValue = "自動保存済み: " + projectURL.lastPathComponent
+            return true
+        } catch {
+            status.stringValue = "自動保存に失敗しました: " + error.localizedDescription
+            return false
+        }
+    }
+    func controlTextDidEndEditing(_ obj: Notification) { updateSettings() }
     @objc private func updateSettings() {
         let bpmValue = Double(bpm.stringValue) ?? 120
         let offsetValue = Double(offset.stringValue) ?? 0
@@ -144,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bpm.stringValue = String(format: "%.1f", preview.settings.bpm)
         offset.stringValue = String(format: "%.2f", preview.settings.beatOffset)
         preview.needsDisplay = true
+        _ = saveProject()
     }
     @objc private func togglePlay() {
         guard let player else { return }
@@ -193,6 +253,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if busy { NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"; return .terminateCancel }
+        window.makeFirstResponder(nil)
+        updateSettings()
+        guard saveProject() else { NSSound.beep(); return .terminateCancel }
         return .terminateNow
     }
 }

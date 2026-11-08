@@ -64,3 +64,7 @@ fastlane/test_output
 # Local application bundle
 /dist/
 .swiftpm/
+
+# for macOS
+.DS_Store
+

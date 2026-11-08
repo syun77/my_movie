@@ -32,3 +32,4 @@
 - 実装設計と提案する初期仕様は `docs/ARCHITECTURE.md` に記録する。記載された提案値はユーザーの確定要件と区別し、実装で決定した内容へ更新する。
 - シンプル版はmacOS 14以降を対象とするSwift Package executable。`scripts/build-app.sh` で `dist/MV Studio.app` を生成する。Core Graphics共通描画、AVAudioPlayer再生、32帯域DFT解析、H.264映像と元音声の結合を実装している。
 - ビルドのモジュールキャッシュは書込可能な一時ディレクトリへ指定する。制限された環境ではエンコーダへのアクセスやdsymutilが失敗する場合がある。動画出力テストはmacOSメディアサービスへアクセスできる環境で実行する。
+- 自動保存は音声と同じフォルダの `<音声ファイル名>.mvproject`（JSON）。素材参照とSceneSettingsを保存し、UserDefaultsの`lastProjectURL`から起動時に復元する。素材コピーはせず、同一フォルダのみ相対参照。読み込みと設定の検証に失敗したプロジェクトは上書きしない。

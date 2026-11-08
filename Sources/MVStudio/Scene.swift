@@ -1,6 +1,6 @@
 import AppKit
 
-struct SceneSettings: Sendable {
+struct SceneSettings: Codable, Sendable {
     var bpm = 120.0
     var beatOffset = 0.0
     var pulse = 0.08
