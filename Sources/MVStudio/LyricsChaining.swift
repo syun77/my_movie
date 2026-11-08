@@ -1,18 +1,20 @@
 import Foundation
 
 extension LyricsTrack {
-    func adding(at time: Double, duration: Double) throws -> (track: LyricsTrack, clip: LyricClip) {
+    func adding(at time: Double, duration: Double, grid: TimelineSnapGrid? = nil) throws -> (track: LyricsTrack, clip: LyricClip) {
         guard time.isFinite, time >= 0, time < duration else {
             throw StudioError.message("曲の範囲内に再生位置を合わせてください。")
         }
         var parent = clips.first { $0.start <= time && time < $0.end }
         while let current = parent, let next = clips.first(where: { $0.predecessorID == current.id }) { parent = next }
-        let begin = parent?.end ?? time
+        let begin = try parent?.end ?? grid?.snap(time, within: 0...duration) ?? time
         let limit = clips.first(where: { $0.start >= begin && $0.id != parent?.id })?.start ?? duration
         guard min(limit, duration) - begin >= 1.0 / 30 - 1e-9 else {
             throw StudioError.message("テロップを追加する空き時間がありません。")
         }
-        let clip = LyricClip(start: begin, end: min(begin + 2, limit, duration), text: "歌詞を入力", predecessorID: parent?.id)
+        let maximumEnd = min(limit, duration)
+        let finish = try grid?.snap(min(begin + 2, maximumEnd), within: (begin + 1.0 / 30)...maximumEnd) ?? min(begin + 2, maximumEnd)
+        let clip = LyricClip(start: begin, end: finish, text: "歌詞を入力", predecessorID: parent?.id)
         var value = self
         value.clips.append(clip); value.clips.sort { $0.start < $1.start }
         try value.validate(duration: duration)
@@ -51,7 +53,7 @@ extension LyricsTrack {
         return value
     }
 
-    func dragging(id: UUID, part: TimelineDragPart, delta: Double, duration: Double) throws -> LyricsTrack {
+    func dragging(id: UUID, part: TimelineDragPart, delta: Double, duration: Double, grid: TimelineSnapGrid = TimelineSnapGrid()) throws -> LyricsTrack {
         try validate(duration: duration)
         guard delta.isFinite, let index = clips.firstIndex(where: { $0.id == id }) else {
             throw StudioError.message("テロップの移動量が不正です。")
@@ -73,7 +75,9 @@ extension LyricsTrack {
         case .end:
             lower = clip.start + minimumLength - clip.end; upper = limit - clips[tail].end
         }
-        let offset = max(lower, min(upper, (delta * 30).rounded() / 30))
+        let anchor = part == .end ? clip.end : clip.start
+        let target = try grid.snap(anchor + delta, within: (anchor + lower)...(anchor + upper))
+        let offset = target - anchor
         guard abs(offset) > 1e-9 else { return self }
         var value = self
         switch part {

@@ -3,42 +3,6 @@ import AppKit
 @testable import MVStudio
 
 final class LyricsEditorTests: XCTestCase {
-    @MainActor func testCapturePlaybackBoundariesAndRejectInvalidIntervals() {
-        let editor = LyricsEditor()
-        _ = editor.view
-        editor.duration = 10
-        editor.setAvailable(true)
-        editor.currentTime = 1
-        var saved: [LyricsTrack] = []
-        var seeks: [Double] = []
-        editor.onChange = { saved.append($0) }
-        editor.onSeek = { seeks.append($0) }
-        editor.perform(NSSelectorFromString("addClip"))
-        XCTAssertEqual(editor.track.clips.count, 1)
-        XCTAssertEqual(editor.track.clips.first?.start, 1)
-        seeks.removeAll()
-        var playbackTime = 1.5
-        editor.onCapturePlaybackTime = { playbackTime }
-        editor.perform(NSSelectorFromString("setStartFromPlayback"))
-        XCTAssertEqual(editor.track.clips.first?.start, 1.5)
-        XCTAssertEqual(editor.track.clips.first?.end, 3.5)
-        playbackTime = 4.25
-        editor.perform(NSSelectorFromString("setEndFromPlayback"))
-        XCTAssertEqual(editor.track.clips.first?.end, 4.25)
-        XCTAssertEqual(saved.count, 3)
-        XCTAssertTrue(seeks.isEmpty, "確定時に開始位置へシークしない")
-        playbackTime = 1
-        editor.perform(NSSelectorFromString("setEndFromPlayback"))
-        XCTAssertEqual(editor.track.clips.first?.end, 4.25)
-        XCTAssertEqual(saved.count, 3, "無効区間は保存しない")
-        playbackTime = 11
-        editor.perform(NSSelectorFromString("setEndFromPlayback"))
-        XCTAssertEqual(saved.count, 3)
-        playbackTime = 5
-        editor.setAvailable(false)
-        editor.perform(NSSelectorFromString("setEndFromPlayback"))
-        XCTAssertEqual(saved.count, 3)
-    }
     @MainActor func testAutomaticTextAndTimeChangesPreserveEditingState() throws {
         let editor = LyricsEditor()
         _ = editor.view

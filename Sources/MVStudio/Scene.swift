@@ -1,16 +1,9 @@
 import AppKit
 
-struct SceneSettings: Codable, Sendable {
+struct SceneSettings: Codable, Sendable, Equatable {
     var bpm = 120.0
     var beatOffset = 0.0
-    var pulse = 0.08
     var spectrum = true
-
-    func scale(at time: Double) -> Double {
-        guard time >= beatOffset, bpm > 0 else { return 1 }
-        let phase = (time - beatOffset).truncatingRemainder(dividingBy: 60 / bpm)
-        return 1 + pulse * exp(-phase * 12)
-    }
 }
 
 struct AudioFeatures: Sendable {
@@ -29,15 +22,15 @@ struct AudioFeatures: Sendable {
 }
 
 enum SceneRenderer {
-    static func draw(in context: CGContext, size: CGSize, image: CGImage?, features: AudioFeatures?, settings: SceneSettings, time: Double, lyrics: LyricsTrack = LyricsTrack()) {
+    static func draw(in context: CGContext, size: CGSize, images: [ImageRenderLayer] = [], features: AudioFeatures?, settings: SceneSettings, time: Double, lyrics: LyricsTrack = LyricsTrack()) {
         let rect = CGRect(origin: .zero, size: size)
         context.setFillColor(CGColor(red: 0.025, green: 0.035, blue: 0.065, alpha: 1))
         context.fill(rect)
-        if let image {
+        for layer in images where layer.clip.start <= time && time < layer.clip.end {
+            let image = layer.image
             let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
-            let scale = fit * settings.scale(at: time)
-            let width = CGFloat(image.width) * scale
-            let height = CGFloat(image.height) * scale
+            let scale = fit * layer.clip.scale(at: time, settings: settings)
+            let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
             context.saveGState()
             context.clip(to: rect)
             context.interpolationQuality = .high

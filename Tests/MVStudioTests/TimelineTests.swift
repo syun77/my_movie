@@ -34,7 +34,7 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(leftTrim.clips[1].end, 5)
         XCTAssertNil(leftTrim.clips[1].predecessorID)
         let minimum = try track.dragging(id: id, part: .end, delta: -100, duration: 20)
-        XCTAssertEqual(minimum.clips[0].end - minimum.clips[0].start, 1.0 / 30, accuracy: 1e-9)
+        XCTAssertEqual(minimum.clips[0].end - minimum.clips[0].start, 0.125, accuracy: 1e-9)
         let songEnd = try track.dragging(id: track.clips[2].id, part: .move, delta: 100, duration: 20)
         XCTAssertEqual(songEnd.clips.last?.end, 20)
         XCTAssertEqual(try track.dragging(id: id, part: .move, delta: 0.001, duration: 20), track)
@@ -44,7 +44,7 @@ final class TimelineTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 112), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         defer { window.close() }
-        let view = LyricsTimelineView(frame: NSRect(x: 0, y: 0, width: 1000, height: 112))
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 1000, height: 112))
         window.contentView = view
         view.track = try sample(); view.duration = 20; view.currentTime = 4; view.isEnabled = true
         var commits = [LyricsTrack](); var previews = [LyricsTrack](); var begins = 0
@@ -55,7 +55,7 @@ final class TimelineTests: XCTestCase {
             NSEvent.mouseEvent(with: type, location: view.convert(NSPoint(x: x, y: 55), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         }
         let geometry = view.geometry
-        let down = geometry.x(at: 2), target = geometry.x(at: 3)
+        let down = view.x(at: 2), target = view.x(at: 3)
         view.mouseDown(with: event(.leftMouseDown, down))
         view.currentTime = 15
         XCTAssertEqual(view.geometry.origin, geometry.origin, "ドラッグ中は表示範囲を固定")
@@ -67,13 +67,13 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(view.track.clips[1].start, 4)
         view.currentTime = 4
         let nextGeometry = view.geometry
-        view.mouseDown(with: event(.leftMouseDown, nextGeometry.x(at: 3)))
-        view.mouseDragged(with: event(.leftMouseDragged, nextGeometry.x(at: 4)))
+        view.mouseDown(with: event(.leftMouseDown, TimelineView.gutter + nextGeometry.x(at: 3)))
+        view.mouseDragged(with: event(.leftMouseDragged, TimelineView.gutter + nextGeometry.x(at: 4)))
         let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
         view.keyDown(with: escape)
         XCTAssertEqual(commits.count, 1)
         XCTAssertEqual(previews.last, view.track)
-        view.mouseUp(with: event(.leftMouseUp, nextGeometry.x(at: 4)))
+        view.mouseUp(with: event(.leftMouseUp, TimelineView.gutter + nextGeometry.x(at: 4)))
         XCTAssertEqual(commits.count, 1)
         if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)

@@ -2,16 +2,17 @@ import AppKit
 
 @MainActor
 final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextViewDelegate, NSTextFieldDelegate {
+    var onBeginTextEditing: (() -> Void)?
+    var onEndTextEditing: (() -> Void)?
     var onChange: ((LyricsTrack) -> Void)?
     var onPreview: ((LyricsTrack) -> Void)?
     var onSeek: ((Double) -> Void)?
     var onCapturePlaybackTime: (() -> Double)?
+    var snapGrid = TimelineSnapGrid() { didSet { timeline.snapGrid = snapGrid } }
     var currentTime = 0.0 { didSet { timeline.currentTime = currentTime } }
     var duration = 0.0 { didSet { timeline.duration = duration } }
     private(set) var track = LyricsTrack()
-    private let timeline = LyricsTimelineView()
-    private let zoom = NSSlider(value: 12, minValue: 2, maxValue: 30, target: nil, action: nil)
-    private let zoomLabel = NSTextField(labelWithString: "12秒")
+    let timeline = TimelineView()
     private let table = NSTableView()
     private let body = NSTextView()
     private let start = NSTextField(string: "0")
@@ -24,6 +25,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private var editControls: [NSControl] = []
     private var available = false
     private var refreshingSelection = false
+    private var timingIsValid = true
 
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 8
@@ -59,38 +61,34 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         chain.identifier = NSUserInterfaceItemIdentifier("lyrics.chain")
         let timing = NSStackView(views: [NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end])
         timing.spacing = 8
-        let setStart = NSButton(title: "現在位置を開始に", target: self, action: #selector(setStartFromPlayback))
-        let setEnd = NSButton(title: "現在位置を終了に", target: self, action: #selector(setEndFromPlayback))
-        let capture = NSStackView(views: [setStart, setEnd, chain, zoom]); capture.spacing = 8
-        let detail = NSStackView(views: [textScroll, timing, capture]); detail.orientation = .vertical; detail.spacing = 6
+        let detail = NSStackView(views: [textScroll, timing, chain]); detail.orientation = .vertical; detail.spacing = 6
         textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
         let content = NSStackView(views: [list, detail]); content.spacing = 12; content.distribution = .fill
         content.heightAnchor.constraint(equalToConstant: 135).isActive = true
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor
-        zoom.target = self; zoom.action = #selector(changeZoom)
-        zoom.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        zoomLabel.widthAnchor.constraint(equalToConstant: 45).isActive = true
-        let timelineHeader = NSStackView(views: [NSTextField(labelWithString: "拡大タイムライン"), NSTextField(labelWithString: "表示範囲"), zoom, zoomLabel])
-        timelineHeader.spacing = 10
-        timeline.heightAnchor.constraint(equalToConstant: 112).isActive = true
         timeline.onBeginEdit = { [weak self] in _ = self?.onCapturePlaybackTime?() }
         timeline.onSeek = { [weak self] time in self?.onSeek?(time) }
         timeline.onSelect = { [weak self] id in self?.selectFromTimeline(id) }
         timeline.onPreview = { [weak self] value in self?.onPreview?(value) }
         timeline.onCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
         timeline.onError = { [weak self] error in self?.message.stringValue = error.localizedDescription }
-        for child in [timelineHeader, timeline, style, content, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
-        editControls = [add, remove, start, end, color, width, setStart, setEnd, chain, zoom]
+        for child in [style, content, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        editControls = [add, remove, start, end, color, width, chain]
         setAvailable(false)
     }
 
     func load(_ value: LyricsTrack) {
         timeline.cancelDrag()
-        track = value
+        track = value; timingIsValid = true
         timeline.track = value; timeline.selectedID = nil
         width.doubleValue = value.outlineWidth; color.color = value.outlineColor.nsColor
         updateWidthLabel(); table.reloadData(); table.deselectAll(nil)
         body.string = ""; start.stringValue = "0"; end.stringValue = "2"; chain.state = .off
+    }
+    func restore(_ value: LyricsTrack) {
+        let selection = timeline.selectedID ?? value.clips.first(where: { candidate in !track.clips.contains(where: { $0.id == candidate.id }) })?.id
+        load(value)
+        if let selection { selectFromTimeline(selection) }
     }
     func setAvailable(_ value: Bool) {
         available = value
@@ -112,6 +110,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         onSeek?(track.clips[table.selectedRow].start)
     }
     private func displaySelection() {
+        timingIsValid = true
         timeline.selectedID = track.clips.indices.contains(table.selectedRow) ? track.clips[table.selectedRow].id : nil
         guard track.clips.indices.contains(table.selectedRow) else { return }
         let clip = track.clips[table.selectedRow]
@@ -139,17 +138,18 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         displaySelection()
         refreshingSelection = false
     }
-    @objc private func changeZoom() {
-        timeline.cancelDrag()
-        timeline.visibleSpan = zoom.doubleValue
-        zoomLabel.stringValue = String(format: "%.1f秒", zoom.doubleValue)
+    func finishEditing() -> Bool {
+        if body.hasMarkedText() { return false }
+        applyEditorChanges()
+        guard timingIsValid else { return false }
+        return view.window?.makeFirstResponder(nil) ?? true
     }
     func cancelTimelineEdit() { timeline.cancelDrag() }
     @objc private func addClip() {
         guard available else { return }
         do {
             let time = onCapturePlaybackTime?() ?? currentTime
-            let result = try track.adding(at: time, duration: duration)
+            let result = try track.adding(at: time, duration: duration, grid: snapGrid)
             commit(result.track, selectedID: result.clip.id)
             onSeek?(result.clip.start)
         } catch { message.stringValue = error.localizedDescription }
@@ -172,41 +172,40 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
             message.stringValue = error.localizedDescription
         }
     }
-    @objc private func setStartFromPlayback() { capturePlaybackTime(isStart: true) }
-    @objc private func setEndFromPlayback() { capturePlaybackTime(isStart: false) }
-    private func capturePlaybackTime(isStart: Bool) {
-        guard available, track.clips.indices.contains(table.selectedRow) else {
-            message.stringValue = "設定する歌詞を一覧から選択してください。"
-            return
-        }
-        let time = onCapturePlaybackTime?() ?? currentTime
-        guard time.isFinite else { return }
-        if isStart { start.doubleValue = time } else { end.doubleValue = time }
-        applyEditorChanges()
-    }
+    func textDidBeginEditing(_ notification: Notification) { onBeginTextEditing?() }
     func textDidChange(_ notification: Notification) {
         guard !body.hasMarkedText() else { return }
         applyEditorChanges()
     }
-    func textDidEndEditing(_ notification: Notification) { applyEditorChanges() }
+    func textDidEndEditing(_ notification: Notification) { applyEditorChanges(); onEndTextEditing?() }
+    func controlTextDidBeginEditing(_ obj: Notification) { onBeginTextEditing?() }
     func controlTextDidChange(_ obj: Notification) {
         if let field = obj.object as? NSTextField,
            let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
         applyEditorChanges()
     }
-    func controlTextDidEndEditing(_ obj: Notification) { applyEditorChanges() }
+    func controlTextDidEndEditing(_ obj: Notification) {
+        defer { onEndTextEditing?() }
+        applyEditorChanges()
+        if let clip = track.clips.first(where: { $0.id == timeline.selectedID }) {
+            start.stringValue = String(clip.start); end.stringValue = String(clip.end)
+        }
+    }
     private func applyEditorChanges() {
         guard available, !refreshingSelection, !body.hasMarkedText(), track.clips.indices.contains(table.selectedRow) else { return }
-        guard let begin = Double(start.stringValue), let finish = Double(end.stringValue) else { message.stringValue = "開始・終了を秒数で入力してください。"; return }
+        guard let begin = Double(start.stringValue), let finish = Double(end.stringValue) else { timingIsValid = false; message.stringValue = "開始・終了を秒数で入力してください。"; return }
         let clip = track.clips[table.selectedRow]
         do {
-            let value = try track.updating(id: clip.id, start: begin, end: finish, text: body.string, duration: duration)
+            let snappedStart = begin == clip.start ? begin : max(0, snapGrid.nearest(begin))
+            let snappedEnd = finish == clip.end ? finish : max(0, snapGrid.nearest(finish))
+            let value = try track.updating(id: clip.id, start: snappedStart, end: snappedEnd, text: body.string, duration: duration)
+            timingIsValid = true
             commit(value, selectedID: clip.id, refreshEditor: false)
             chain.state = track.clips.first(where: { $0.id == clip.id })?.predecessorID == nil ? .off : .on
             if begin != clip.start, finish == clip.end, let updated = track.clips.first(where: { $0.id == clip.id }) {
                 self.end.stringValue = String(updated.end)
             }
-        } catch { message.stringValue = error.localizedDescription }
+        } catch { timingIsValid = false; message.stringValue = error.localizedDescription }
     }
     private func updateWidthLabel() { widthLabel.stringValue = String(format: "%.1f px", track.outlineWidth) }
     @objc private func changeStyle() {

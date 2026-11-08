@@ -1,14 +1,16 @@
 import XCTest
 import AVFoundation
+import ImageIO
 @testable import MVStudio
 
 final class StudioTests: XCTestCase {
     func testBeatOffsetAndDeterministicEvaluation() {
-        let settings = SceneSettings(bpm: 120, beatOffset: 1, pulse: 0.1)
-        XCTAssertEqual(settings.scale(at: 0.9), 1)
-        XCTAssertEqual(settings.scale(at: 1), 1.1, accuracy: 0.0001)
-        XCTAssertEqual(settings.scale(at: 1.5), 1.1, accuracy: 0.0001)
-        XCTAssertLessThan(settings.scale(at: 1.4), 1.01)
+        let settings = SceneSettings(bpm: 120, beatOffset: 1)
+        let clip = ImageClip(assetID: UUID(), start: 0, end: 2, pulseAmount: 0.1)
+        XCTAssertEqual(clip.scale(at: 0.9, settings: settings), 1)
+        XCTAssertEqual(clip.scale(at: 1, settings: settings), 1.1, accuracy: 0.0001)
+        XCTAssertEqual(clip.scale(at: 1.5, settings: settings), 1.1, accuracy: 0.0001)
+        XCTAssertLessThan(clip.scale(at: 1.4, settings: settings), 1.01)
         let features = AudioFeatures(duration: 1, step: 0.5, frames: [[0, 1], [1, 0]])
         XCTAssertEqual(features.bands(at: 0.25), [0.5, 0.5])
         XCTAssertEqual(features.bands(at: 1), Array(repeating: 0, count: 32))
@@ -41,7 +43,20 @@ final class StudioTests: XCTestCase {
         context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         let output = directory.appendingPathComponent("result.mp4")
         let lyrics = LyricsTrack(clips: [LyricClip(start: 0, end: 1, text: "歌詞の縁取り")], outlineWidth: 6, outlineColor: LyricsColor(red: 0, green: 1, blue: 0))
-        try await VideoExporter.export(image: context.makeImage()!, audioURL: url, features: features, settings: SceneSettings(), lyrics: lyrics, destination: output, cancellation: ExportCancellation(), progress: { _ in })
+        let imageURL = directory.appendingPathComponent("source.png")
+        let imageDestination = CGImageDestinationCreateWithURL(imageURL as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(imageDestination, context.makeImage()!, nil); XCTAssertTrue(CGImageDestinationFinalize(imageDestination))
+        let projectURL = ProjectStorage.projectURL(for: url)
+        var images = ImageTrack()
+        let assetID = images.register(url: imageURL, projectURL: projectURL)
+        images.layers[0].clips = [ImageClip(assetID: assetID, start: 0, end: 1)]
+        let overlayURL = directory.appendingPathComponent("overlay.png")
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        let overlayDestination = CGImageDestinationCreateWithURL(overlayURL as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(overlayDestination, context.makeImage()!, nil); XCTAssertTrue(CGImageDestinationFinalize(overlayDestination))
+        let overlayID = images.register(url: overlayURL, projectURL: projectURL)
+        images.layers[2].clips = [ImageClip(assetID: overlayID, start: 0.5, end: 0.8, beatPulseEnabled: false)]
+        try await VideoExporter.export(images: images, projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(), lyrics: lyrics, destination: output, cancellation: ExportCancellation(), progress: { _ in })
         let asset = AVURLAsset(url: output)
         let duration = try await asset.load(.duration)
         let videos = try await asset.loadTracks(withMediaType: .video)
@@ -49,13 +64,27 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(CMTimeGetSeconds(duration), 1, accuracy: 1.0 / 30)
         XCTAssertEqual(videos.count, 1); XCTAssertEqual(audios.count, 1)
         let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
         let frame = try generator.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil)
-        XCTAssertEqual(frame.width, 1280); XCTAssertEqual(frame.height, 720)
-        let decoded = CGContext(data: nil, width: 1280, height: 720, bitsPerComponent: 8, bytesPerRow: 1280 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        decoded.draw(frame, in: CGRect(x: 0, y: 0, width: 1280, height: 720))
+        XCTAssertEqual(frame.width, 1920); XCTAssertEqual(frame.height, 1080)
+        let naturalSize = try await videos[0].load(.naturalSize)
+        let frameRate = try await videos[0].load(.nominalFrameRate)
+        XCTAssertEqual(naturalSize, CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(frameRate, 30, accuracy: 0.01)
+        let decoded = CGContext(data: nil, width: frame.width, height: frame.height, bitsPerComponent: 8, bytesPerRow: frame.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        decoded.draw(frame, in: CGRect(x: 0, y: 0, width: frame.width, height: frame.height))
         let pixels = decoded.data!.assumingMemoryBound(to: UInt8.self)
-        let greenCount = (0..<(1280 * 720)).filter { pixels[$0 * 4] < 100 && pixels[$0 * 4 + 1] > 160 && pixels[$0 * 4 + 2] < 100 }.count
+        let greenCount = (0..<(frame.width * frame.height)).filter { pixels[$0 * 4] < 100 && pixels[$0 * 4 + 1] > 160 && pixels[$0 * 4 + 2] < 100 }.count
         XCTAssertGreaterThan(greenCount, 100, "書出し動画に緑の縁取りを保持")
+        for (time, expectsBlue) in [(0.2, false), (0.6, true), (0.9, false)] {
+            let sample = try generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 600), actualTime: nil)
+            decoded.draw(sample, in: CGRect(x: 0, y: 0, width: sample.width, height: sample.height))
+            let index = (900 * sample.width + 960) * 4
+            XCTAssertEqual(pixels[index + 2] > pixels[index], expectsBlue, "上段画像の表示区間 \(time)秒")
+        }
+        let emptyOutput = directory.appendingPathComponent("background-only.mp4")
+        try await VideoExporter.export(projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(spectrum: false), lyrics: lyrics, destination: emptyOutput, cancellation: ExportCancellation(), progress: { _ in })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: emptyOutput.path))
         let token = ExportCancellation(); token.cancel()
         XCTAssertThrowsError(try token.check())
     }

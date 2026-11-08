@@ -3,30 +3,35 @@ import Foundation
 struct ProjectFile: Codable {
     let version: Int
     let audio: AssetReference
-    let image: AssetReference?
+    let imageAssets: [ImageAsset]
+    let imageLayers: [ImageLayer]
+    var images: ImageTrack { ImageTrack(assets: imageAssets, layers: imageLayers) }
     let settings: SceneSettings
     let lyrics: LyricsTrack
 
-    init(audioURL: URL, imageURL: URL?, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), projectURL: URL) {
-        version = 2
+    init(audioURL: URL, images: ImageTrack = ImageTrack(), settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), projectURL: URL) {
+        version = 3
         audio = AssetReference(url: audioURL, projectURL: projectURL)
-        image = imageURL.map { AssetReference(url: $0, projectURL: projectURL) }
+        imageAssets = images.assets
+        imageLayers = images.layers
         self.settings = settings
         self.lyrics = lyrics
     }
 
     func validate() throws {
         try lyrics.validate()
-        guard version == 2 else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
+        try images.validate()
+        let ids = imageAssets.map(\.id) + imageLayers.map(\.id) + images.clips.map(\.id) + lyrics.clips.map(\.id)
+        guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
+        guard version == 3 else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
-              settings.beatOffset.isFinite, settings.beatOffset >= 0,
-              settings.pulse.isFinite, (0...0.25).contains(settings.pulse) else {
+              settings.beatOffset.isFinite, settings.beatOffset >= 0 else {
             throw StudioError.message("プロジェクトの設定値が不正です。")
         }
     }
 }
 
-struct AssetReference: Codable {
+struct AssetReference: Codable, Sendable, Equatable {
     let path: String
     let relative: Bool
 

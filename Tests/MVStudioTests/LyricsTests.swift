@@ -36,7 +36,7 @@ final class LyricsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let audio = directory.appendingPathComponent("song.wav")
         let url = ProjectStorage.projectURL(for: audio)
-        let project = ProjectFile(audioURL: audio, imageURL: nil, settings: SceneSettings(), lyrics: track, projectURL: url)
+        let project = ProjectFile(audioURL: audio, settings: SceneSettings(), lyrics: track, projectURL: url)
         let storage = ProjectStorage(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         try storage.save(project, to: url)
         XCTAssertEqual(try storage.read(from: url).lyrics, track)
@@ -48,7 +48,7 @@ final class LyricsTests: XCTestCase {
 
     private func render(track: LyricsTrack, time: Double) throws -> CGImage {
         let context = CGContext(data: nil, width: 1280, height: 720, bitsPerComponent: 8, bytesPerRow: 1280 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        SceneRenderer.draw(in: context, size: CGSize(width: 1280, height: 720), image: nil, features: nil, settings: SceneSettings(spectrum: false), time: time, lyrics: track)
+        SceneRenderer.draw(in: context, size: CGSize(width: 1280, height: 720), features: nil, settings: SceneSettings(spectrum: false), time: time, lyrics: track)
         return try XCTUnwrap(context.makeImage())
     }
 

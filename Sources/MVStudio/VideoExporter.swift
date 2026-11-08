@@ -12,14 +12,21 @@ final class ExportCancellation: @unchecked Sendable {
 }
 
 enum VideoExporter {
-    static func export(image: CGImage, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), destination: URL, cancellation: ExportCancellation, progress: @escaping (Double) -> Void) async throws {
+    static let width = 1920
+    static let height = 1080
+    static let fps: Int32 = 30
+    static let averageBitRate = 12_000_000
+
+    static func export(images: ImageTrack = ImageTrack(), projectURL: URL, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), destination: URL, cancellation: ExportCancellation, progress: @escaping (Double) -> Void) async throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         let silentURL = temporary.appendingPathComponent("silent.mp4")
         let finalURL = temporary.appendingPathComponent("final.mp4")
+        let imageStore = ImageAssetStore()
+        try await imageStore.validateUsed(track: images, projectURL: projectURL)
         try await Task.detached {
-            try renderVideo(image: image, features: features, settings: settings, lyrics: lyrics, url: silentURL, cancellation: cancellation, progress: progress)
+            try await renderVideo(images: images, projectURL: projectURL, imageStore: imageStore, features: features, settings: settings, lyrics: lyrics, url: silentURL, cancellation: cancellation, progress: progress)
         }.value
         try cancellation.check()
         let composition = AVMutableComposition()
@@ -61,13 +68,12 @@ enum VideoExporter {
         progress(1)
     }
 
-    private static func renderVideo(image: CGImage, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack, url: URL, cancellation: ExportCancellation, progress: (Double) -> Void) throws {
-        let width = 1280, height = 720, fps: Int32 = 30
+    private static func renderVideo(images: ImageTrack, projectURL: URL, imageStore: ImageAssetStore, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack, url: URL, cancellation: ExportCancellation, progress: (Double) -> Void) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: width, AVVideoHeightKey: height,
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 6_000_000]
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: averageBitRate]
         ])
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
@@ -88,8 +94,9 @@ enum VideoExporter {
             while !input.isReadyForMoreMediaData {
                 try cancellation.check()
                 guard writer.status == .writing else { throw writer.error ?? StudioError.message("エンコードが停止しました。") }
-                Thread.sleep(forTimeInterval: 0.002)
+                try await Task.sleep(for: .milliseconds(2))
             }
+            let layers = try await imageStore.layers(track: images, projectURL: projectURL, time: Double(index) / Double(fps), allowMissing: false)
             try autoreleasepool {
                 var pixel: CVPixelBuffer?
                 guard let pool = adaptor.pixelBufferPool,
@@ -101,7 +108,7 @@ enum VideoExporter {
                 guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixel), width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixel), space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue) else {
                     throw StudioError.message("描画領域を作成できません。")
                 }
-                SceneRenderer.draw(in: context, size: CGSize(width: width, height: height), image: image, features: features, settings: settings, time: Double(index) / Double(fps), lyrics: lyrics)
+                SceneRenderer.draw(in: context, size: CGSize(width: width, height: height), images: layers, features: features, settings: settings, time: Double(index) / Double(fps), lyrics: lyrics)
                 guard adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: fps)) else {
                     throw writer.error ?? StudioError.message("フレームの書き込みに失敗しました。")
                 }
@@ -110,9 +117,8 @@ enum VideoExporter {
         }
         input.markAsFinished()
         writer.endSession(atSourceTime: CMTime(seconds: features.duration, preferredTimescale: 48000))
-        let done = DispatchSemaphore(value: 0)
-        writer.finishWriting { done.signal() }
-        while done.wait(timeout: .now() + 0.1) == .timedOut { try cancellation.check() }
+        await writer.finishWriting()
+        try cancellation.check()
         guard writer.status == .completed else { throw writer.error ?? StudioError.message("動画を確定できません。") }
         finished = true
     }
