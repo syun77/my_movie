@@ -71,10 +71,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         buildMenu()
-        let studioWindow = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 960), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        let studioWindow = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 1160, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window = studioWindow
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
+        studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.images.cancelValueDrag() ?? false }
+        studioWindow.onResetEditingValue = { [weak self] location in
+            self?.placementEditor.images.resetEditingValue(at: location) ?? false
+        }
+        studioWindow.onEscapeText = { [weak self] text in self?.placementEditor.images.cancelAnimationInput(text) ?? false }
         studioWindow.onHistoryAction = { [weak self] redo in self?.performHistoryAction(redo: redo) }
 
         studioWindow.onTogglePlayback = { [weak self] in
@@ -84,26 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.title = "MV Studio"
-        window.minSize = NSSize(width: 1000, height: 850)
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.spacing = 14
-        root.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
-        root.translatesAutoresizingMaskIntoConstraints = false
-        let content = NSView()
-        window.contentView = content
-        let scroll = NSScrollView(); scroll.translatesAutoresizingMaskIntoConstraints = false; scroll.hasVerticalScroller = true
-        content.addSubview(scroll); scroll.documentView = root
-        NSLayoutConstraint.activate([scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor), scroll.topAnchor.constraint(equalTo: content.topAnchor), scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor), root.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])
-        let title = NSTextField(labelWithString: "MV Studio")
-        title.font = .systemFont(ofSize: 26, weight: .bold)
-        let subtitle = NSTextField(labelWithString: "画像と音楽から、リズムに反応する映像を。")
-        subtitle.textColor = .secondaryLabelColor
+        window.contentMinSize = NSSize(width: 1000, height: 680)
         let audioButton = button("音声を選択…", #selector(importAudio))
         let files = row([audioButton, audioName])
         audioName.lineBreakMode = .byTruncatingMiddle
-        preview.translatesAutoresizingMaskIntoConstraints = false
-        preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
+        audioName.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bpm.widthAnchor.constraint(equalToConstant: 64).isActive = true
         offset.widthAnchor.constraint(equalToConstant: 64).isActive = true
         bpm.identifier = NSUserInterfaceItemIdentifier("scene.bpm"); offset.identifier = NSUserInterfaceItemIdentifier("scene.offset")
@@ -117,12 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         cancel.isHidden = true
         seek.target = self; seek.action = #selector(scrub)
         seek.isContinuous = true
-        seek.widthAnchor.constraint(greaterThanOrEqualToConstant: 350).isActive = true
+        seek.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let transport = row([play, seek, timeLabel])
         progress.style = .bar; progress.isIndeterminate = false; progress.maxValue = 1
         progress.widthAnchor.constraint(equalToConstant: 180).isActive = true
         let output = row([export, NSTextField(labelWithString: "\(VideoExporter.width) × \(VideoExporter.height) · \(VideoExporter.fps)fps · H.264 / AAC"), progress, cancel])
-        let lyricsView = placementEditor.view
+        let timeline = placementEditor.view
         placementEditor.visibleSpan = timelineDisplaySettings.visibleSpan
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
@@ -166,8 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             self.recordEdit(images: value); self.stopPlayback(); self.imageTrack = value; self.previewTrack = value; self.refreshPreviewImages(); _ = self.saveProject()
         }
         placementEditor.images.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewImages() }
-        for view in [title, subtitle, files, preview, options, transport, lyricsView, output, status] { root.addArrangedSubview(view) }
-        for view in [files, preview, options, transport, lyricsView, output, status] { view.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -48).isActive = true }
+        installLayout(toolbar: row([files, output]), options: options, transport: transport, timeline: timeline)
         controls = [audioButton, bpm, offset, spectrum, play, seek, export]
         refreshControls()
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
@@ -176,6 +165,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         editHistory.reset(EditSnapshot(lyrics: preview.lyrics, images: imageTrack, settings: preview.settings))
         if let url = storage.lastProjectURL { openProject(at: url) }
+    }
+
+    private func installLayout(toolbar: NSView, options: NSView, transport: NSView, timeline: NSView) {
+        let content = NSView()
+        window.contentView = content
+
+        let workspace = NSView()
+        let inspector = placementEditor.inspector
+        for child in [preview, options, inspector] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            workspace.addSubview(child)
+        }
+
+        status.lineBreakMode = .byTruncatingTail
+        let root = NSStackView(views: [toolbar, workspace, transport, timeline, status])
+        root.orientation = .vertical
+        root.distribution = .fill
+        root.spacing = 12
+        root.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(root)
+        for child in root.arrangedSubviews {
+            child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            root.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+            root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            preview.leadingAnchor.constraint(equalTo: workspace.leadingAnchor),
+            preview.topAnchor.constraint(equalTo: workspace.topAnchor),
+            preview.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -20),
+            preview.bottomAnchor.constraint(equalTo: options.topAnchor, constant: -8),
+            options.leadingAnchor.constraint(equalTo: preview.leadingAnchor),
+            options.trailingAnchor.constraint(equalTo: preview.trailingAnchor),
+            options.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
+            inspector.topAnchor.constraint(equalTo: workspace.topAnchor),
+            inspector.trailingAnchor.constraint(equalTo: workspace.trailingAnchor),
+            inspector.bottomAnchor.constraint(lessThanOrEqualTo: workspace.bottomAnchor),
+            inspector.widthAnchor.constraint(equalToConstant: 450)
+        ])
     }
 
     private func row(_ views: [NSView]) -> NSStackView { let stack = NSStackView(views: views); stack.spacing = 12; stack.alignment = .centerY; return stack }
@@ -361,9 +390,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let active = track.active(at: time)
         let key = PreviewKey(projectURL: projectURL, clips: active, assets: active.compactMap { track.asset($0.assetID) })
         guard key != lastPreviewKey else { return }
+        let previousKey = lastPreviewKey
         lastPreviewKey = key; previewRevision += 1
         let revision = previewRevision
         previewImageTask?.cancel()
+        if previousKey?.projectURL == projectURL, previousKey?.assets == key.assets,
+           let previous = previousKey?.clips, preview.images.map(\.clip) == previous,
+           previous.map(\.assetID) == active.map(\.assetID) {
+            preview.images = zip(active, preview.images).map { ImageRenderLayer(clip: $0, image: $1.image) }
+            preview.needsDisplay = true
+            return
+        }
         previewImageTask = Task { [weak self] in
             guard let self else { return }
             let layers = (try? await imageStore.layers(track: track, projectURL: projectURL, time: time, allowMissing: true)) ?? []

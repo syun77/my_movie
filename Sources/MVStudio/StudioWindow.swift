@@ -14,11 +14,20 @@ final class StudioWindow: NSWindow {
     }
 
     var onTogglePlayback: (() -> Void)?
+    var onEscapeInteraction: (() -> Bool)?
+    var onResetEditingValue: ((NSPoint) -> Bool)?
+    var onEscapeText: ((NSTextView) -> Bool)?
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown { onBeginInteraction?() }
         defer { if event.type == .leftMouseDown || event.type == .leftMouseUp { onEndInteraction?() } }
-        guard event.type == .keyDown, attachedSheet == nil, NSApp.modalWindow == nil else {
+        guard attachedSheet == nil, NSApp.modalWindow == nil else {
+            super.sendEvent(event)
+            return
+        }
+        if event.type == .otherMouseDown, event.buttonNumber == 2,
+           onResetEditingValue?(event.locationInWindow) == true { return }
+        guard event.type == .keyDown else {
             super.sendEvent(event)
             return
         }
@@ -30,8 +39,10 @@ final class StudioWindow: NSWindow {
         }
         let text = firstResponder as? NSTextView
         let isTyping = text?.isEditable == true
-        if event.keyCode == 53, isTyping {
-            text?.unmarkText()
+        if event.keyCode == 53, onEscapeInteraction?() == true { return }
+        if event.keyCode == 53, isTyping, let text {
+            if onEscapeText?(text) == true { return }
+            text.unmarkText()
             makeFirstResponder(nil)
             return
         }

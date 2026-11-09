@@ -1,3 +1,115 @@
+# クリップ両端のホバー表示（完了）
+
+- 最終更新: 2026-11-10 00:06 JST
+- 要件: クリップ左右端のトリム可能な範囲にポインタを置くと、掴める領域を黄色で表示する。
+- 状態: 歌詞・画像のホバー中の端だけを黄色に表示。狭いクリップは左右半分まで、切れている部分は表示範囲に制限する。
+- 整理: TimelineViewで歌詞・画像のクリック判定とホバー描画のトリム領域を共有。歌詞のカーソル領域も同じ計算を利用。
+- 変更: Sources/MVStudio/TimelineView.swift、Tests/MVStudioTests/TimelineTests.swift、README.md、docs/TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 両モードで左右の黄色表示と解除、歌詞左端・画像右端のドラッグを確認。関連7件と全36件成功（/tmp/my_movie-trim-hover-focused.log、/tmp/my_movie-trim-hover-test.log）。git diff --check、./scripts/build-app.sh、署名検証成功（/tmp/my_movie-trim-hover-build.log）。
+- 次: 最新dist/MV Studio.appで歌詞・画像クリップの左右端にポインタを置いてドラッグする。実行中の処理・未解決事項なし。
+
+# 制御点追加時の再生位置維持（完了）
+
+- 最終更新: 2026-11-10 00:03 JST
+- 要件: オートメーションレーンの空白を左クリックして点を追加したときに、再生位置を移動しない。
+- 状態・整理: 新規キーの確定後のシークを除去。保存・選択は既存経路を共用し、既存キーの選択・ドラッグ時はその時刻に移動する。
+- 変更: Sources/MVStudio/TimelineView.swift、Tests/MVStudioTests/ImageAnimationTests.swift、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 検証: AppKitで2.52秒クリックが2.5秒にスナップし、再生位置は1.5秒のままであることを確認。全35件成功（/tmp/my_movie-key-add-no-seek-test.log）。git diff --check、./scripts/build-app.sh、署名検証成功（/tmp/my_movie-key-add-no-seek-build.log）。
+- 次: 最新dist/MV Studio.appでオートメーションレーンの空白を左クリックする。実行中の処理・未解決事項なし。
+
+# ⌘＋ホイールズームの補間（完了）
+
+- 最終更新: 2026-11-09 23:57 JST
+- 要件: 現在のホイールごとのズーム量を維持し、約0.2秒のcubic ease-outで目標の表示範囲へ移動する。
+- 状態: 連続入力は直前の目標を基準に倍率を適用し、現在表示している範囲から新しい目標へ約60fpsで補間する。
+- 整理: 表示範囲・スライダー・ラベルの描画を共通化。保存は目標変更時のみ。スライダー操作や表示設定の直接変更では補間を中断する。
+- 変更: Sources/MVStudio/PlacementEditor.swift、Tests/MVStudioTests/TimelineDisplaySettingsTests.swift、README.md、docs/TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 全35件成功（/tmp/my_movie-smooth-zoom-test.log）。連続入力の倍率、途中フレームと目標への到達、スライダーでの中断を確認。git diff --check、./scripts/build-app.sh、署名検証成功（/tmp/my_movie-smooth-zoom-build.log）。
+- 次: 最新dist/MV Studio.appでタイムラインまたはレーン上の⌘＋ホイールを使用する。実行中の処理・未解決事項なし。
+
+# タイムラインの⌘＋ホイールズーム（完了）
+
+- 最終更新: 2026-11-09 23:45 JST
+- 要件: タイムラインとオートメーションレーン上のCmd＋ホイールで表示範囲を変え、横方向にズームする。
+- 状態: 再生位置を基準に2〜300秒の横ズーム。曲全体から拡大できる場合は固定範囲へ切替。通常の縦スクロールとドラッグ中の座標固定を維持。
+- 整理: TimelineViewが入力を受け取り、PlacementEditorのスライダー・表示ラベル・保存通知の経路を共用。
+- 変更: Sources/MVStudio/{TimelineView,PlacementEditor}.swift、Tests/MVStudioTests/TimelineDisplaySettingsTests.swift、README.md、docs/TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 全35件成功（/tmp/my_movie-wheel-zoom-test.log）。歌詞・画像の展開レーン、スライダー同期、上下限、曲全体切替、再生位置維持を確認。git diff --check、./scripts/build-app.sh、署名検証成功（/tmp/my_movie-wheel-zoom-build.log）。
+- 次: 最新dist/MV Studio.appでタイムラインまたはレーン上で⌘＋ホイールを使用する。実行中の処理・未解決事項なし。
+
+# オートメーション制御点の当たり判定（完了）
+
+- 最終更新: 2026-11-09 23:35 JST
+- 要件: 制御点を掴める範囲を広げ、ドラッグ可能な点を少し大きく黄色で表示する。
+- 状態: 当たり判定を半径6ptから11ptへ拡張。ホバーと押下で最近傍判定を共有し、ホバー・ドラッグ中は半径6ptの黄色いマーカーを前面に描く。
+- 整理: マーカーの座標・描画と当たり判定を共通化し、表示範囲外の点は判定から外した。
+- 変更: Sources/MVStudio/TimelineView.swift、Tests/MVStudioTests/ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 検証: 中心から9pt離れたドラッグと、範囲の内外での黄色マーカー切替を確認。関連3件と全34件成功（/tmp/my_movie-key-hover-focused.log、/tmp/my_movie-key-hover-test.log）。git diff --check、./scripts/build-app.sh、アプリ署名検証成功（/tmp/my_movie-key-hover-build.log）。
+- 次: 最新dist/MV Studio.appでレーンの点にポインタを近づけ、黄色になった点をドラッグする。実行中の処理・未解決事項なし。
+
+# オートメーションの基準値と数値リセット（完了）
+
+- 最終更新: 2026-11-09 23:23 JST
+- 要件: レーン付きパラメータの基準値変更で上下限を移動し、最小・最大もドラッグ可能にする。ホイールクリックで数値を初期値に戻す。
+- 状態: 基準値で上下限・全キーを移動。◇は既存レーンでは補間値のキーを作成する。保存形式はversion 4。
+- 整理: DragValueFieldのジェスチャーとImageEditorの対象・仮表示・確定処理を基準値と上下限で共用。拡大率リセットでは正値制約を維持し、上下限が交差する場合も有効な範囲に戻す。
+- 変更: Sources/MVStudio/{ImageAnimation,ImageEditor,DragValueField,TimelineView,StudioWindow,App}.swift、Tests/MVStudioTests/{ImageAnimationTests,ProjectStorageTests}.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 検証: 関連4件と全34件成功（/tmp/my_movie-base-value-focused.log、/tmp/my_movie-base-value-test.log）。git diff --check、./scripts/build-app.sh、アプリ署名検証成功（/tmp/my_movie-base-value-build.log）。
+- 次: 最新dist/MV Studio.appで基準値や上下限の左右ドラッグ・ホイールクリックを使用する。実行中の処理と未解決の障害なし。
+
+# オートメーションの開閉と変形入力（完了）
+
+- 最終更新: 2026-11-09 23:14 JST
+- 要件: レイヤー名右の薄い > / v でレーンを開閉し、選択変更で閉じないようにする。位置・拡大率・回転はダブルクリックで直接入力、ドラッグで数値調整する。
+- 状態: レイヤーごとの開閉状態をクリップ選択から分離。レーンから別クリップを選択可能。変形値のダブルクリック入力・左右ドラッグ・Esc取消を実装。固定値はmouseUp、キーの値は◇で確定する。
+- 整理: 数値欄はDragValueFieldでマウス操作を担当し、ImageEditorでプレビュー・保存を管理。TimelineViewのレーン描画・ヒットテストは同じ行座標を共用し、開閉の入口をレイヤー名横に集約。
+- 変更: Sources/MVStudio/{DragValueField,ImageEditor,TimelineView,PlacementEditor,StudioWindow,App}.swift、Tests/MVStudioTests/ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 検証: 関連3件および全34件成功（/tmp/my_movie-automation-controls-focused.log、/tmp/my_movie-automation-controls-test.log）。git diff --check成功。./scripts/build-app.shとアプリ署名検証成功（/tmp/my_movie-automation-controls-build.log）。
+- 次: 最新dist/MV Studio.appを開き、キーを持つレイヤーの > / v と、数値のダブルクリック・左右ドラッグを使用する。実行中の処理・未解決の障害なし。
+
+# 画像クリップのアニメーション実装（完了）
+
+- 最終更新: 2026-11-09 22:59 JST
+- 要件: docs/IMAGE_ANIMATION.mdの自動アニメ、変形入力、クリップ内グラフ、保存とUndo/Redoを実装し、テストとアプリ生成を行う。
+- 状態: 変形と自動アニメの値モデル、version 4保存、共通描画、インスペクター、クリップ内グラフを実装。前回までの未コミット変更を保持。
+- 変更: Sources/MVStudio/{ImageAnimation,ImageTrack,Scene,ProjectFile,ImageEditor,TimelineView,App,StudioWindow}.swift、Tests/MVStudioTests/{ImageAnimationTests,ImageTrackTests,ProjectStorageTests,StudioTests,UndoTests}.swift、README.md、docs/{IMAGE_ANIMATION,IMAGE_TIMELINE,TIMELINE,ARCHITECTURE}.md、AGENTS.md、PROGRESS.md。
+- 整理: グラフの描画・編集、画像配置の操作、変形値の評価を分離。ドラッグプレビューは同じ素材のデコード済み画像を再利用。拍スナップ有効時も同時刻の既存キーを優先して更新する。
+- 検証: macOSサービスにアクセスできる環境で全33件成功（/tmp/my_movie-animation-final-test.log）。AppKitイベントでキー追加・ドラッグ/取消・Delete・拍スナップ切替、保存/Undo/Redo、実MP4で手動の位置キーを確認。git diff --check成功。
+- 生成: ./scripts/build-app.shとcodesign --verify --strict成功。最新dist/MV Studio.appを生成済み（/tmp/my_movie-animation-build.log）。
+- 次: 最新アプリの「画像・演出」で画像を選択し、再生位置を合わせて数値欄の◇からキーを打つ。旧プロジェクトは別名バックアップと新規作成の導線を使用。実行中の処理なし。実曲での手動GUI操作は未実施。
+
+# 画像クリップのアニメーション設計（設計完了）
+
+- 最終更新: 2026-11-09 22:48 JST
+- 要件: トランジェント・拍を自動アニメとして整理し、位置・拡大縮小・回転を画像クリップ内の手動キーで編集する。数値欄のボタンでグラフを作成し、クリックで制御点を追加して最小値・最大値を指定する。
+- 状態: 画面、キー編集、補間、トリム、手動と自動の合成、保存、実装順と受け入れ条件を設計。縦軸の範囲は表示用とし、登録済みのキー値を保持する方針を提案。
+- 変更: docs/IMAGE_ANIMATION.md、docs/ARCHITECTURE.md、docs/IMAGE_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 現行の画像配置・スナップ・共通描画・保存形式との接続、相対リンクと差分の空白を確認。文書のみのためアプリのビルド・テストは対象外。
+- 次: 実装時はImageClipの値モデル、共通評価、保存形式から着手し、インスペクターとクリップ内グラフを接続する。実行中の処理なし。
+
+# トランジェント連動の画像拡大（完了）
+
+- 最終更新: 2026-11-09 09:24 JST
+- 要件: 画像の拍連動拡大を、読み込んだ音声のトランジェントで拡大する機能へ変更する。
+- 方針: 音声読込時に短時間の帯域別パワー上昇を検出。プレビューとMP4の共通描画で、最新イベントからの経過時間に応じて拡大を減衰させる。クリップごとのON/OFFと強さを引き継ぎ、BPM・拍開始はタイムライン編集に使う。
+- 状態: TransientDetector、AudioFeatures、SceneRenderer、ImageClip、画像編集UI、設計書を更新済み。旧設定のON/OFFと強さはversion 3のキーで保存・復元。前のレイアウト作業の変更は保持。
+- 整理: PCM検出、音声時刻からの減衰、クリップ倍率を分離。共通描画でフレームごとにパルスを1回だけ評価。
+- 検証: 制限環境で無音・減衰・設定保存は成功。合成した逆相ステレオの持続音と不規則な2打音で、1件の検出漏れを確認し、2打音の前後のパワー比に基づいて閾値を調整。初回ログ /tmp/my_movie-transient-focused.log、再検証ログ /tmp/my_movie-transient-retest.log。
+- 最終検証: 全31テスト成功（/tmp/my_movie-transient-final-test.log）。逆相ステレオの不規則な2打音を検出し、MP4の打音直前・直後で画像の拡大を確認。./scripts/build-app.sh 成功（/tmp/my_movie-transient-build.log）、git diff --check とアプリ署名検証成功。
+- 変更: Sources/MVStudio/{TransientDetector,AudioAnalyzer,Scene,ImageTrack,ImageEditor}.swift、Tests/MVStudioTests/{StudioTests,ImageTrackTests,ProjectStorageTests,UndoTests}.swift、README.md、docs/{ARCHITECTURE,IMAGE_TIMELINE}.md、AGENTS.md、PROGRESS.md。
+- 未解決の障害・実行中処理なし。自動検出は合成音源で検証。次: 最新 dist/MV Studio.app を起動し、「画像・演出」で対象クリップの「トランジェントで拡大」と強さを設定する。
+
+# 編集画面レイアウト（完了）
+
+- 最終更新: 2026-11-09 09:16 JST
+- 要件: 左上に動画プレビュー、右上に歌詞・画像の追加と設定、下段全幅にタイムラインを配置する。
+- 状態: App・PlacementEditor・LyricsEditor・ImageEditorとREADME・設計書を更新済み。全曲シークと表示範囲も下段に配置。右上の設定幅に合わせて歌詞一覧・入力欄と画像時刻欄を調整。
+- 整理: App.installLayoutにウィンドウ制約を集約し、PlacementEditorのインスペクターで表示中の編集ビューを直接切替。旧配置用の固定高さとコンテナを削除。
+- 検証: AppKitの最小サイズで両モードの上下・左右関係と収まりを検証し、描画結果を確認。関連3テスト成功（/tmp/my_movie-layout-focused.log）。初回実行では制限環境のメディア・ペーストボードに依存する2件が失敗。
+- 最終検証: 全31テスト成功（/tmp/my_movie-layout-final-test.log）、./scripts/build-app.sh成功（/tmp/my_movie-layout-build.log）、git diff --check成功。最新 dist/MV Studio.app を生成・署名済み。
+- 変更ファイル: Sources/MVStudio/{App,PlacementEditor,LyricsEditor,ImageEditor}.swift、Tests/MVStudioTests/{AppLifecycleTests,ImageEditorTests}.swift、README.md、docs/{TIMELINE,IMAGE_TIMELINE}.md、AGENTS.md、PROGRESS.md。
+- 未解決事項・実行中処理なし。最小サイズのAppKit描画で両モードを確認。次: 最新アプリを起動して編集する。
+
 # 表示範囲の拡張（完了）
 
 - 最終更新: 2026-11-09 JST

@@ -66,14 +66,14 @@ final class ImageEditorTests: XCTestCase {
             if view.identifier?.rawValue == id { return view }
             return view.subviews.lazy.compactMap { find($0, id) }.first
         }
-        let tabs = try XCTUnwrap(find(editor.view, "placement.mode") as? NSSegmentedControl)
+        let tabs = try XCTUnwrap(find(editor.inspector, "placement.mode") as? NSSegmentedControl)
         tabs.selectedSegment = 1; editor.perform(NSSelectorFromString("changePlacementMode"))
         XCTAssertTrue(editor.imageMode); XCTAssertEqual(editor.currentTime, 4); XCTAssertEqual(editor.timeline.visibleSpan, 7.5)
         editor.view.layoutSubtreeIfNeeded()
         let timeline = editor.timeline
         let event = NSEvent.mouseEvent(with: .leftMouseDown, location: timeline.convert(NSPoint(x: timeline.x(at: 2), y: 160), to: nil), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         timeline.mouseDown(with: event); timeline.cancelDrag()
-        let start = try XCTUnwrap(find(editor.view, "images.start") as? NSTextField)
+        let start = try XCTUnwrap(find(editor.inspector, "images.start") as? NSTextField)
         start.stringValue = "abc"; editor.images.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: start))
         tabs.selectedSegment = 0; editor.perform(NSSelectorFromString("changePlacementMode"))
         XCTAssertTrue(editor.imageMode); XCTAssertEqual(tabs.selectedSegment, 1)

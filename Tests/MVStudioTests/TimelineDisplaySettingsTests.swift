@@ -71,4 +71,107 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         }
     }
 
+    @MainActor func testCommandWheelZoomSharesDisplayRangeAndKeepsPlaybackPosition() async throws {
+        let editor = PlacementEditor()
+        _ = editor.view
+        editor.duration = 421
+        editor.currentTime = 25
+        editor.setAvailable(true)
+        var savedSpans: [Double] = []
+        var savedWholeSong: [Bool] = []
+        editor.onVisibleSpanChange = { savedSpans.append($0) }
+        editor.onWholeSongChange = { savedWholeSong.append($0) }
+
+        func wheel(_ lines: Int32, command: Bool = true) throws {
+            let event = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+                                              wheel1: lines, wheel2: 0, wheel3: 0))
+            if command { event.flags = .maskCommand }
+            editor.timeline.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: event)))
+        }
+
+        try wheel(1, command: false)
+        XCTAssertEqual(editor.visibleSpan, 12)
+        try wheel(1)
+        XCTAssertLessThan(editor.visibleSpan, 12)
+        XCTAssertEqual(editor.timeline.visibleSpan, 12)
+        try wheel(1)
+        XCTAssertEqual(editor.visibleSpan, 12 / pow(1.15, 2), accuracy: 1e-9)
+        XCTAssertEqual(editor.timeline.visibleSpan, 12)
+        try await waitForZoom(editor, checkingIntermediateFrames: true)
+        XCTAssertEqual(editor.timeline.visibleSpan, editor.visibleSpan)
+        XCTAssertEqual(savedSpans.last, editor.visibleSpan)
+        XCTAssertEqual(editor.timeline.currentTime, 25)
+
+        let slider = try XCTUnwrap(editor.view.subviews.first?.subviews.compactMap { $0 as? NSSlider }.first)
+        XCTAssertEqual(slider.doubleValue, editor.visibleSpan)
+
+        editor.restoreMode(true)
+        var images = ImageTrack()
+        let projectURL = URL(fileURLWithPath: "/tmp/zoom.mvproject")
+        let asset = images.register(url: URL(fileURLWithPath: "/tmp/zoom.png"), projectURL: projectURL)
+        var clip = ImageClip(assetID: asset, start: 24, end: 26)
+        _ = clip.setKey(.scale, at: 25, value: 120)
+        images.layers[2].clips = [clip]
+        editor.images.load(images, projectURL: nil)
+        editor.timeline.revealAutomation(in: 3)
+        try wheel(-2)
+        XCTAssertEqual(editor.visibleSpan, 12, accuracy: 1e-9)
+        try await waitForZoom(editor)
+        XCTAssertEqual(editor.timeline.visibleSpan, editor.visibleSpan)
+        try wheel(100)
+        XCTAssertEqual(editor.visibleSpan, 2)
+        let saveCount = savedSpans.count
+        try wheel(1)
+        XCTAssertEqual(savedSpans.count, saveCount)
+        try wheel(-100)
+        XCTAssertEqual(editor.visibleSpan, 300)
+
+        editor.showsWholeSong = true
+        try wheel(-1)
+        XCTAssertTrue(editor.showsWholeSong)
+        try wheel(1)
+        XCTAssertEqual(savedWholeSong, [false])
+        XCTAssertFalse(editor.showsWholeSong)
+        XCTAssertEqual(editor.timeline.visibleSpan, 421)
+        try await waitForZoom(editor)
+        XCTAssertEqual(editor.timeline.visibleSpan, 300)
+        XCTAssertTrue(editor.timeline.expandedLayerSlots.contains(3))
+        XCTAssertEqual(editor.images.track, images)
+
+        try wheel(1)
+        slider.doubleValue = 40
+        editor.perform(NSSelectorFromString("changeZoom"))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(editor.timeline.visibleSpan, 40, "スライダーの操作で補間を中断する")
+        XCTAssertEqual(savedSpans.last, 40)
+
+        editor.duration = 1.5
+        editor.showsWholeSong = true
+        try wheel(1)
+        XCTAssertTrue(editor.showsWholeSong)
+        XCTAssertEqual(editor.timeline.visibleSpan, 1.5)
+        editor.setAvailable(false)
+        try wheel(-1)
+        XCTAssertEqual(savedWholeSong, [false])
+    }
+
+    @MainActor private func waitForZoom(_ editor: PlacementEditor, checkingIntermediateFrames: Bool = false) async throws {
+        let start = editor.timeline.visibleSpan
+        let target = editor.visibleSpan
+        var sawIntermediateFrame = false
+        for _ in 0..<50 {
+            let span = editor.timeline.visibleSpan
+            if span == target {
+                if checkingIntermediateFrames { XCTAssertTrue(sawIntermediateFrame) }
+                return
+            }
+            if span != start {
+                XCTAssertTrue((min(start, target)...max(start, target)).contains(span))
+                sawIntermediateFrame = true
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("横ズームが目標の表示範囲へ到達しません")
+    }
+
 }

@@ -36,15 +36,20 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         let remove = NSButton(title: "削除", target: self, action: #selector(removeClip))
         color.color = .black; color.target = self; color.action = #selector(changeStyle)
         color.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        width.toolTip = "0で縁取りを無効にします"
         width.target = self; width.action = #selector(changeStyle); width.isContinuous = true
         width.widthAnchor.constraint(equalToConstant: 120).isActive = true
         widthLabel.widthAnchor.constraint(equalToConstant: 60).isActive = true
-        let style = NSStackView(views: [title, add, remove, NSTextField(labelWithString: "縁取り色"), color, NSTextField(labelWithString: "太さ（0で無効）"), width, widthLabel])
+        let toolbar = NSStackView(views: [title, add, remove]); toolbar.spacing = 10
+        let style = NSStackView(views: [NSTextField(labelWithString: "縁取り色"), color, NSTextField(labelWithString: "太さ"), width, widthLabel])
         style.spacing = 10
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lyrics")); column.title = "歌詞（開始〜終了 秒）"; column.width = 350
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lyrics"))
+        column.title = "歌詞（開始〜終了 秒）"
+        column.resizingMask = .autoresizingMask
+        table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         table.addTableColumn(column); table.delegate = self; table.dataSource = self
         let list = NSScrollView(); list.documentView = table; list.hasVerticalScroller = true
-        list.widthAnchor.constraint(equalToConstant: 350).isActive = true
+        list.widthAnchor.constraint(equalToConstant: 175).isActive = true
         body.identifier = NSUserInterfaceItemIdentifier("lyrics.body")
         start.identifier = NSUserInterfaceItemIdentifier("lyrics.start")
         end.identifier = NSUserInterfaceItemIdentifier("lyrics.end")
@@ -64,15 +69,17 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         let detail = NSStackView(views: [textScroll, timing, chain]); detail.orientation = .vertical; detail.spacing = 6
         textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
         let content = NSStackView(views: [list, detail]); content.spacing = 12; content.distribution = .fill
-        content.heightAnchor.constraint(equalToConstant: 135).isActive = true
-        message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor
+        content.heightAnchor.constraint(equalToConstant: 156).isActive = true
+        list.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
+        detail.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
+        message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         timeline.onBeginEdit = { [weak self] in _ = self?.onCapturePlaybackTime?() }
         timeline.onSeek = { [weak self] time in self?.onSeek?(time) }
         timeline.onSelect = { [weak self] id in self?.selectFromTimeline(id) }
         timeline.onPreview = { [weak self] value in self?.onPreview?(value) }
         timeline.onCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
         timeline.onError = { [weak self] error in self?.message.stringValue = error.localizedDescription }
-        for child in [style, content, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, content, style, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         editControls = [add, remove, start, end, color, width, chain]
         setAvailable(false)
     }

@@ -80,4 +80,66 @@ final class TimelineTests: XCTestCase {
             try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/my_movie-timeline-preview.png"))
         }
     }
+    @MainActor func testTrimHoverHighlightsBothClipTypes() throws {
+        _ = NSApplication.shared
+        let frame = NSRect(x: 0, y: 0, width: 1000, height: 210)
+        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = TimelineView(frame: frame)
+        window.contentView = view
+        view.duration = 20
+        view.isEnabled = true
+
+        var images = ImageTrack()
+        let project = URL(fileURLWithPath: "/tmp/trim.mvproject")
+        let asset = images.register(url: URL(fileURLWithPath: "/tmp/trim.png"), projectURL: project)
+        images.layers[2].clips = [ImageClip(assetID: asset, start: 2, end: 4)]
+        view.images = images
+        view.track = LyricsTrack(clips: [LyricClip(start: 2, end: 4, text: "歌詞")])
+        var trimmedLyrics: LyricsTrack?
+        var trimmedImages: ImageTrack?
+        view.onCommit = { value, _ in trimmedLyrics = value }
+        view.onImageCommit = { value, _ in trimmedImages = value }
+
+        func event(_ type: NSEvent.EventType, x: Double, y: Double) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: view.convert(NSPoint(x: x, y: y), to: nil),
+                               modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        func hasYellow(at x: Double) throws -> Bool {
+            let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let column = Int(x * Double(bitmap.pixelsWide) / view.bounds.width)
+            return (0..<bitmap.pixelsHigh).contains { y in
+                guard let color = bitmap.colorAt(x: column, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                return color.redComponent > 0.75 && color.greenComponent > 0.6 && color.blueComponent < 0.5
+            }
+        }
+        for imageMode in [false, true] {
+            view.imageMode = imageMode
+            let y = imageMode ? 68.0 : 55.0
+            let left = view.x(at: 2) + 4
+            let right = view.x(at: 4) - 4
+            view.mouseMoved(with: event(.mouseMoved, x: left, y: y))
+            XCTAssertTrue(try hasYellow(at: left))
+            XCTAssertFalse(try hasYellow(at: right))
+            view.mouseMoved(with: event(.mouseMoved, x: right, y: y))
+            XCTAssertFalse(try hasYellow(at: left))
+            XCTAssertTrue(try hasYellow(at: right))
+            view.mouseMoved(with: event(.mouseMoved, x: view.x(at: 3), y: y))
+            XCTAssertFalse(try hasYellow(at: right))
+
+            let edge = imageMode ? right : left
+            let destination = edge + view.geometry.pointsPerSecond * 0.5
+            view.mouseDown(with: event(.leftMouseDown, x: edge, y: y))
+            view.mouseDragged(with: event(.leftMouseDragged, x: destination, y: y))
+            view.mouseUp(with: event(.leftMouseUp, x: destination, y: y))
+        }
+        XCTAssertEqual(trimmedLyrics?.clips.first?.start, 2.5)
+        XCTAssertEqual(trimmedLyrics?.clips.first?.end, 4)
+        XCTAssertEqual(trimmedImages?.clips.first?.start, 2)
+        XCTAssertEqual(trimmedImages?.clips.first?.end, 4.5)
+    }
+
 }

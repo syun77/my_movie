@@ -1,6 +1,8 @@
 import Foundation
 
 struct ProjectFile: Codable {
+    static let currentVersion = 4
+
     let version: Int
     let audio: AssetReference
     let imageAssets: [ImageAsset]
@@ -10,7 +12,7 @@ struct ProjectFile: Codable {
     let lyrics: LyricsTrack
 
     init(audioURL: URL, images: ImageTrack = ImageTrack(), settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), projectURL: URL) {
-        version = 3
+        version = Self.currentVersion
         audio = AssetReference(url: audioURL, projectURL: projectURL)
         imageAssets = images.assets
         imageLayers = images.layers
@@ -19,11 +21,13 @@ struct ProjectFile: Codable {
     }
 
     func validate() throws {
+        guard version == Self.currentVersion else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         try lyrics.validate()
         try images.validate()
-        let ids = imageAssets.map(\.id) + imageLayers.map(\.id) + images.clips.map(\.id) + lyrics.clips.map(\.id)
+        let imageClips = images.clips
+        let keyIDs = imageClips.flatMap { clip in clip.curves.flatMap { $0.keys.map(\.id) } }
+        let ids = imageAssets.map(\.id) + imageLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
         guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
-        guard version == 3 else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
               settings.beatOffset.isFinite, settings.beatOffset >= 0 else {
             throw StudioError.message("プロジェクトの設定値が不正です。")

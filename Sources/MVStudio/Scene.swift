@@ -10,6 +10,23 @@ struct AudioFeatures: Sendable {
     let duration: Double
     let step: Double
     let frames: [[Float]]
+    let transientTimes: [Double]
+
+    func transientPulse(at time: Double) -> Double {
+        guard time >= 0, time < duration else { return 0 }
+        var lower = 0
+        var upper = transientTimes.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if transientTimes[middle] <= time {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        guard lower > 0 else { return 0 }
+        return zoomPulse(elapsed: time - transientTimes[lower - 1])
+    }
 
     func bands(at time: Double) -> [Float] {
         guard !frames.isEmpty, time >= 0, time < duration else { return Array(repeating: 0, count: 32) }
@@ -26,15 +43,21 @@ enum SceneRenderer {
         let rect = CGRect(origin: .zero, size: size)
         context.setFillColor(CGColor(red: 0.025, green: 0.035, blue: 0.065, alpha: 1))
         context.fill(rect)
+        let pulse = images.isEmpty ? 0 : features?.transientPulse(at: time) ?? 0
         for layer in images where layer.clip.start <= time && time < layer.clip.end {
             let image = layer.image
             let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
-            let scale = fit * layer.clip.scale(at: time, settings: settings)
+            let scale = fit * layer.clip.scale(at: time, settings: settings, transientPulse: pulse)
             let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
             context.saveGState()
             context.clip(to: rect)
             context.interpolationQuality = .high
-            context.draw(image, in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height))
+            let x = layer.clip.manualValue(.x, at: time) * (size.width / 1920)
+            let y = layer.clip.manualValue(.y, at: time) * (size.height / 1080)
+            let degrees = layer.clip.manualValue(.rotation, at: time).truncatingRemainder(dividingBy: 360)
+            context.translateBy(x: size.width / 2 + x, y: size.height / 2 + y)
+            context.rotate(by: -degrees * (.pi / 180))
+            context.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
             context.restoreGState()
         }
         if settings.spectrum, let features {

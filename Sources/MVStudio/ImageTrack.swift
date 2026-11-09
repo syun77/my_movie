@@ -11,14 +11,10 @@ struct ImageClip: Codable, Sendable, Equatable, Identifiable {
     var assetID: UUID
     var start: Double
     var end: Double
-    var beatPulseEnabled = true
+    var automaticAnimation = AutomaticAnimation.transient
     var pulseAmount = 0.08
-
-    func scale(at time: Double, settings: SceneSettings) -> Double {
-        guard beatPulseEnabled, time >= settings.beatOffset else { return 1 }
-        let phase = (time - settings.beatOffset).truncatingRemainder(dividingBy: 60 / settings.bpm)
-        return 1 + pulseAmount * exp(-phase * 12)
-    }
+    var fixedValues: [ImageParameter: Double] = [:]
+    var curves: [ImageCurve] = []
 }
 
 struct ImageLayer: Codable, Sendable, Equatable, Identifiable {
@@ -53,10 +49,10 @@ struct ImageTrack: Codable, Sendable, Equatable {
                 guard ids.insert(clip.id).inserted, assetIDs.contains(clip.assetID),
                       clip.start.isFinite, clip.end.isFinite, clip.start >= previousEnd,
                       clip.end - clip.start >= 1.0 / 30 - 1e-9,
-                      duration.map({ clip.end <= $0 + 1e-9 }) ?? true,
-                      clip.pulseAmount.isFinite, (0...0.25).contains(clip.pulseAmount) else {
+                      duration.map({ clip.end <= $0 + 1e-9 }) ?? true else {
                     throw StudioError.message("画像の区間は曲内で、同じレイヤー内では重ならないようにしてください（最小1フレーム）。")
                 }
+                try clip.validateAnimation(ids: &ids)
                 previousEnd = clip.end
             }
         }
@@ -140,7 +136,7 @@ struct ImageTrack: Codable, Sendable, Equatable {
         case .move:
             let start = try grid.snap(clip.start + delta, within: before...(min(after, duration) - (clip.end - clip.start)))
             clip.end += start - clip.start; clip.start = start
-        case .start: clip.start = try grid.snap(clip.start + delta, within: before...(clip.end - 1.0 / 30))
+        case .start: clip.trimStart(to: try grid.snap(clip.start + delta, within: before...(clip.end - 1.0 / 30)))
         case .end: clip.end = try grid.snap(clip.end + delta, within: (clip.start + 1.0 / 30)...min(after, duration))
         }
         return try updating(clip, slot: slot, duration: duration)
