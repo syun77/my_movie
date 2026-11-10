@@ -5,7 +5,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     var onCommit: ((ImageEffects) -> Void)?
     var onPreview: ((ImageEffects?) -> Void)?
     private enum Kind: Int, CaseIterable {
-        case blur, bloom, particles, embers
+        case blur, bloom, particles, embers, snow, orbs
 
         var title: String {
             switch self {
@@ -13,6 +13,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .bloom: return "ブルーム"
             case .particles: return "光の粒子"
             case .embers: return "舞い上がる火の粉"
+            case .snow: return "雪"
+            case .orbs: return "光の粒子2"
             }
         }
 
@@ -22,6 +24,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .bloom: return effects.bloom != nil
             case .particles: return effects.particles != nil
             case .embers: return effects.embers != nil
+            case .snow: return effects.snow != nil
+            case .orbs: return effects.orbs != nil
             }
         }
     }
@@ -118,7 +122,24 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                 + number("揺れの速さ %", \.embers, \.swaySpeed, emberDefaults.swaySpeed, Embers.swaySpeedRange)
                 + number("明るさ %", \.embers, \.brightness, emberDefaults.brightness, Embers.brightnessRange))
         ])
-        for kind in [Kind.particles, .embers] {
+        typealias Snow = ImageEffects.Snow
+        let snowDefaults = Snow(seed: 0)
+        contents[.snow] = NSStackView(views: [
+            row(number("個数", \.snow, \.count, snowDefaults.count, Snow.countRange)
+                + number("大きさ px", \.snow, \.diameter, snowDefaults.diameter, Snow.diameterRange)
+                + number("落下速度 px/秒", \.snow, \.fallSpeed, snowDefaults.fallSpeed, Snow.fallSpeedRange)),
+            row(number("横風 %", \.snow, \.wind, snowDefaults.wind, Snow.windRange)
+                + number("不透明度 %", \.snow, \.opacity, snowDefaults.opacity, Snow.opacityRange))
+        ])
+        typealias Orbs = ImageEffects.Orbs
+        let orbDefaults = Orbs()
+        contents[.orbs] = NSStackView(views: [
+            row(number("発生数", \.orbs, \.count, orbDefaults.count, Orbs.countRange)
+                + number("彩度 %", \.orbs, \.saturation, orbDefaults.saturation, Orbs.saturationRange)),
+            row(number("速度 %", \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
+                + number("不透明度 %", \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
+        ])
+        for kind in [Kind.particles, .embers, .snow, .orbs] {
             contents[kind]?.orientation = .vertical
             contents[kind]?.alignment = .leading
             contents[kind]?.spacing = 4
@@ -243,6 +264,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .bloom: enabled.state = effects.bloom?.isEnabled == true ? .on : .off
         case .particles: enabled.state = effects.particles?.isEnabled == true ? .on : .off
         case .embers: enabled.state = effects.embers?.isEnabled == true ? .on : .off
+        case .snow: enabled.state = effects.snow?.isEnabled == true ? .on : .off
+        case .orbs: enabled.state = effects.orbs?.isEnabled == true ? .on : .off
         case nil: enabled.state = .off
         }
         if let particles = effects.particles, !color.isActive { color.color = particles.color.nsColor }
@@ -323,6 +346,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .bloom: result.bloom = .init()
         case .particles: result.particles = .init()
         case .embers: result.embers = .init()
+        case .snow: result.snow = .init()
+        case .orbs: result.orbs = .init()
         }
         selected = kind
         onCommit?(result)
@@ -337,6 +362,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .bloom: result.bloom?.isEnabled = isEnabled
         case .particles: result.particles?.isEnabled = isEnabled
         case .embers: result.embers?.isEnabled = isEnabled
+        case .snow: result.snow?.isEnabled = isEnabled
+        case .orbs: result.orbs?.isEnabled = isEnabled
         case nil: return
         }
         onCommit?(result)
@@ -351,6 +378,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .bloom: result.bloom = nil
         case .particles: result.particles = nil
         case .embers: result.embers = nil
+        case .snow: result.snow = nil
+        case .orbs: result.orbs = nil
         case nil: return
         }
         onCommit?(result)

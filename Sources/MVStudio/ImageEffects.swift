@@ -6,6 +6,8 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var bloom: Bloom?
     var particles: Particles?
     var embers: Embers?
+    var snow: Snow?
+    var orbs: Orbs?
 
     struct Blur: Codable, Equatable, Sendable {
         var isEnabled = true
@@ -205,6 +207,125 @@ struct ImageEffects: Codable, Equatable, Sendable {
         }
     }
 
+    struct Snow: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var count = 200.0
+        var diameter = 22.0
+        var fallSpeed = 220.0
+        var wind = 20.0
+        var opacity = 55.0
+        var seed = UInt32.random(in: .min ... .max)
+        var phaseOffset = 0.0
+
+        static let countRange = 1.0...200
+        static let diameterRange = 2.0...64
+        static let fallSpeedRange = 20.0...700
+        static let windRange = -100.0...100
+        static let opacityRange = 0.0...100
+
+        var isValid: Bool {
+            Self.countRange.contains(count) && count == count.rounded()
+                && Self.diameterRange.contains(diameter) && Self.fallSpeedRange.contains(fallSpeed)
+                && Self.windRange.contains(wind) && Self.opacityRange.contains(opacity)
+                && phaseOffset.isFinite && abs(phaseOffset) <= Double.greatestFiniteMagnitude / 1024
+        }
+
+        func instances(at localTime: Double, size: SIMD2<Double>) -> [SIMD4<Float>] {
+            let time = localTime + phaseOffset
+            let windSlope = wind / 100
+            let alpha = opacity / 100
+            return (0..<Int(count)).map { index in
+                func random(_ channel: UInt32) -> Double {
+                    ImageEffects.random(seed: seed, index: index, channel: channel)
+                }
+                let depth = random(0)
+                let flakeDiameter = diameter * (0.35 + 1.3 * depth)
+                let radius = flakeDiameter / 2
+                let velocity = fallSpeed * (0.45 + 1.1 * depth)
+                let fallDistance = size.y + flakeDiameter
+                let fallPeriod = fallDistance / velocity
+                let fallPhase = time.truncatingRemainder(dividingBy: fallPeriod) / fallPeriod
+                let y = ImageEffects.wrap(fallPhase + random(1), length: 1) * fallDistance - radius
+                let swayPeriod = 5 + 4 * random(2)
+                let swayPhase = time.truncatingRemainder(dividingBy: swayPeriod) / swayPeriod + random(3)
+                let sway = (20 + 50 * depth) * cos(swayPhase * 2 * .pi)
+                let drift = (y - size.y / 2) * windSlope
+                let wrapWidth = size.x + flakeDiameter
+                let x = ImageEffects.wrap(random(4) * wrapWidth + drift + sway, length: wrapWidth) - radius
+                return SIMD4(Float(x), Float(y), Float(flakeDiameter), Float(alpha * (0.4 + 0.6 * depth)))
+            }
+        }
+    }
+
+    struct Orbs: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var count = Double(Self.defaultCount)
+        var saturation = Self.defaultSaturation
+        var speed = 100.0
+        var opacity = 100.0
+        var phaseOffset = 0.0
+
+        static let countRange = 1.0...200
+        static let saturationRange = 0.0...100
+        static let speedRange = 0.0...200
+        static let opacityRange = 0.0...100
+        private static let defaultCount = 150
+        private static let defaultSaturation = 100.0
+        private static let maxCount = Int(countRange.upperBound)
+
+        private struct Orbit {
+            let frequency: SIMD2<Double>
+            let tilt: Double
+            let rotation: Double
+            let expansionRate: Double
+            let expansionPhase: Double
+            let diameter: Float
+        }
+
+        static let colors: [SIMD3<Float>] = (0..<maxCount).map { index in
+            func channel(_ offset: Int) -> Float {
+                let value = sin(Double(index + offset * defaultCount) * 43) * 4790.234
+                return Float(value - floor(value))
+            }
+            return SIMD3(channel(0), channel(1), channel(2))
+        }
+
+        private static let orbits = (0..<maxCount).map { index in
+            func random(_ channel: UInt32) -> Double {
+                ImageEffects.random(seed: 0xA3D8E7B1, index: index, channel: channel)
+            }
+            return Orbit(frequency: SIMD2(0.55 + random(0) * 0.9, 0.5 + random(1) * 0.85),
+                         tilt: random(2) * 2 * .pi,
+                         rotation: (random(3) - 0.5) * 0.75,
+                         expansionRate: 0.25 + random(4) * 0.65,
+                         expansionPhase: random(5) * 2 * .pi,
+                         diameter: Float(40 + random(6) * 36))
+        }
+
+        var isValid: Bool {
+            Self.countRange.contains(count) && count == count.rounded() && Self.saturationRange.contains(saturation)
+                && Self.speedRange.contains(speed) && Self.opacityRange.contains(opacity)
+                && phaseOffset.isFinite && abs(phaseOffset) <= Double.greatestFiniteMagnitude / 1024
+        }
+
+        func instances(at localTime: Double, size: SIMD2<Double>) -> [SIMD4<Float>] {
+            let time = (localTime + phaseOffset) * (speed / 100)
+            let center = size / 2
+            let alpha = Float(opacity / 100)
+            return zip(Self.colors, Self.orbits).prefix(Int(count)).map { color, orbit in
+                let red = Double(color.x), green = Double(color.y)
+                let x = sin(time * orbit.frequency.x + red * 30) * red
+                let y = -cos(time * orbit.frequency.y + red * 40) * green * 0.5
+                let tilt = orbit.tilt + time * orbit.rotation
+                let sine = sin(tilt), cosine = cos(tilt)
+                let expansion = 1.15 + 0.35 * sin(time * orbit.expansionRate + orbit.expansionPhase)
+                let offset = SIMD2(x * cosine - y * sine, x * sine + y * cosine) * (size.y * expansion)
+                let position = center + offset
+                return SIMD4(Float(position.x), Float(position.y), orbit.diameter, alpha)
+            }
+        }
+    }
+
     private static func random(seed: UInt32, index: Int, channel: UInt32) -> Double {
         var value = seed &+ UInt32(truncatingIfNeeded: index) &* 0x9E3779B9 &+ channel &* 0x85EBCA6B
         value ^= value >> 16
@@ -231,7 +352,19 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return embers?.isValid != false
+        return embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+    }
+}
+
+extension ImageEffects.Orbs {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try values.decode(Bool.self, forKey: .isEnabled)
+        count = try values.decodeIfPresent(Double.self, forKey: .count) ?? Double(Self.defaultCount)
+        saturation = try values.decodeIfPresent(Double.self, forKey: .saturation) ?? Self.defaultSaturation
+        speed = try values.decode(Double.self, forKey: .speed)
+        opacity = try values.decode(Double.self, forKey: .opacity)
+        phaseOffset = try values.decode(Double.self, forKey: .phaseOffset)
     }
 }
 

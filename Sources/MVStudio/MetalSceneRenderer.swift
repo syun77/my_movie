@@ -21,6 +21,8 @@ final class MetalSceneRenderer {
     private let imagePipeline: MTLRenderPipelineState
     private let particlePipeline: MTLRenderPipelineState
     private let emberPipeline: MTLRenderPipelineState
+    private let snowPipeline: MTLRenderPipelineState
+    private let orbPipeline: MTLRenderPipelineState
     private let overlayPipeline: MTLRenderPipelineState
     private let outputPipeline: MTLRenderPipelineState
     private let scene: MTLTexture
@@ -107,6 +109,8 @@ final class MetalSceneRenderer {
         imagePipeline = try pipeline("fullscreen", "imageLayer")
         particlePipeline = try pipeline("particleQuad", "particleLight", additive: true)
         emberPipeline = try pipeline("particleQuad", "emberLight", additive: true)
+        snowPipeline = try pipeline("particleQuad", "snowFlake")
+        orbPipeline = try pipeline("particleQuad", "orbLight", additive: true)
         overlayPipeline = try pipeline("fullscreen", "artwork")
         outputPipeline = try pipeline("fullscreen", "outputColor", format: .bgra8Unorm, blending: false)
         scene = try Self.makeTexture(device: device, width: Int(size.width), height: Int(size.height),
@@ -172,6 +176,17 @@ final class MetalSceneRenderer {
             }
             if let embers = clip.effects?.embers, embers.isEnabled, embers.brightness > 0 {
                 drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: composition)
+            }
+            if let snow = clip.effects?.snow, snow.isEnabled, snow.opacity > 0 {
+                drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: composition)
+            }
+            if let orbs = clip.effects?.orbs, orbs.isEnabled, orbs.opacity > 0 {
+                ImageEffects.Orbs.colors.withUnsafeBytes { bytes in
+                    composition.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+                }
+                var saturation = Float(orbs.saturation / 100)
+                composition.setFragmentBytes(&saturation, length: MemoryLayout<Float>.size, index: 1)
+                drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: composition)
             }
         }
         composition.setRenderPipelineState(overlayPipeline)

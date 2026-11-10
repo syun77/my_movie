@@ -192,6 +192,60 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertFalse(ImageEffects(embers: embers).isValid)
     }
 
+    func testSnowFallsAndPreservesPhaseAfterTrimAndReload() throws {
+        let size = SIMD2(1920.0, 1080.0)
+        var snow = ImageEffects.Snow(seed: 42)
+        let first = snow.instances(at: 1.5, size: size)
+        let next = snow.instances(at: 1.6, size: size)
+        XCTAssertEqual(first.count, 200)
+        XCTAssertGreaterThan(Set(first.map(\.z)).count, 1)
+        XCTAssertGreaterThan(zip(first, next).filter { $1.y > $0.y }.count, 180)
+        XCTAssertGreaterThan(zip(first, next).filter { $1.x != $0.x }.count, 180)
+
+        var clip = ImageClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(snow: snow))
+        clip.trimStart(to: 2)
+        let restored = try JSONDecoder().decode(ImageClip.self, from: JSONEncoder().encode(clip))
+        XCTAssertEqual(restored, clip)
+        XCTAssertEqual(restored.effects?.snow?.instances(at: 0.5, size: size), first)
+        XCTAssertTrue(snow.instances(at: -8, size: size).allSatisfy { $0.x.isFinite && $0.y.isFinite })
+        snow.count = 200.5
+        XCTAssertFalse(ImageEffects(snow: snow).isValid)
+    }
+
+    func testOrbMotionAndPhaseAfterTrimAndReload() throws {
+        let size = SIMD2(Double(VideoExporter.width), Double(VideoExporter.height))
+        let orbs = ImageEffects.Orbs()
+        let particles = orbs.instances(at: 1.5, size: size)
+        XCTAssertEqual(particles.count, 150)
+        XCTAssertEqual(Set(ImageEffects.Orbs.colors).count, 200)
+        let afterCycle = orbs.instances(at: 1.5 + 2 * .pi / 1.125, size: size)
+        XCTAssertGreaterThan(zip(particles, afterCycle).filter { first, later in
+            hypot(first.x - later.x, first.y - later.y) > 100
+        }.count, 75)
+        var slow = orbs
+        slow.speed = 50
+        XCTAssertEqual(slow.instances(at: 3, size: size), particles)
+        slow.speed = 0
+        XCTAssertEqual(slow.instances(at: 20, size: size), orbs.instances(at: 0, size: size))
+
+        let customized = ImageEffects.Orbs(count: 200, saturation: 30)
+        let expanded = customized.instances(at: 1.5, size: size)
+        XCTAssertEqual(expanded.count, 200)
+        XCTAssertEqual(Array(expanded.prefix(150)), particles)
+        XCTAssertFalse(ImageEffects.Orbs(count: 1.5).isValid)
+        XCTAssertFalse(ImageEffects.Orbs(count: 201).isValid)
+        XCTAssertFalse(ImageEffects.Orbs(saturation: 101).isValid)
+
+        var clip = ImageClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(orbs: customized))
+        clip.trimStart(to: 2)
+        let restored = try JSONDecoder().decode(ImageClip.self, from: JSONEncoder().encode(clip))
+        XCTAssertEqual(restored, clip)
+        XCTAssertEqual(restored.effects?.orbs?.instances(at: 0.5, size: size), expanded)
+
+        let saved = Data(#"{"isEnabled":true,"speed":100,"opacity":100,"phaseOffset":0}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(ImageEffects.Orbs.self, from: saved), orbs)
+    }
+
     func testMetalCompositionBlurBloomAndParticleLayering() throws {
         let renderer = try MetalSceneRenderer()
         let width = VideoExporter.width, height = VideoExporter.height
@@ -339,5 +393,63 @@ final class ImageEffectsTests: XCTestCase {
         emberClip.effects?.embers?.isEnabled = false
         try render([ImageRenderLayer(clip: emberClip, image: black)])
         XCTAssertEqual(pixel(sx, sy), [0, 0, 0, 255])
+
+        var snowClip = cover
+        snowClip.id = UUID()
+        let snow = ImageEffects.Snow(diameter: 50, seed: 42)
+        snowClip.effects = ImageEffects(snow: snow)
+        let flake = try XCTUnwrap(snow.instances(at: 0.5, size: SIMD2(Double(width), Double(height))).first {
+            $0.x > 50 && $0.x < Float(width - 50) && $0.y > 50 && $0.y < Float(height - 50)
+        })
+        let fx = Int(flake.x), fy = Int(flake.y)
+        let snowLayer = ImageRenderLayer(clip: snowClip, image: black)
+        try render([snowLayer])
+        let core = pixel(fx, fy)
+        let flakeEdge = pixel(fx + Int(flake.z * 0.3), fy)
+        XCTAssertEqual(core[0], core[1])
+        XCTAssertEqual(core[1], core[2])
+        XCTAssertGreaterThan(core[0], flakeEdge[0])
+        XCTAssertGreaterThan(flakeEdge[0], 0)
+        try render([snowLayer, ImageRenderLayer(clip: cover, image: black)])
+        XCTAssertEqual(pixel(fx, fy), [0, 0, 0, 255])
+        snowClip.effects?.snow?.opacity = 0
+        try render([ImageRenderLayer(clip: snowClip, image: black)])
+        XCTAssertEqual(pixel(fx, fy), [0, 0, 0, 255])
+
+        var orbClip = cover
+        orbClip.id = UUID()
+        let orbs = ImageEffects.Orbs()
+        orbClip.effects = ImageEffects(orbs: orbs)
+        let orbLayer = ImageRenderLayer(clip: orbClip, image: red)
+        let sprites = orbs.instances(at: 0.5, size: SIMD2(Double(width), Double(height)))
+        let index = try XCTUnwrap(sprites.indices.first { candidate in
+            let sprite = sprites[candidate]
+            return sprite.x > 100 && sprite.x < Float(width - 100)
+                && sprite.y > 100 && sprite.y < Float(height - 100) && ImageEffects.Orbs.colors[candidate].y > 0.7
+                && sprites.indices.allSatisfy { other in
+                    candidate == other || hypot(sprite.x - sprites[other].x, sprite.y - sprites[other].y) > 80
+                }
+        })
+        let orbX = Int(sprites[index].x), orbY = Int(sprites[index].y)
+        let radius = Int(ceil(sprites[index].z / 2))
+        try render([ImageRenderLayer(clip: cover, image: red)])
+        let imageColor = pixel(orbX, orbY)
+        try render([orbLayer])
+        XCTAssertGreaterThan(pixel(orbX, orbY)[1], 100)
+        XCTAssertEqual(pixel(orbX, orbY)[2], imageColor[2])
+        XCTAssertEqual(pixel(orbX + radius + 2, orbY), imageColor)
+        XCTAssertEqual(pixel(orbX + radius / 2, orbY + radius), imageColor)
+        try render([orbLayer, ImageRenderLayer(clip: cover, image: black)])
+        XCTAssertEqual(pixel(orbX, orbY), [0, 0, 0, 255])
+        orbClip.effects?.orbs?.saturation = 0
+        orbClip.effects?.orbs?.count = 200
+        try render([ImageRenderLayer(clip: orbClip, image: black)])
+        let gray = pixel(orbX, orbY)
+        XCTAssertGreaterThan(gray[0], 100)
+        XCTAssertEqual(gray[0], gray[1])
+        XCTAssertEqual(gray[1], gray[2])
+        orbClip.effects?.orbs?.opacity = 0
+        try render([ImageRenderLayer(clip: orbClip, image: red)])
+        XCTAssertEqual(pixel(orbX, orbY), imageColor)
     }
 }

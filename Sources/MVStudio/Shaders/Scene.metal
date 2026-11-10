@@ -94,6 +94,23 @@ fragment float4 emberLight(Particle in [[stage_in]]) {
     return float4((warm * core + glow) * light, max(core, halo) * light);
 }
 
+fragment float4 snowFlake(Particle in [[stage_in]]) {
+    float alpha = (1 - smoothstep(0.0, 1.0, length(in.uv))) * in.opacity;
+    return float4(alpha);
+}
+
+fragment float4 orbLight(Particle in [[stage_in]], constant float3 *colors [[buffer(0)]],
+                         constant float &saturation [[buffer(1)]]) {
+    const float coreRadius = 0.2;
+    float radius = length(in.uv);
+    float glow = coreRadius / max(radius, coreRadius);
+    float alpha = in.opacity * glow * (1 - smoothstep(coreRadius, 1.0, radius));
+    float3 color = linearFromSRGB(colors[uint(in.index)] * 1.5);
+    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    color = mix(float3(luminance), color, saturation);
+    return float4(color * alpha, alpha);
+}
+
 fragment float4 outputColor(Quad in [[stage_in]], texture2d<float> scene [[texture(0)]],
                             constant uint &video [[buffer(0)]]) {
     float3 rgb = saturate(scene.sample(linearSampler, in.uv).rgb);

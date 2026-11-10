@@ -1,3 +1,42 @@
+# 光の粒子2の加算合成・発生数・彩度（完了）
+
+- 最終更新: 2026-11-11 00:54 JST。光の粒子2を加算合成にし、発生数と彩度を編集可能にする。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift、UndoTests.swift。整理フェーズでは既存の加算パイプライン、DragValueField、固定粒子テーブルを再利用し、彩度は描画側だけで評価する構成を確認。README、設計書、AGENTS.mdを更新。
+- 検証: 全50件成功。加算合成、彩度0%、200粒描画、発生数と彩度の編集・保存・Undo/Redo、項目未保存時の既定値、MP4出力を確認（`/tmp/my_movie-orb-controls-test.log`）。
+- 生成: `./scripts/build-app.sh` 成功。最新の `dist/MV Studio.app` の署名と同梱シェーダーを確認（`/tmp/my_movie-orb-controls-build.log`）。git diff --check成功。
+- 次: 最新アプリで「光の粒子2」の発生数と彩度を調整する。アプリ画面での目視確認は未実施。実行中の処理と未解決の障害なし。
+
+# 光の粒子2の軌道と透過合成（完了）
+
+- 最終更新: 2026-11-11 00:49 JST。粒ごとに軌道を拡縮・回転させ、粒子の外は元画像をそのまま表示する。
+- 変更: ImageEffects.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift。全画面パスを除去し、共通インスタンス描画を再利用。軌道の固定パラメーターと時刻評価を分離。README、docs/IMAGE_EFFECTS.md、AGENTS.mdも更新。
+- 検証: 全50件成功。軌道のばらつきと位相保持、粒子外で背景色が完全一致すること、MP4出力を確認（`/tmp/my_movie-orb-motion-test.log`）。
+- 生成: `./scripts/build-app.sh` 成功。最新の `dist/MV Studio.app` の署名と同梱シェーダーを確認（`/tmp/my_movie-orb-motion-build.log`）。git diff --check成功。
+- 次: 最新アプリで「光の粒子2」をプレビューする。GUIの目視確認は未実施。実行中の処理と未解決の障害なし。
+
+# 光の粒子2（完了）
+
+- 最終更新: 2026-11-11 00:43 JST
+- 要件: 提供されたシェーダーを参考に画像クリップ演出「光の粒子2」を追加する。
+- 完了: 150粒の固定RGB色・正弦／余弦軌道・距離による光の重なりを実装し、画像へ透過合成。速度と不透明度を編集でき、左トリムで位相を保持する。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageAnimation.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift、UndoTests.swift、StudioTests.swift、README、docs、AGENTS.md、PROGRESS.md。
+- 整理: 軌道と配色はモデル、描画データの転送はレンダラー、光の重なりはMetalへ分離。数値編集は共通DragValueFieldを再利用。
+- 検証: 全50件成功。軌道・保存復元、Metal描画、編集とUndo/Redo、動画出力を確認（`/tmp/my_movie-orbs-test-full.log`）。git diff --check成功。
+- 生成: `./scripts/build-app.sh` 成功。最新の `dist/MV Studio.app` を生成し、署名と同梱シェーダーの一致を確認（`/tmp/my_movie-orbs-build.log`）。
+- 次: 最新アプリで画像クリップを選び「追加演出 → ＋ 演出を追加 → 光の粒子2」を選択する。GUIでの目視確認は未実施。実行中の処理と未解決の障害なし。
+
+# 雪の追加演出（完了）
+
+- 最終更新: 2026-11-11 00:36 JST
+- 要件: 提供されたシェーダーを参考に画像クリップ演出「雪」を追加する。
+- 完了: 設定モデル・編集欄・Metal合成・左トリムを接続。軌道、保存、Metal描画、Undo、動画出力の既存テストを拡張。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageAnimation.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift、UndoTests.swift、StudioTests.swift、PROGRESS.md。
+- 整理: 落下位相と座標計算を分離し、粒子の乱数・折り返し・インスタンス描画と既存編集経路を再利用。README、設計書、AGENTS.mdを更新。git diff --check成功。
+- 検証: 制限環境で49件中46件成功。ペーストボード、Metal、動画出力の3件は環境制限で失敗（`/tmp/my_movie-snow-test.log`）。
+- 検証: 制限外で全49件成功。雪の輪郭、上段の遮蔽、不透明度0%、編集と自動保存・Undo/Redo、雪を含むMP4出力を確認（`/tmp/my_movie-snow-test-full.log`）。
+- 生成: `./scripts/build-app.sh` 成功。最新の `dist/MV Studio.app` を生成し、署名と同梱シェーダーの一致を確認（`/tmp/my_movie-snow-build.log`）。
+- 次: 最新アプリで画像クリップを選び「追加演出 → ＋ 演出を追加 → 雪」を選択する。GUIの目視確認は未実施。実行中の処理なし。
+
 # 火の粉の揺れの速さ（完了）
 
 - 最終更新: 2026-11-11 00:27 JST

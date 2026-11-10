@@ -306,6 +306,47 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit()
         XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
 
+        let addSnow = try XCTUnwrap(addEffect.item(withTitle: "雪"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addSnow.action), to: addSnow.target, from: addSnow))
+        XCTAssertFalse(addSnow.isEnabled)
+        let fallSpeed = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+            .first { $0.isEnabled && $0.accessibilityLabel() == "落下速度 px/秒" })
+        fallSpeed.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        fallSpeed.mouseDragged(with: try mouse(.leftMouseDragged, x: 130))
+        fallSpeed.mouseUp(with: try mouse(.leftMouseUp, x: 130))
+        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.snow?.fallSpeed, 250)
+        delegate.undoEdit()
+        XCTAssertEqual(fallSpeed.doubleValue, 220)
+        delegate.redoEdit()
+        XCTAssertEqual(fallSpeed.doubleValue, 250)
+        delegate.undoEdit()
+        delegate.undoEdit()
+        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+
+        let addOrbs = try XCTUnwrap(addEffect.item(withTitle: "光の粒子2"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addOrbs.action), to: addOrbs.target, from: addOrbs))
+        XCTAssertFalse(addOrbs.isEnabled)
+        let orbControls: [(String, KeyPath<ImageEffects.Orbs, Double>)] = [
+            ("速度 %", \.speed), ("発生数", \.count), ("彩度 %", \.saturation)
+        ]
+        for (label, key) in orbControls {
+            let field = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+                .first { $0.isEnabled && $0.accessibilityLabel() == label })
+            let initial = ImageEffects.Orbs()[keyPath: key]
+            field.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+            field.mouseDragged(with: try mouse(.leftMouseDragged, x: 70))
+            field.mouseUp(with: try mouse(.leftMouseUp, x: 70))
+            let saved = try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.orbs
+            XCTAssertEqual(saved?[keyPath: key], initial - 30)
+            delegate.undoEdit()
+            XCTAssertEqual(field.doubleValue, initial)
+            delegate.redoEdit()
+            XCTAssertEqual(field.doubleValue, initial - 30)
+            delegate.undoEdit()
+        }
+        delegate.undoEdit()
+        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+
         let addParticles = try XCTUnwrap(addEffect.item(withTitle: "光の粒子"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addParticles.action), to: addParticles.target, from: addParticles))
         let addSource = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? NSButton }

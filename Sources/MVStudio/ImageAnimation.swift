@@ -175,6 +175,8 @@ extension ImageClip {
         }
         effects?.particles?.phaseOffset += delta
         effects?.embers?.phaseOffset += delta
+        effects?.snow?.phaseOffset += delta
+        effects?.orbs?.phaseOffset += delta
         start = time
     }
 

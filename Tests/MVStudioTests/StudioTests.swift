@@ -179,7 +179,7 @@ final class StudioTests: XCTestCase {
         _ = animated.setKey(.x, at: 0.6, value: 0)
         _ = animated.setKey(.x, at: 0.7, value: 600)
         animated.effects = ImageEffects(blur: .init(radius: 3), bloom: .init(threshold: 10), particles: .init(color: RGBColor(red: 0, green: 1, blue: 0), seed: 1),
-                                        embers: .init(seed: 18))
+                                        embers: .init(seed: 18), snow: .init(seed: 42), orbs: .init(opacity: 30))
         images.layers[2].clips = [animated]
         let layout = SpectrumLayout(x: 300, y: 650, width: 900, height: 180)
         let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 1), resolution: .medium, layout: layout)
