@@ -2,14 +2,19 @@ import AppKit
 
 @MainActor
 final class PlacementEditor: NSViewController {
+    enum Tab: Int {
+        case lyrics, images, spectrum
+    }
+
     let lyrics = LyricsEditor()
     let images = ImageEditor()
+    let spectrum = SpectrumEditor()
     var timeline: TimelineView { lyrics.timeline }
     var onVisibleSpanChange: ((Double) -> Void)?
     var onWholeSongChange: ((Bool) -> Void)?
     var onModeChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
-    private let tabs = NSSegmentedControl(labels: ["歌詞", "画像・演出"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["歌詞", "画像・演出", "スペクトラム"], trackingMode: .selectOne, target: nil, action: nil)
     private let zoom = NSSlider(value: TimelineDisplaySettings.defaultSpan, minValue: TimelineDisplaySettings.spanRange.lowerBound, maxValue: TimelineDisplaySettings.spanRange.upperBound, target: nil, action: nil)
     private let zoomLabel = NSTextField(labelWithString: "12.0秒")
     private let wholeSong = NSButton(checkboxWithTitle: "曲全体", target: nil, action: nil)
@@ -18,11 +23,17 @@ final class PlacementEditor: NSViewController {
     private let wheelZoomDuration = 0.2
     let inspector = NSStackView()
     private var heightConstraint: NSLayoutConstraint!
-    private(set) var imageMode = false
+    private(set) var selectedTab: Tab = .lyrics
+    var imageMode: Bool { timeline.imageMode }
     var visibleSpan = TimelineDisplaySettings.defaultSpan {
         didSet { updateDisplayRange() }
     }
-    var showsWholeSong = false { didSet { updateDisplayRange() } }
+    var showsWholeSong = false {
+        didSet {
+            if showsWholeSong { timeline.followPlayhead() }
+            updateDisplayRange()
+        }
+    }
     var currentTime = 0.0 { didSet { lyrics.currentTime = currentTime; images.currentTime = currentTime } }
     var duration = 0.0 { didSet { lyrics.duration = duration; images.duration = duration; updateDisplayRange() } }
     var snapGrid = TimelineSnapGrid() { didSet { lyrics.snapGrid = snapGrid; images.snapGrid = snapGrid } }
@@ -51,26 +62,40 @@ final class PlacementEditor: NSViewController {
         inspector.alignment = .leading
         inspector.spacing = 12
         inspector.addArrangedSubview(tabs)
-        showMode(false)
+        restoreTab(.lyrics)
         updateDisplayRange()
     }
-    func restoreMode(_ value: Bool) { showMode(value) }
-    private func showMode(_ value: Bool) {
+
+    func restoreTab(_ tab: Tab) {
         cancelTimelineEdit()
-        heightConstraint.constant = value ? 210 : 112
-        imageMode = value; tabs.selectedSegment = value ? 1 : 0; timeline.imageMode = value
+        if selectedTab == .spectrum && tab != .spectrum { spectrum.endColorEditing() }
+        selectedTab = tab
+        tabs.selectedSegment = tab.rawValue
+        if tab != .spectrum {
+            timeline.imageMode = tab == .images
+            heightConstraint.constant = imageMode ? 210 : 112
+        }
+        let child: NSView
+        switch tab {
+        case .lyrics: child = lyrics.view
+        case .images: child = images.view
+        case .spectrum: child = spectrum.view
+        }
         inspector.arrangedSubviews.last(where: { $0 !== tabs })?.removeFromSuperview()
-        let child = value ? images.view : lyrics.view
         inspector.addArrangedSubview(child)
         child.widthAnchor.constraint(equalTo: inspector.widthAnchor).isActive = true
     }
+
     @objc private func changePlacementMode() {
-        let value = tabs.selectedSegment == 1
+        guard let tab = Tab(rawValue: tabs.selectedSegment) else { return }
         timeline.cancelDrag()
-        guard (imageMode ? images.finishEditing() : lyrics.finishEditing()) else {
-            tabs.selectedSegment = imageMode ? 1 : 0; onError?("入力を確定し、開始・終了を正しい区間にしてください。"); return
+        guard finishEditing() else {
+            tabs.selectedSegment = selectedTab.rawValue
+            onError?("入力を確定し、開始・終了を正しい区間にしてください。")
+            return
         }
-        showMode(value); onModeChange?(value)
+        restoreTab(tab)
+        if tab != .spectrum { onModeChange?(imageMode) }
     }
     private func updateDisplayRange() {
         wheelZoomTimer?.invalidate()
@@ -133,7 +158,23 @@ final class PlacementEditor: NSViewController {
         wheelZoomTimer = timer
         RunLoop.main.add(timer, forMode: .common)
     }
-    func setAvailable(_ value: Bool) { lyrics.setAvailable(value); images.setAvailable(value); tabs.isEnabled = value; available = value; wholeSong.isEnabled = value; zoom.isEnabled = value && !showsWholeSong }
-    func cancelTimelineEdit() { timeline.cancelDrag(); images.cancelValueDrag() }
-    func finishEditing() -> Bool { imageMode ? images.finishEditing() : lyrics.finishEditing() }
+    func setAvailable(hasAudio: Bool, isBusy: Bool) {
+        available = hasAudio && !isBusy
+        lyrics.setAvailable(available)
+        images.setAvailable(available)
+        tabs.isEnabled = !isBusy
+        spectrum.setAvailable(!isBusy, hasAudio: hasAudio)
+        wholeSong.isEnabled = available
+        zoom.isEnabled = available && !showsWholeSong
+    }
+
+    func cancelTimelineEdit() {
+        timeline.cancelDrag()
+        images.cancelValueDrag()
+        for field in DragValueField.fields(in: inspector) { field.cancelNumberDrag() }
+    }
+    func finishEditing() -> Bool {
+        if selectedTab == .spectrum { return spectrum.finishEditing() }
+        return imageMode ? images.finishEditing() : lyrics.finishEditing()
+    }
 }

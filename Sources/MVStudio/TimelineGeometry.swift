@@ -6,10 +6,13 @@ struct TimelineGeometry {
     let width: Double
     static let inset = 14.0
 
-    init(time: Double, duration: Double, span: Double, width: Double) {
+    init(time: Double, duration: Double, span: Double, width: Double, manualOrigin: Double? = nil) {
         self.span = span.isFinite && span > 0 ? span : TimelineDisplaySettings.defaultSpan
         self.width = max(Self.inset * 2 + 1, width)
-        origin = max(0, min(time - self.span / 2, max(0, duration - self.span)))
+        origin = Self.clampOrigin(manualOrigin ?? time - self.span / 2, duration: duration, span: self.span)
+    }
+    static func clampOrigin(_ origin: Double, duration: Double, span: Double) -> Double {
+        min(max(0, duration - span), max(0, origin))
     }
     var tickInterval: Double {
         let target = span / max(1, (width - Self.inset * 2) / 85)

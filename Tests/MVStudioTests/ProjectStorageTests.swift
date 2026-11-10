@@ -16,7 +16,9 @@ final class ProjectStorageTests: XCTestCase {
         let url = ProjectStorage.projectURL(for: audio)
         XCTAssertEqual(url.lastPathComponent, "曲.wav.mvproject")
         XCTAssertNotEqual(url, ProjectStorage.projectURL(for: directory.appendingPathComponent("曲.mp3")))
-        let settings = SceneSettings(bpm: 143, beatOffset: 0.75, spectrum: false)
+        let layout = SpectrumLayout(x: -20, y: 150, width: 900, height: 210, barGap: 46)
+        let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 0), resolution: .minimal, layout: layout)
+        let settings = SceneSettings(bpm: 143, beatOffset: 0.75, spectrum: false, spectrumStyle: style)
         var images = ImageTrack()
         let imageID = images.register(url: image, projectURL: url)
         var clip = ImageClip(assetID: imageID, start: 0, end: 1, automaticAnimation: .beat, pulseAmount: 0.2)
@@ -36,9 +38,7 @@ final class ProjectStorageTests: XCTestCase {
         XCTAssertEqual(loaded.images.assets.first?.reference.resolve(projectURL: url), image)
         XCTAssertEqual(loaded.images.clips, [clip])
         XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("\"automaticAnimation\""))
-        XCTAssertEqual(loaded.settings.bpm, 143)
-        XCTAssertEqual(loaded.settings.beatOffset, 0.75)
-        XCTAssertFalse(loaded.settings.spectrum)
+        XCTAssertEqual(loaded.settings, settings)
         let moved = directory.appendingPathComponent("moved/曲.wav.mvproject")
         XCTAssertEqual(loaded.audio.resolve(projectURL: moved), moved.deletingLastPathComponent().appendingPathComponent("曲.wav"))
         let outside = URL(fileURLWithPath: "/tmp/external/image.png")
@@ -49,6 +49,31 @@ final class ProjectStorageTests: XCTestCase {
         var invalid = settings; invalid.bpm = .nan
         XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: invalid, projectURL: url), to: url))
         XCTAssertEqual(try Data(contentsOf: url), previous)
+        invalid = settings; invalid.spectrumStyle.color.blue = 2
+        XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: invalid, projectURL: url), to: url))
+        XCTAssertEqual(try Data(contentsOf: url), previous)
+
+        invalid = settings; invalid.spectrumStyle.layout.height = 0
+        XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: invalid, projectURL: url), to: url))
+        XCTAssertEqual(try Data(contentsOf: url), previous)
+
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: previous) as? [String: Any])
+        var savedSettings = try XCTUnwrap(json["settings"] as? [String: Any])
+        var savedStyle = try XCTUnwrap(savedSettings["spectrumStyle"] as? [String: Any])
+        savedStyle.removeValue(forKey: "layout")
+        savedSettings["spectrumStyle"] = savedStyle
+        json["settings"] = savedSettings
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        XCTAssertEqual(try storage.read(from: url).settings.spectrumStyle, SpectrumStyle())
+
+        savedSettings.removeValue(forKey: "spectrumStyle")
+        savedSettings["spectrum"] = false
+        json["settings"] = savedSettings
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        let defaulted = try storage.read(from: url).settings
+        XCTAssertFalse(defaulted.spectrum)
+        XCTAssertEqual(defaulted.spectrumStyle, SpectrumStyle())
+
         let missing = directory.appendingPathComponent("missing/project.mvproject")
         XCTAssertThrowsError(try storage.save(loaded, to: missing))
         XCTAssertEqual(storage.lastProjectURL, url)

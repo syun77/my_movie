@@ -30,8 +30,8 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     private var selectedID: UUID?
     private var selectedSlot = 1
     private let name = NSTextField(labelWithString: "画像行を選択し、画像を配置してください")
-    private let start = NSTextField(string: "0")
-    private let end = NSTextField(string: "2")
+    private let start = DragValueField(frame: .zero)
+    private let end = DragValueField(frame: .zero)
     private let slot = NSPopUpButton()
     private let automatic = NSPopUpButton()
     private let keySnap = NSButton(checkboxWithTitle: "拍スナップ", target: nil, action: nil)
@@ -111,6 +111,8 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         let manage = NSButton(title: "画像管理…", target: self, action: #selector(openManager))
         let replace = NSButton(title: "画像を変更…", target: self, action: #selector(changeImage))
         start.delegate = self; end.delegate = self
+        start.stringValue = "0"; end.stringValue = "2"
+        bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("images.start"); end.identifier = NSUserInterfaceItemIdentifier("images.end")
         for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 76).isActive = true }
         slot.addItems(withTitles: ["画像1（最背面）", "画像2", "画像3（最前面）"])
@@ -253,6 +255,14 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     }
     func controlTextDidBeginEditing(_ obj: Notification) { onBeginTextEditing?() }
 
+    private func bindTimingFields() {
+        for (field, isStart) in [(start, true), (end, false)] {
+            field.bindClipTime(isStart: isStart, interval: { [weak self] in
+                self?.track.clip(self?.selectedID).map { ($0.start, $0.end) }
+            }, duration: { [weak self] in self?.duration ?? 0 }, commit: { [weak self] in self?.finishTimingEdit() })
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         guard let field = obj.object as? NSTextField else { return }
         if let parameter = valueFields.first(where: { $0.value === field })?.key {
@@ -265,9 +275,15 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
 
     func controlTextDidEndEditing(_ obj: Notification) {
         if let field = obj.object as? NSTextField, field === start || field === end {
-            changePlacement()
-            refreshSelection()
+            finishTimingEdit()
+        } else {
+            onEndTextEditing?()
         }
+    }
+
+    private func finishTimingEdit() {
+        changePlacement()
+        refreshSelection()
         onEndTextEditing?()
     }
 
@@ -284,14 +300,6 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         refreshGraphControls(resetRange: true)
         onPreview?(track)
         return true
-    }
-
-    func resetEditingValue(at location: NSPoint) -> Bool {
-        let fields = Array(valueFields.values) + [minimum, maximum]
-        guard let field = fields.first(where: {
-            $0.currentEditor() != nil && $0.bounds.contains($0.convert(location, from: nil))
-        }) else { return false }
-        return field.resetValue()
     }
 
     func cancelAnimationInput(_ responder: NSTextView) -> Bool {

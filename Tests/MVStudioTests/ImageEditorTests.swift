@@ -61,7 +61,7 @@ final class ImageEditorTests: XCTestCase {
         let project = URL(fileURLWithPath: "/tmp/song.wav.mvproject")
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/sample.png"), projectURL: project)
         let added = try track.adding(assetID: asset, at: 1, slot: 1, duration: 10, grid: TimelineSnapGrid())
-        editor.images.load(added.track, projectURL: project); editor.setAvailable(true)
+        editor.images.load(added.track, projectURL: project); editor.setAvailable(hasAudio: true, isBusy: false)
         func find(_ view: NSView, _ id: String) -> NSView? {
             if view.identifier?.rawValue == id { return view }
             return view.subviews.lazy.compactMap { find($0, id) }.first
@@ -81,9 +81,14 @@ final class ImageEditorTests: XCTestCase {
         editor.snapGrid = TimelineSnapGrid(bpm: 137, origin: 0.04)
         XCTAssertTrue(editor.images.finishEditing())
         XCTAssertEqual(editor.images.track.clips[0].start, 1, "BPM変更だけでは既存配置を動かさない")
+        tabs.selectedSegment = 2; editor.perform(NSSelectorFromString("changePlacementMode"))
+        XCTAssertEqual(editor.selectedTab, .spectrum)
+        XCTAssertTrue(editor.timeline.imageMode)
+        XCTAssertEqual(editor.currentTime, 4)
+        XCTAssertEqual(editor.timeline.visibleSpan, 7.5)
         tabs.selectedSegment = 0; editor.perform(NSSelectorFromString("changePlacementMode"))
         XCTAssertFalse(editor.imageMode); XCTAssertEqual(editor.currentTime, 4)
-        editor.restoreMode(true)
+        editor.restoreTab(.images)
         editor.timeline.track = LyricsTrack(clips: [LyricClip(start: 1, end: 3, text: "ゴースト：歌詞のタイミング")])
         editor.view.layoutSubtreeIfNeeded()
         if let bitmap = editor.view.bitmapImageRepForCachingDisplay(in: editor.view.bounds) {

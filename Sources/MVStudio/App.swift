@@ -7,6 +7,7 @@ final class PreviewView: NSView {
     var images: [ImageRenderLayer] = []
     var features: AudioFeatures?
     var settings = SceneSettings()
+    var spectrumLayoutPreview: SpectrumLayout?
     var lyrics = LyricsTrack()
     var time = 0.0
     override func draw(_ dirtyRect: NSRect) {
@@ -17,7 +18,9 @@ final class PreviewView: NSView {
         let size = CGSize(width: width, height: width * 9 / 16)
         context.saveGState()
         context.translateBy(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-        SceneRenderer.draw(in: context, size: size, images: images, features: features, settings: settings, time: time, lyrics: lyrics)
+        var displaySettings = settings
+        if let spectrumLayoutPreview { displaySettings.spectrumStyle.layout = spectrumLayoutPreview }
+        SceneRenderer.draw(in: context, size: size, images: images, features: features, settings: displaySettings, time: time, lyrics: lyrics)
         context.restoreGState()
     }
 }
@@ -34,9 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private let audioName = NSTextField(labelWithString: "音声: 未選択")
     private let timeLabel = NSTextField(labelWithString: "0:00 / 0:00")
     private let seek = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private let bpm = NSTextField(string: "120")
-    private let offset = NSTextField(string: "0")
-    private let spectrum = NSButton(checkboxWithTitle: "スペクトラムを表示", target: nil, action: nil)
+    private let bpm = DragValueField(frame: .zero)
+    private let offset = DragValueField(frame: .zero)
     private let play = NSButton(title: "再生", target: nil, action: nil)
     private let export = NSButton(title: "MP4を書き出す", target: nil, action: nil)
     private let cancel = NSButton(title: "キャンセル", target: nil, action: nil)
@@ -76,9 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
         studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.images.cancelValueDrag() ?? false }
-        studioWindow.onResetEditingValue = { [weak self] location in
-            self?.placementEditor.images.resetEditingValue(at: location) ?? false
-        }
         studioWindow.onEscapeText = { [weak self] text in self?.placementEditor.images.cancelAnimationInput(text) ?? false }
         studioWindow.onHistoryAction = { [weak self] redo in self?.performHistoryAction(redo: redo) }
 
@@ -98,14 +97,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         offset.widthAnchor.constraint(equalToConstant: 64).isActive = true
         bpm.identifier = NSUserInterfaceItemIdentifier("scene.bpm"); offset.identifier = NSUserInterfaceItemIdentifier("scene.offset")
         bpm.delegate = self; offset.delegate = self
-        spectrum.state = .on
-        for control in [bpm, offset, spectrum] as [NSControl] { control.target = self; control.action = #selector(updateSettings) }
-        let options = row([NSTextField(labelWithString: "BPM"), bpm, NSTextField(labelWithString: "拍開始（秒）"), offset, spectrum])
+        bpm.stringValue = "120"; offset.stringValue = "0"
+        bpm.bindNumber(current: { [weak self] in self?.preview.settings.bpm }, initial: { SceneSettings().bpm },
+                       normalize: { min(300, max(20, $0)) }, commit: { [weak self] _ in self?.updateSettings() })
+        offset.bindNumber(step: 0.01, current: { [weak self] in self?.preview.settings.beatOffset },
+                          initial: { SceneSettings().beatOffset }, normalize: { max(0, $0) },
+                          commit: { [weak self] _ in self?.updateSettings() })
+        for control in [bpm, offset] { control.target = self; control.action = #selector(updateSettings) }
+        let options = row([NSTextField(labelWithString: "BPM"), bpm, NSTextField(labelWithString: "拍開始（秒）"), offset])
         play.target = self; play.action = #selector(togglePlay)
         export.target = self; export.action = #selector(exportVideo)
         cancel.target = self; cancel.action = #selector(cancelWork)
         cancel.isHidden = true
-        seek.target = self; seek.action = #selector(scrub)
+        seek.target = self; seek.action = #selector(scrubWholeSong)
         seek.isContinuous = true
         seek.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let transport = row([play, seek, timeLabel])
@@ -116,11 +120,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.visibleSpan = timelineDisplaySettings.visibleSpan
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
-        placementEditor.restoreMode(timelineDisplaySettings.imageMode)
+        placementEditor.restoreTab(timelineDisplaySettings.imageMode ? .images : .lyrics)
         placementEditor.onModeChange = { [weak self] value in self?.timelineDisplaySettings.imageMode = value }
         placementEditor.onError = { [weak self] value in self?.status.stringValue = value }
         placementEditor.onVisibleSpanChange = { [weak self] value in
             self?.timelineDisplaySettings.visibleSpan = value
+        }
+        placementEditor.spectrum.onLayoutPreview = { [weak self] layout in
+            self?.preview.spectrumLayoutPreview = layout
+            self?.preview.needsDisplay = true
+        }
+        placementEditor.spectrum.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
+        placementEditor.spectrum.onChange = { [weak self] value in
+            guard let self else { return }
+            var settings = self.preview.settings
+            settings.spectrum = value.shown
+            settings.spectrumStyle = value.style
+            guard settings != self.preview.settings else { return }
+            self.recordEdit(settings: settings)
+            self.preview.settings = settings
+            self.preview.needsDisplay = true
+            _ = self.saveProject()
         }
         lyricsEditor.onBeginTextEditing = { [weak self] in self?.endHistoryGroup() }
         lyricsEditor.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
@@ -157,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         }
         placementEditor.images.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewImages() }
         installLayout(toolbar: row([files, output]), options: options, transport: transport, timeline: timeline)
-        controls = [audioButton, bpm, offset, spectrum, play, seek, export]
+        controls = [audioButton, bpm, offset, play, seek, export]
         refreshControls()
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -265,15 +285,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 try project?.images.validate(duration: features.duration)
                 player = loaded; audioURL = url; preview.features = features; preview.time = 0
                 self.projectURL = projectURL
-                if let project {
-                    preview.settings = project.settings
-                    bpm.doubleValue = project.settings.bpm; offset.doubleValue = project.settings.beatOffset
-                    spectrum.state = project.settings.spectrum ? .on : .off
-                }
+                lyricsEditor.clearPresetSelection()
+                placementEditor.spectrum.clearPresetSelection()
+                if let project { restoreSceneSettings(project.settings) }
                 preview.lyrics = project?.lyrics ?? LyricsTrack()
                 imageTrack = project?.images ?? ImageTrack(); previewTrack = imageTrack
                 placementEditor.images.load(imageTrack, projectURL: projectURL)
-                placementEditor.snapGrid = TimelineSnapGrid(bpm: preview.settings.bpm, origin: preview.settings.beatOffset)
                 lyricsEditor.load(preview.lyrics); placementEditor.duration = features.duration
                 seek.maxValue = features.duration; seek.doubleValue = 0; updateTime()
                 audioName.stringValue = "音声: " + url.lastPathComponent
@@ -305,7 +322,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private func readSceneSettings() {
         let bpmValue = Double(bpm.stringValue) ?? 120
         let offsetValue = Double(offset.stringValue) ?? 0
-        let settings = SceneSettings(bpm: bpmValue.isFinite ? min(300, max(20, bpmValue)) : 120, beatOffset: offsetValue.isFinite ? max(0, offsetValue) : 0, spectrum: spectrum.state == .on)
+        var settings = preview.settings
+        settings.bpm = bpmValue.isFinite ? min(300, max(20, bpmValue)) : 120
+        settings.beatOffset = offsetValue.isFinite ? max(0, offsetValue) : 0
         recordEdit(settings: settings)
         preview.settings = settings
         placementEditor.snapGrid = TimelineSnapGrid(bpm: settings.bpm, origin: settings.beatOffset)
@@ -313,6 +332,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         offset.stringValue = String(format: "%.2f", preview.settings.beatOffset)
         preview.needsDisplay = true
     }
+    private func restoreSceneSettings(_ settings: SceneSettings) {
+        preview.settings = settings
+        bpm.doubleValue = settings.bpm
+        offset.doubleValue = settings.beatOffset
+        placementEditor.spectrum.load(settings)
+        placementEditor.snapGrid = TimelineSnapGrid(bpm: settings.bpm, origin: settings.beatOffset)
+    }
+
     private func endHistoryGroup() {
         textHistoryResponder = nil; textHistoryGroup = nil
     }
@@ -346,27 +373,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private func performHistoryAction(redo: Bool) {
         guard historyIsAvailable else { return }
         if let text = window.firstResponder as? NSTextView, text.hasMarkedText() { NSSound.beep(); return }
+        (window as? StudioWindow)?.cancelNumberDrags()
         placementEditor.cancelTimelineEdit()
         guard window.makeFirstResponder(nil) else { return }
         endHistoryGroup()
         guard let value = redo ? editHistory.redo() : editHistory.undo() else { return }
         stopPlayback()
-        preview.settings = value.settings; preview.lyrics = value.lyrics
+        restoreSceneSettings(value.settings); preview.lyrics = value.lyrics
         imageTrack = value.images; previewTrack = value.images
-        bpm.doubleValue = value.settings.bpm; offset.doubleValue = value.settings.beatOffset
-        spectrum.state = value.settings.spectrum ? .on : .off
-        placementEditor.snapGrid = TimelineSnapGrid(bpm: value.settings.bpm, origin: value.settings.beatOffset)
         lyricsEditor.restore(value.lyrics); placementEditor.images.restore(value.images)
         lastPreviewKey = nil; refreshPreviewImages(); preview.needsDisplay = true
         _ = saveProject()
     }
     @objc private func togglePlay() {
         guard let player else { return }
-        if player.isPlaying { player.pause() } else { if player.currentTime >= player.duration - 0.01 { player.currentTime = 0 }; player.play() }
+        if player.isPlaying {
+            player.pause()
+        } else {
+            placementEditor.timeline.followPlayhead()
+            if player.currentTime >= player.duration - 0.01 { player.currentTime = 0 }
+            player.play()
+        }
         tick()
     }
     private func stopPlayback() { player?.pause(); play.title = "再生" }
-    @objc private func scrub() { player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue; preview.needsDisplay = true; updateTime() }
+    @objc private func scrubWholeSong() {
+        placementEditor.timeline.followPlayhead()
+        scrub()
+    }
+    private func scrub() { player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue; preview.needsDisplay = true; updateTime() }
     private func tick() {
         guard let player, !busy else { return }
         if player.isPlaying { preview.time = player.currentTime; seek.doubleValue = player.currentTime; preview.needsDisplay = true }
@@ -428,7 +463,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 NSWorkspace.shared.activateFileViewerSelecting([destination])
             } catch is CancellationError { status.stringValue = "書き出しをキャンセルしました。" }
             catch {
-                placementEditor.restoreMode(true)
+                placementEditor.restoreTab(.images)
                 let alert = NSAlert(error: error)
                 alert.addButton(withTitle: "閉じる"); alert.addButton(withTitle: "画像管理…")
                 alert.beginSheetModal(for: window) { [weak self = self] response in
@@ -441,9 +476,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     @objc private func cancelWork() { analysisTask?.cancel(); cancellation?.cancel() }
     private func setBusy(_ value: Bool) { busy = value; cancel.isHidden = !value; refreshControls() }
     private func refreshControls() {
-        placementEditor.setAvailable(!busy && player != nil)
         let enabled = !busy && !imageProcessing
-        if imageProcessing { lyricsEditor.setAvailable(false) }
+        if !enabled { (window as? StudioWindow)?.cancelNumberDrags() }
+        placementEditor.setAvailable(hasAudio: player != nil, isBusy: !enabled)
         for control in controls { control.isEnabled = enabled }
         play.isEnabled = enabled && player != nil; seek.isEnabled = enabled && player != nil
         export.isEnabled = enabled && preview.features != nil
@@ -454,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"
             return false
         }
+        (window as? StudioWindow)?.cancelNumberDrags()
         placementEditor.cancelTimelineEdit()
         guard placementEditor.finishEditing() else { return false }
         guard window.makeFirstResponder(nil) else { return false }

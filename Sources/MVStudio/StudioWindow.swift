@@ -15,8 +15,20 @@ final class StudioWindow: NSWindow {
 
     var onTogglePlayback: (() -> Void)?
     var onEscapeInteraction: (() -> Bool)?
-    var onResetEditingValue: ((NSPoint) -> Bool)?
     var onEscapeText: ((NSTextView) -> Bool)?
+
+    @discardableResult
+    func cancelNumberDrags() -> Bool {
+        guard let contentView else { return false }
+        return DragValueField.fields(in: contentView).contains { $0.cancelNumberDrag() }
+    }
+
+    private func resetEditingNumber(at location: NSPoint) -> Bool {
+        guard let contentView, let field = DragValueField.fields(in: contentView).first(where: {
+            $0.currentEditor() != nil && $0.bounds.contains($0.convert(location, from: nil))
+        }) else { return false }
+        return field.resetValue()
+    }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown { onBeginInteraction?() }
@@ -26,7 +38,7 @@ final class StudioWindow: NSWindow {
             return
         }
         if event.type == .otherMouseDown, event.buttonNumber == 2,
-           onResetEditingValue?(event.locationInWindow) == true { return }
+           resetEditingNumber(at: event.locationInWindow) { return }
         guard event.type == .keyDown else {
             super.sendEvent(event)
             return
@@ -39,7 +51,7 @@ final class StudioWindow: NSWindow {
         }
         let text = firstResponder as? NSTextView
         let isTyping = text?.isEditable == true
-        if event.keyCode == 53, onEscapeInteraction?() == true { return }
+        if event.keyCode == 53, cancelNumberDrags() || onEscapeInteraction?() == true { return }
         if event.keyCode == 53, isTyping, let text {
             if onEscapeText?(text) == true { return }
             text.unmarkText()

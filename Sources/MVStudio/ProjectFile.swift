@@ -29,7 +29,7 @@ struct ProjectFile: Codable {
         let ids = imageAssets.map(\.id) + imageLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
         guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
-              settings.beatOffset.isFinite, settings.beatOffset >= 0 else {
+              settings.beatOffset.isFinite, settings.beatOffset >= 0, settings.spectrumStyle.isValid else {
             throw StudioError.message("プロジェクトの設定値が不正です。")
         }
     }

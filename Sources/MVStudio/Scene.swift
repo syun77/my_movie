@@ -1,9 +1,25 @@
 import AppKit
 
 struct SceneSettings: Codable, Sendable, Equatable {
-    var bpm = 120.0
-    var beatOffset = 0.0
-    var spectrum = true
+    var bpm: Double
+    var beatOffset: Double
+    var spectrum: Bool
+    var spectrumStyle: SpectrumStyle
+
+    init(bpm: Double = 120, beatOffset: Double = 0, spectrum: Bool = true, spectrumStyle: SpectrumStyle = SpectrumStyle()) {
+        self.bpm = bpm
+        self.beatOffset = beatOffset
+        self.spectrum = spectrum
+        self.spectrumStyle = spectrumStyle
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bpm = try container.decode(Double.self, forKey: .bpm)
+        beatOffset = try container.decode(Double.self, forKey: .beatOffset)
+        spectrum = try container.decode(Bool.self, forKey: .spectrum)
+        spectrumStyle = try container.decodeIfPresent(SpectrumStyle.self, forKey: .spectrumStyle) ?? SpectrumStyle()
+    }
 }
 
 struct AudioFeatures: Sendable {
@@ -28,13 +44,39 @@ struct AudioFeatures: Sendable {
         return zoomPulse(elapsed: time - transientTimes[lower - 1])
     }
 
-    func bands(at time: Double) -> [Float] {
-        guard !frames.isEmpty, time >= 0, time < duration else { return Array(repeating: 0, count: 32) }
+    func bands(at time: Double, count: Int) -> [Float] {
+        let levels = spectrumLevels(at: time)
+        guard !levels.isEmpty else { return Array(repeating: 0, count: count) }
+        return (0..<count).map { band in
+            let lower = band * levels.count / count
+            let upper = max(lower + 1, (band + 1) * levels.count / count)
+            return levels[lower..<upper].max() ?? 0
+        }
+    }
+
+    func bandEdges(at time: Double, count: Int) -> [Float] {
+        let levels = spectrumLevels(at: time)
+        guard !levels.isEmpty else { return Array(repeating: 0, count: count + 1) }
+        let binsPerBand = Double(levels.count) / Double(count)
+        return (0...count).map { edge in
+            // Interpolate between adjacent bin centers at each display boundary.
+            let position = min(Double(levels.count - 1), max(0, Double(edge) * binsPerBand - 0.5))
+            let lower = Int(position)
+            let upper = min(lower + 1, levels.count - 1)
+            let fraction = Float(position - Double(lower))
+            return levels[lower] + (levels[upper] - levels[lower]) * fraction
+        }
+    }
+
+    private func spectrumLevels(at time: Double) -> [Float] {
+        guard let first = frames.first, !first.isEmpty, time >= 0, time < duration else { return [] }
         let position = time / step
         let index = min(Int(position), frames.count - 1)
         let next = min(index + 1, frames.count - 1)
         let fraction = Float(position - Double(index))
-        return zip(frames[index], frames[next]).map { $0 + ($1 - $0) * fraction }
+        let current = frames[index]
+        let following = frames[next]
+        return current.indices.map { current[$0] + (following[$0] - current[$0]) * fraction }
     }
 }
 
@@ -61,16 +103,7 @@ enum SceneRenderer {
             context.restoreGState()
         }
         if settings.spectrum, let features {
-            let bands = features.bands(at: time)
-            let margin = size.width * 0.075
-            let stride = (size.width - margin * 2) / CGFloat(bands.count)
-            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.5))
-            context.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height * 0.28))
-            for (index, value) in bands.enumerated() {
-                let height = max(2, CGFloat(value) * size.height * 0.2)
-                context.setFillColor(CGColor(red: 0.2, green: 0.85, blue: 0.95, alpha: 0.9))
-                context.fill(CGRect(x: margin + CGFloat(index) * stride, y: size.height * 0.04, width: stride * 0.72, height: height))
-            }
+            SpectrumRenderer.draw(in: context, size: size, features: features, time: time, style: settings.spectrumStyle)
         }
         LyricsRenderer.draw(in: context, size: size, track: lyrics, time: time)
     }

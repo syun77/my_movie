@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class TimelineView: NSView {
-    var imageMode = false { didSet { hoverPoint = nil; cancelDrag(); setAccessibilityLabel(imageMode ? "再生位置付近の画像タイムライン" : "再生位置付近の歌詞タイムライン"); needsDisplay = true } }
+    var imageMode = false { didSet { hoverPoint = nil; cancelDrag(); setAccessibilityLabel(imageMode ? "画像タイムライン" : "歌詞タイムライン"); needsDisplay = true } }
     var images = ImageTrack() {
         didSet {
             layerParameters = Dictionary(uniqueKeysWithValues: images.layers.map { layer in
@@ -86,7 +86,7 @@ final class TimelineView: NSView {
     var snapGrid = TimelineSnapGrid() { didSet { cancelDrag(); needsDisplay = true } }
     var track = LyricsTrack() { didSet { needsDisplay = true } }
     var currentTime = 0.0 { didSet { needsDisplay = true } }
-    var duration = 0.0 { didSet { needsDisplay = true } }
+    var duration = 0.0 { didSet { followPlayhead(); needsDisplay = true } }
     var visibleSpan = TimelineDisplaySettings.defaultSpan { didSet { needsDisplay = true } }
     var selectedID: UUID? { didSet { needsDisplay = true } }
     var isEnabled = false { didSet { if !isEnabled { cancelDrag() }; needsDisplay = true } }
@@ -107,11 +107,25 @@ final class TimelineView: NSView {
     }
     private var drag: Drag?
     private var scrubGeometry: TimelineGeometry?
+    private var manualOrigin: Double? {
+        didSet {
+            guard oldValue != manualOrigin else { return }
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     var geometry: TimelineGeometry {
-        drag?.geometry ?? keyDrag?.geometry ?? imageDrag?.geometry ?? dropGeometry ?? scrubGeometry ?? TimelineGeometry(time: currentTime, duration: duration, span: visibleSpan, width: max(1, bounds.width - Self.gutter))
+        frozenGeometry ?? TimelineGeometry(time: currentTime, duration: duration, span: visibleSpan,
+                                           width: bounds.width - Self.gutter, manualOrigin: manualOrigin)
     }
+    private var frozenGeometry: TimelineGeometry? {
+        drag?.geometry ?? keyDrag?.geometry ?? imageDrag?.geometry ?? dropGeometry ?? scrubGeometry
+    }
+
+    func followPlayhead() { manualOrigin = nil }
+
     static let gutter = 78.0
     private let clipY = 39.0
     private let clipHeight = 44.0
@@ -129,8 +143,7 @@ final class TimelineView: NSView {
     }
 
     private var canHighlightTrim: Bool {
-        isEnabled && drag == nil && imageDrag == nil && keyDrag == nil && scrubGeometry == nil &&
-            dropGeometry == nil && automationPreview == nil
+        isEnabled && frozenGeometry == nil && automationPreview == nil
     }
 
     override init(frame frameRect: NSRect) {
@@ -140,10 +153,10 @@ final class TimelineView: NSView {
                                        options: [.inVisibleRect, .activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved],
                                        owner: self, userInfo: nil))
         identifier = NSUserInterfaceItemIdentifier("placement.timeline")
-        toolTip = "本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。空白や目盛りでシーク。Escで取り消し。"
+        toolTip = "Shift＋ホイールで横スクロール、⌘＋ホイールで拡大・縮小、Option＋ホイールで再生位置を移動。本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。空白や目盛りでシーク。Escで取り消し。"
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("再生位置付近の歌詞タイムライン")
+        setAccessibilityLabel("歌詞タイムライン")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -181,7 +194,7 @@ final class TimelineView: NSView {
             }
         }
         let playhead = x(at: currentTime)
-        if playhead >= 0 && playhead <= bounds.width {
+        if playhead >= timeViewport.minX && playhead <= timeViewport.maxX {
             NSColor.systemPink.setStroke()
             let line = NSBezierPath(); line.lineWidth = 2
             line.move(to: NSPoint(x: playhead, y: 23)); line.line(to: NSPoint(x: playhead, y: 88)); line.stroke()
@@ -412,16 +425,44 @@ final class TimelineView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        if event.modifierFlags.contains(.command) {
-            guard isEnabled, drag == nil, keyDrag == nil, imageDrag == nil, scrubGeometry == nil,
-                  dropGeometry == nil, event.momentumPhase.isEmpty else { return }
-            let steps = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY / 10 : event.deltaY
-            if steps.isFinite, steps != 0 { onWheelZoom?(steps) }
+        let modifiers = event.modifierFlags
+        if !modifiers.intersection([.command, .shift, .option]).isEmpty {
+            guard isEnabled, frozenGeometry == nil, event.momentumPhase.isEmpty else { return }
+            let precise = event.hasPreciseScrollingDeltas
+            let y = precise ? event.scrollingDeltaY : event.deltaY
+            let steps = precise ? y / 10 : y
+            if modifiers.contains(.command) {
+                guard steps.isFinite, steps != 0 else { return }
+                onWheelZoom?(steps)
+            } else if modifiers.contains(.shift) {
+                let x = precise ? event.scrollingDeltaX : event.deltaX
+                scrollHorizontally(by: (x == 0 ? y : x) * (precise ? 1 : 40))
+            } else {
+                seekByWheel(steps: steps)
+            }
             return
         }
         guard imageMode, maximumRowScroll > 0, keyDrag == nil, imageDrag == nil else { super.scrollWheel(with: event); return }
         rowScroll -= event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 10)
         updateGraphLayout()
+    }
+
+    private func seekByWheel(steps: Double) {
+        guard steps.isFinite, steps != 0, duration > 0, let onSeek else { return }
+        let viewport = geometry
+        let time = min(duration, max(0, currentTime - steps * (viewport.span / 60)))
+        if time < viewport.origin || time > viewport.origin + viewport.span {
+            followPlayhead()
+        }
+        onSeek(time)
+    }
+
+    private func scrollHorizontally(by points: Double) {
+        guard points.isFinite, points != 0, duration > 0, timeViewport.width > 0 else { return }
+        let viewport = geometry
+        let next = TimelineGeometry.clampOrigin(viewport.origin - points / viewport.pointsPerSecond,
+                                                duration: duration, span: viewport.span)
+        if next != viewport.origin { manualOrigin = next }
     }
 
     private func slot(at point: NSPoint) -> Int? {

@@ -1,22 +1,6 @@
 import AppKit
 import CoreText
 
-struct LyricsColor: Codable, Sendable, Equatable {
-    var red: Double
-    var green: Double
-    var blue: Double
-
-    static let black = LyricsColor(red: 0, green: 0, blue: 0)
-    var cgColor: CGColor { CGColor(red: red, green: green, blue: blue, alpha: 1) }
-    var nsColor: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: 1) }
-    init(red: Double, green: Double, blue: Double) { self.red = red; self.green = green; self.blue = blue }
-    init(_ color: NSColor) {
-        let rgb = color.usingColorSpace(.sRGB) ?? .black
-        red = rgb.redComponent; green = rgb.greenComponent; blue = rgb.blueComponent
-    }
-    var isValid: Bool { [red, green, blue].allSatisfy { $0.isFinite && (0...1).contains($0) } }
-}
-
 struct LyricClip: Codable, Sendable, Equatable, Identifiable {
     var id = UUID()
     var start: Double
@@ -25,19 +9,83 @@ struct LyricClip: Codable, Sendable, Equatable, Identifiable {
     var predecessorID: UUID? = nil
 }
 
+struct LyricsTypography: Codable, Sendable, Equatable {
+    static let defaultFontName = "HiraginoSans-W6"
+
+    var fontName = Self.defaultFontName
+    var fontSize = 54
+    var x = VideoExporter.width / 2
+    var y = VideoExporter.height / 2
+
+    enum Field: CaseIterable {
+        case fontSize, x, y
+
+        var keyPath: WritableKeyPath<LyricsTypography, Int> {
+            switch self {
+            case .fontSize: \.fontSize
+            case .x: \.x
+            case .y: \.y
+            }
+        }
+
+        var range: ClosedRange<Int> {
+            switch self {
+            case .fontSize: 8...216
+            case .x: 0...VideoExporter.width
+            case .y: 0...VideoExporter.height
+            }
+        }
+    }
+
+    var isValid: Bool {
+        !fontName.isEmpty && Field.allCases.allSatisfy { $0.range.contains(self[keyPath: $0.keyPath]) }
+    }
+
+    func updating(_ field: Field, to value: Int) -> Self {
+        var result = self
+        result[keyPath: field.keyPath] = min(field.range.upperBound, max(field.range.lowerBound, value))
+        return result
+    }
+}
+
+struct LyricsStyle: PresetSettings, Equatable {
+    static let presetFilename = "Lyrics.json"
+
+    var outlineWidth: Double
+    var outlineColor: RGBColor
+    var typography: LyricsTypography
+
+    func validate() throws {
+        guard outlineWidth.isFinite, (0...12).contains(outlineWidth), outlineColor.isValid else {
+            throw StudioError.message("縁取りの設定が不正です。")
+        }
+        guard typography.isValid else {
+            throw StudioError.message("歌詞のフォントまたは描画位置の設定が不正です。")
+        }
+    }
+}
+
 struct LyricsTrack: Codable, Sendable, Equatable {
     var clips: [LyricClip] = []
     var outlineWidth = 3.0
-    var outlineColor = LyricsColor.black
+    var outlineColor = RGBColor.black
+    var typography = LyricsTypography()
+
+    var style: LyricsStyle {
+        get { LyricsStyle(outlineWidth: outlineWidth, outlineColor: outlineColor, typography: typography) }
+        set {
+            outlineWidth = newValue.outlineWidth
+            outlineColor = newValue.outlineColor
+            typography = newValue.typography
+        }
+    }
 
     func text(at time: Double) -> String? {
         clips.first { $0.start <= time && time < $0.end }?.text
     }
 
     func validate(duration: Double? = nil) throws {
-        guard outlineWidth.isFinite, (0...12).contains(outlineWidth), outlineColor.isValid else {
-            throw StudioError.message("縁取りの設定が不正です。")
-        }
+        try style.validate()
         var previousEnd = 0.0
         var previousID: UUID?
         var ids = Set<UUID>()
@@ -55,17 +103,36 @@ struct LyricsTrack: Codable, Sendable, Equatable {
     }
 }
 
+extension LyricsTrack {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        clips = try values.decode([LyricClip].self, forKey: .clips)
+        outlineWidth = try values.decode(Double.self, forKey: .outlineWidth)
+        outlineColor = try values.decode(RGBColor.self, forKey: .outlineColor)
+        typography = try values.decodeIfPresent(LyricsTypography.self, forKey: .typography) ?? LyricsTypography()
+    }
+}
+
 enum LyricsRenderer {
     static func draw(in context: CGContext, size: CGSize, track: LyricsTrack, time: Double) {
         guard let text = track.text(at: time) else { return }
-        let fontSize = size.height * 0.05
-        let font = CTFontCreateWithName("HiraginoSans-W6" as CFString, fontSize, nil)
+        let style = track.typography
+        let scaleX = size.width / CGFloat(VideoExporter.width)
+        let scaleY = size.height / CGFloat(VideoExporter.height)
+        let top = size.height - CGFloat(style.y) * scaleY
+        guard top > 0 else { return }
+        let fontSize = CGFloat(style.fontSize) * scaleY
+        let requestedFont = CTFontCreateWithName(style.fontName as CFString, fontSize, nil)
+        let font = CTFontCopyPostScriptName(requestedFont) as String == style.fontName
+            ? requestedFont
+            : CTFontCreateWithName(LyricsTypography.defaultFontName as CFString, fontSize, nil)
         var alignment = CTTextAlignment.center
         let paragraph = withUnsafePointer(to: &alignment) { pointer in
             var setting = CTParagraphStyleSetting(spec: .alignment, valueSize: MemoryLayout<CTTextAlignment>.size, value: pointer)
             return CTParagraphStyleCreate(&setting, 1)
         }
-        let box = CGRect(x: size.width * 0.08, y: size.height * 0.30, width: size.width * 0.84, height: size.height * 0.20)
+        let width = size.width * 0.84
+        let box = CGRect(x: CGFloat(style.x) * scaleX - width / 2, y: 0, width: width, height: top)
         var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTParagraphStyleAttributeName as String): paragraph,
@@ -73,6 +140,7 @@ enum LyricsRenderer {
         ]
         context.saveGState()
         defer { context.restoreGState() }
+        context.clip(to: CGRect(origin: .zero, size: size))
         context.textMatrix = .identity
         context.setLineJoin(.round)
         func drawFrame(_ values: [NSAttributedString.Key: Any]) {
@@ -86,7 +154,7 @@ enum LyricsRenderer {
         }
         if track.outlineWidth > 0 {
             let width = track.outlineWidth * size.height / 720
-            attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = track.outlineColor.cgColor
+            attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = track.outlineColor.cgColor()
             attributes[NSAttributedString.Key(kCTStrokeWidthAttributeName as String)] = 200 * width / fontSize
             drawFrame(attributes)
             attributes.removeValue(forKey: NSAttributedString.Key(kCTStrokeColorAttributeName as String))

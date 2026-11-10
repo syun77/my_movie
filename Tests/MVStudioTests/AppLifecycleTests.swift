@@ -22,7 +22,7 @@ final class AppLifecycleTests: XCTestCase {
         retainedWindow = nil
     }
 
-    @MainActor func testEditorLayoutKeepsBothModesAboveFullWidthTimeline() throws {
+    @MainActor func testEditorLayoutKeepsAllTabsAboveFullWidthTimeline() throws {
         let app = NSApplication.shared
         let suite = "MVStudioLayout." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
@@ -42,13 +42,13 @@ final class AppLifecycleTests: XCTestCase {
         }
         let preview = try XCTUnwrap(findPreview(in: content))
         window.setContentSize(window.contentMinSize)
-        for imageMode in [false, true] {
-            editor.restoreMode(imageMode)
+        for (tab, settings) in [(PlacementEditor.Tab.lyrics, editor.lyrics.view),
+                                (.images, editor.images.view), (.spectrum, editor.spectrum.view)] {
+            editor.restoreTab(tab)
             content.layoutSubtreeIfNeeded()
             let previewFrame = content.convert(preview.bounds, from: preview)
             let inspectorFrame = content.convert(editor.inspector.bounds, from: editor.inspector)
             let timelineFrame = content.convert(editor.timeline.bounds, from: editor.timeline)
-            let settings = imageMode ? editor.images.view : editor.lyrics.view
             let settingsFrame = content.convert(settings.bounds, from: settings)
             XCTAssertEqual(previewFrame.maxY, inspectorFrame.maxY, accuracy: 1)
             XCTAssertLessThan(previewFrame.maxX, inspectorFrame.minX)
@@ -58,7 +58,6 @@ final class AppLifecycleTests: XCTestCase {
             XCTAssertGreaterThan(previewFrame.height, 150)
             XCTAssertTrue(inspectorFrame.insetBy(dx: -1, dy: -1).contains(settingsFrame))
             XCTAssertTrue(content.bounds.contains(timelineFrame.union(previewFrame).union(inspectorFrame)))
-
         }
     }
 }

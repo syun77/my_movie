@@ -1,3 +1,107 @@
+# 画像クリップの追加演出（設計中）
+
+- 最終更新: 2026-11-10 09:19 JST
+- 要件: 画像クリップにブラー、ブルーム、光の粒子を重ねる機能を設計し、Metalの採用を検討する。
+- 状態: 現行の画像クリップとプレビュー・書き出しの共通描画、およびMetal関連のApple公式APIを確認。設計文書のみ変更する。
+- 次: 編集UI、保存モデル、合成順、GPU導入方針、実装順、受け入れ条件をまとめる。実行中の処理なし。
+
+# 選択中のプリセットの上書き（完了）
+
+- 最終更新: 2026-11-10 09:12 JST
+- 要件: プリセットメニューに、現在選んでいるプリセット名を表示した上書き項目を追加する。
+- 状態: 名前付きの上書き項目と選択マークを実装。新規保存と適用で選択、プロジェクト読込成功時に解除。書込みとエラー表示を共通化。作業前の未コミット変更を保持。
+- 変更: PresetStore.swift、PresetMenu.swift、LyricsEditor.swift、SpectrumEditor.swift、App.swift、PresetStoreTests.swift、UndoTests.swift、README.md、AGENTS.md、PROGRESS.md。
+- 検証: 全43件成功（/tmp/my_movie-preset-overwrite-test.log）。未選択時の無効化、名前・チェック表示、対象だけの更新、無効な上書きの拒否、選択解除を確認。
+- 生成: `./scripts/build-app.sh`、署名検証、`git diff --check` 成功（/tmp/my_movie-preset-overwrite-build.log）。最新の `dist/MV Studio.app` を生成済み。
+- 次: 最新アプリでプリセットを適用または新規保存し、設定を調整後に「名前」を上書きで更新する。実行中の処理・未解決事項なし。
+
+# スペクトラムのバー上辺を傾ける（完了）
+
+- 最終更新: 2026-11-10 09:04 JST
+- 要件: バーが担当する範囲の始まりと終わりの帯域に応じて、各バーの上辺を傾ける。
+- 状態: 共通描画でバー左右の帯域境界を補間し、傾斜付きのパスを描画する。余白0%で境界の座標と高さを共有。折れ線とバーの時間補間を共通化。作業前の未コミット変更を保持。
+- 変更: Scene.swift、Spectrum.swift、StudioTests.swift、README.md、docs/ARCHITECTURE.md、AGENTS.md、PROGRESS.md。
+- 検証: 全43件成功。傾斜の方向、時間補間、余白0%での接続、既存の折れ線とMP4出力を確認（/tmp/my_movie-spectrum-bar-test.log）。
+- 生成: `./scripts/build-app.sh`、署名検証、`git diff --check` 成功（/tmp/my_movie-spectrum-bar-build.log）。最新の `dist/MV Studio.app` を生成済み。
+- 次: 最新アプリで「スペクトラム → バー」を選び、曲を再生して確認する。実行中の処理・未解決事項なし。
+
+# 歌詞・スペクトラムの共通プリセット（完了）
+
+- 最終更新: 2026-11-10 08:50 JST
+- 要件: 歌詞とスペクトラムの設定を、保存先を選ばず保存し、別のプロジェクトで適用する。
+- 状態: 各タブの「プリセット」で名前を付けて保存・適用できる。アプリ共通の固定保存先に種類別のJSONを保存。同種の同名プリセットは上書きしない。歌詞は書式・縁取りのみを適用し、既存の本文・区間・選択を維持。
+- 整理: 保存とメニューを共通化。設定値の検証、適用後のプレビュー・履歴・自動保存は既存経路を再利用。作業前の未コミット変更を保持。
+- 変更: Sources/MVStudioのPresetStore、PresetMenu、Lyrics、LyricsEditor、Spectrum、SpectrumEditor、App、PlacementEditor、ProjectFile。PresetStoreTests、UndoTests、README、docs/ARCHITECTURE、AGENTS、PROGRESS。
+- 検証: macOSサービスへアクセスできる環境で全42件成功（/tmp/my_movie-presets-test-final.log）。固定先相当の別ストアからの再読み込み、名前と設定値の検証、メニュー適用、プレビュー、自動保存、Undo/Redoを確認。git diff --check成功。
+- 生成: `./scripts/build-app.sh` と署名検証成功（/tmp/my_movie-presets-build-final.log）。最新の `dist/MV Studio.app` を生成済み。
+- 次: 最新アプリでプロジェクトを開き、対象タブの「プリセット → 現在の設定を保存…」で登録し、別のプロジェクトの同じタブで適用する。実行中の処理・未解決事項なし。
+
+# 歌詞のフォントと描画位置（完了）
+
+- 最終更新: 2026-11-10 08:32 JST
+- 要件: 歌詞タブでフォントサイズ、映像上の描画位置、フォントの種類を指定可能にする。
+- 状態: LyricsTrackの書式モデル、共通Core Text描画、歌詞タブのフォントと数値欄を実装。数値の範囲・保存検証を共通化し、DragValueFieldと既存の履歴・自動保存を再利用。作業前の未コミット変更を維持。
+- 変更: Lyrics.swift、LyricsEditor.swift、LyricsTests.swift、UndoTests.swift、PROGRESS.md。
+- 検証: 全41件成功（/tmp/my_movie-lyrics-typography-test.log）。座標とサイズによる描画差、フォント切替と代替描画、保存復元、Undo/Redo、既存形式の初期値、最小ウィンドウ配置を確認。git diff --check成功。
+- 文書: README、docs/TIMELINE.md、docs/ARCHITECTURE.md、AGENTS.mdを更新。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-lyrics-typography-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリの「歌詞」タブで歌詞の表示中にフォント・サイズ・X/Yを調整する。実行中の処理・未解決事項なし。
+
+# 数値欄のドラッグ操作（完了）
+
+- 最終更新: 2026-11-10 08:27 JST
+- 要件: 編集可能な数値欄で左右ドラッグによる増減、ダブルクリックによる直接入力、ホイールクリックによる初期値復元を提供する。
+- 実装: スペクトラムの5欄、BPM・拍開始、歌詞・画像の開始/終了でDragValueFieldを使用。マウスを離すと1回確定し、Escで取り消す。スペクトラムはドラッグ中にプレビューのみ更新する。時刻確定には既存の拍スナップ・区間検証を適用する。
+- 整理: ドラッグ値の追跡と取消をDragValueField、入力中のホイールクリックをStudioWindowに集約。従来の確定・保存・Undo/Redoの経路を再利用。
+- 変更: DragValueField、StudioWindow、App、PlacementEditor、SpectrumEditor、LyricsEditor、ImageEditor、関連テスト、README、AGENTS、PROGRESS。作業前の未コミット差分を維持。
+- 検証: 全40件成功（/tmp/my_movie-number-drag-test.log）。ダブルクリック入力、左右ドラッグ、スペクトラムの仮表示と取消、確定・保存・Undo/Redo・初期値復元、歌詞時刻の確定を確認。git diff --check成功。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-number-drag-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリで数値欄を左右にドラッグして調整する。実行中の処理・未解決事項なし。
+
+# スペクトラムの位置・サイズ調整（完了）
+
+- 最終更新: 2026-11-10 08:20 JST
+- 要件: 4帯域を追加し、黒い半透明背景を削除。サイズ、バー間の余白、XY座標を調整可能にする。
+- 実装: 幅・高さとXYは1080p基準のpx、原点は映像左上。バーの余白は中心間隔に対する0〜90%。プレビュー・動画出力・自動保存・Undo/Redoに対応し、レイアウトが未設定のプロジェクトは初期値を使う。
+- 整理: 入力範囲と保存検証で定義を共有。バーを一つのパスにまとめ、余白0で隣接するバーの境界に線が出ないようにした。
+- 変更: Spectrum、SpectrumEditor、PlacementEditor、App、ProjectFileと関連テスト、README、設計書、AGENTS、PROGRESS。作業前の未コミット差分を維持。
+- 検証: 全40件成功（/tmp/my_movie-spectrum-layout-test.log）。4帯域、サイズ・座標・余白・背景なしの描画、タブ切替時の値確定とUndo/Redo、保存復元、MP4上の色と配置を確認。git diff --check成功。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-spectrum-layout-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリの「スペクトラム」タブで幅・高さ、位置、バーの余白を調整する。実行中の処理・未解決事項なし。
+
+# スペクトラム表示設定（完了）
+
+- 最終更新: 2026-11-10 08:13 JST
+- 要件: 「歌詞」「画像・演出」の隣に「スペクトラム」タブを追加し、バー／折れ線、色、分解度を設定できるようにする。
+- 実装: オン・オフと8/16/32/64帯域を選択でき、既定は水色の32本バー。64対数帯域の解析結果を集約するため再解析不要。プレビューとMP4出力で同じ描画を使用し、設定は自動保存・Undo/Redoに対応する。タブ切替時は直前のタイムラインを維持する。
+- 整理: RGB色を歌詞と共有し、保存・履歴からの設定復元を共通化。帯域境界は音声解析ごとに一度計算する。version 4で新設定が未指定の場合は初期値を使用。
+- 変更: Sources/MVStudioのApp、PlacementEditor、AudioAnalyzer、Scene、Spectrum、SpectrumEditor、RGBColor、Lyrics、LyricsEditor、ProjectFileと関連テスト、README、設計書、AGENTS、PROGRESS。作業前の未コミット差分を維持。
+- 検証: macOSサービスにアクセスできる環境で全39件成功（/tmp/my_movie-spectrum-final-test.log）。タブの配置と切替、バー本数、折れ線と指定色のMP4出力、設定の復元とUndo/Redoを確認。git diff --check成功。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-spectrum-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリで音声を開き、右上の「スペクトラム」タブで表示を調整する。実行中の処理・未解決事項なし。
+
+# Option＋ホイールで再生位置を移動（完了）
+
+- 最終更新: 2026-11-10 07:47 JST
+- 要件: タイムライン上で Alt（Option）＋ホイールを使って再生位置を前後に動かす。拡大中は細かく、縮小中は大きく移動する。
+- 方針: 共通TimelineViewから既存のシーク処理を呼ぶ。表示中の時間幅を基準に移動量を算出し、曲頭・曲末で止める。
+- 状態: 表示幅に比例するシークを実装。縦デルタの取得を既存ズームと共有し、通常のシーク経路で再生位置・プレビューを同期する。
+- 変更: Sources/MVStudio/TimelineView.swift、Tests/MVStudioTests/TimelineTests.swift、README.md、docs/TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 全38件成功（/tmp/my_movie-option-wheel-test.log）。拡大率に応じた移動量、前後移動、曲端、手動スクロール後の再生位置表示を確認。git diff --check成功。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-option-wheel-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリで音声を開き、拡大率を変えながらタイムライン上で Option＋ホイールを使う。実行中の処理・未解決事項なし。
+
+# Shift＋ホイールでタイムラインを横スクロール（完了）
+
+- 最終更新: 2026-11-10 07:46 JST
+- 要件: Shift＋ホイールで歌詞・画像・オートメーションのタイムラインを水平スクロールする。
+- 方針: 再生位置と独立した表示位置を共通TimelineViewで管理し、曲の両端で止める。⌘＋ホイールのズームと通常の縦スクロールは維持する。
+- 状態: 共通表示位置・追従復帰・曲端制限を実装し、座標固定の判定を整理。README、docs/TIMELINE.md、AGENTS.mdを更新。
+- 変更: Sources/MVStudio/{TimelineView,TimelineGeometry,PlacementEditor,App}.swift、Tests/MVStudioTests/TimelineTests.swift、上記文書とPROGRESS.md。
+- 検証: macOSサービスへアクセスできる環境で全37件成功（/tmp/my_movie-shift-wheel-test.log）。縦ホイール・横デルタ、曲端、再生位置維持、タブ間の表示位置共有を確認。git diff --check成功。
+- 生成: ./scripts/build-app.sh と codesign --verify --strict 成功（/tmp/my_movie-shift-wheel-build.log）。最新 dist/MV Studio.app を生成済み。
+- 次: 最新アプリで音声を開き、タイムライン上で Shift＋ホイールを使う。実行中の処理・未解決事項なし。
+
 # クリップ両端のホバー表示（完了）
 
 - 最終更新: 2026-11-10 00:06 JST

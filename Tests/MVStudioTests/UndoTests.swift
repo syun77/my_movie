@@ -153,6 +153,28 @@ final class UndoTests: XCTestCase {
         delegate.redoEdit()
         XCTAssertEqual(try storage.read(from: projectURL).lyrics.outlineWidth, 7)
 
+        let font = try XCTUnwrap(find(editor.lyrics.view, "lyrics.font") as? NSPopUpButton)
+        let alternate = try XCTUnwrap(font.itemArray.first { ($0.representedObject as? String).map { $0 != LyricsTypography.defaultFontName } == true })
+        let fontName = try XCTUnwrap(alternate.representedObject as? String)
+        font.select(alternate)
+        font.sendAction(font.action, to: font.target)
+        let sizeField = try XCTUnwrap(find(editor.lyrics.view, "lyrics.fontSize") as? DragValueField)
+        sizeField.stringValue = "80"
+        editor.lyrics.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: sizeField))
+        XCTAssertEqual(editor.lyrics.track.typography.fontName, fontName)
+        XCTAssertEqual(editor.lyrics.track.typography.fontSize, 80)
+        XCTAssertEqual(try storage.read(from: projectURL).lyrics.typography, editor.lyrics.track.typography)
+        delegate.undoEdit()
+        XCTAssertEqual(sizeField.integerValue, 54)
+        delegate.undoEdit()
+        XCTAssertEqual(font.selectedItem?.representedObject as? String, LyricsTypography.defaultFontName)
+        delegate.redoEdit()
+        delegate.redoEdit()
+        XCTAssertEqual(sizeField.integerValue, 80)
+        XCTAssertTrue(sizeField.resetValue())
+        XCTAssertEqual(editor.lyrics.track.typography.fontSize, 54)
+
+        editor.restoreTab(.spectrum)
         let spectrum = try XCTUnwrap(delegate.window.contentView?.subviewsRecursive.compactMap { $0 as? NSButton }.first { $0.title == "スペクトラムを表示" })
         spectrum.performClick(nil)
         XCTAssertFalse(delegate.editHistory.current.settings.spectrum)
@@ -160,6 +182,48 @@ final class UndoTests: XCTestCase {
         XCTAssertEqual(spectrum.state, .on)
         XCTAssertTrue(try storage.read(from: projectURL).settings.spectrum)
         delegate.redoEdit(); XCTAssertEqual(spectrum.state, .off)
+        let shape = try XCTUnwrap(find(editor.spectrum.view, "spectrum.shape") as? NSPopUpButton)
+        let color = try XCTUnwrap(find(editor.spectrum.view, "spectrum.color") as? NSColorWell)
+        let resolution = try XCTUnwrap(find(editor.spectrum.view, "spectrum.resolution") as? NSPopUpButton)
+        let widthField = try XCTUnwrap(find(editor.spectrum.view, "spectrum.width") as? DragValueField)
+        let gapField = try XCTUnwrap(find(editor.spectrum.view, "spectrum.barGap") as? NSTextField)
+        XCTAssertTrue(gapField.isEnabled)
+        gapField.stringValue = "60"
+        editor.spectrum.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: gapField))
+        shape.selectItem(withTitle: "折れ線")
+        shape.sendAction(shape.action, to: shape.target)
+        XCTAssertFalse(gapField.isEnabled)
+        color.color = RGBColor(red: 1, green: 0, blue: 0).nsColor
+        color.sendAction(color.action, to: color.target)
+        resolution.selectItem(withTitle: "4 帯域")
+        resolution.sendAction(resolution.action, to: resolution.target)
+        delegate.undoEdit()
+        XCTAssertEqual(resolution.titleOfSelectedItem, "32 帯域")
+        delegate.redoEdit()
+        XCTAssertEqual(resolution.titleOfSelectedItem, "4 帯域")
+
+        func mouse(_ type: NSEvent.EventType, x: Double, clicks: Int = 1) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 50), modifierFlags: [],
+                                            timestamp: 0, windowNumber: studioWindow.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: clicks, pressure: 1))
+        }
+        widthField.mouseDown(with: try mouse(.leftMouseDown, x: 100, clicks: 2))
+        let fieldEditor = try XCTUnwrap(widthField.currentEditor() as? NSTextView)
+        fieldEditor.string = "960"
+        let tabs = try XCTUnwrap(find(editor.inspector, "placement.mode") as? NSSegmentedControl)
+        tabs.selectedSegment = 0
+        tabs.sendAction(tabs.action, to: tabs.target)
+        XCTAssertEqual(editor.selectedTab, .lyrics)
+        var layout = SpectrumLayout()
+        layout.width = 960
+        layout.barGap = 60
+        let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 0), resolution: .minimal, layout: layout)
+        XCTAssertEqual(try storage.read(from: projectURL).settings.spectrumStyle, style)
+        delegate.undoEdit()
+        XCTAssertEqual(widthField.integerValue, SpectrumLayout().width)
+        delegate.redoEdit()
+        XCTAssertEqual(widthField.integerValue, 960)
+
         let bpm = try XCTUnwrap(find(delegate.window.contentView!, "scene.bpm") as? NSTextField)
         let offset = try XCTUnwrap(find(delegate.window.contentView!, "scene.offset") as? NSTextField)
         bpm.stringValue = "160"; delegate.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: bpm))
@@ -170,12 +234,79 @@ final class UndoTests: XCTestCase {
         delegate.redoEdit(); XCTAssertEqual(offset.doubleValue, 0.25)
         XCTAssertEqual(try storage.read(from: projectURL).settings.beatOffset, 0.25)
 
-        editor.restoreMode(true)
+        XCTAssertEqual(try storage.read(from: projectURL).settings.spectrumStyle, style)
+
+        editor.restoreTab(.spectrum)
+        let preview = try XCTUnwrap(delegate.window.contentView?.subviewsRecursive.compactMap { $0 as? PreviewView }.first)
+        widthField.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        widthField.mouseDragged(with: try mouse(.leftMouseDragged, x: 80))
+        XCTAssertEqual(widthField.integerValue, 940)
+        XCTAssertEqual(preview.spectrumLayoutPreview?.width, 940)
+        XCTAssertEqual(try storage.read(from: projectURL).settings.spectrumStyle.layout.width, 960)
+        XCTAssertTrue(studioWindow.cancelNumberDrags())
+        widthField.mouseUp(with: try mouse(.leftMouseUp, x: 80))
+        XCTAssertNil(preview.spectrumLayoutPreview)
+        XCTAssertEqual(widthField.integerValue, 960)
+
+        widthField.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        widthField.mouseDragged(with: try mouse(.leftMouseDragged, x: 130))
+        widthField.mouseUp(with: try mouse(.leftMouseUp, x: 140))
+        XCTAssertEqual(try storage.read(from: projectURL).settings.spectrumStyle.layout.width, 1000)
+        delegate.undoEdit()
+        XCTAssertEqual(widthField.integerValue, 960)
+        delegate.redoEdit()
+        XCTAssertEqual(widthField.integerValue, 1000)
+        XCTAssertTrue(widthField.resetValue())
+        XCTAssertEqual(try storage.read(from: projectURL).settings.spectrumStyle.layout.width, SpectrumLayout().width)
+        delegate.undoEdit()
+        delegate.undoEdit()
+
+        editor.restoreTab(.images)
         editor.images.openManager()
         XCTAssertNotNil(editor.images.managerWindow?.sheetParent)
         delegate.undoEdit(); XCTAssertEqual(offset.doubleValue, 0, "画像管理シートでも共通Undoを利用する")
         delegate.redoEdit(); XCTAssertEqual(offset.doubleValue, 0.25)
         if let sheet = editor.images.managerWindow { delegate.window.endSheet(sheet) }
+
+        func applyPreset<Settings: PresetSettings>(_ value: Settings, in view: NSView, id: String) throws {
+            let button = try XCTUnwrap(find(view, id) as? NSPopUpButton)
+            XCTAssertTrue(button.isEnabled)
+            let target = try XCTUnwrap(button.item(at: 1)?.target)
+            let action = NSSelectorFromString("applyPreset:")
+            let item = NSMenuItem(title: "テスト用プリセット", action: action, keyEquivalent: "")
+            item.representedObject = NamedPreset(name: item.title, settings: value)
+            XCTAssertTrue(NSApp.sendAction(action, to: target, from: item))
+        }
+
+        editor.restoreTab(.lyrics)
+        let previousLyrics = editor.lyrics.track
+        let selectedClip = editor.timeline.selectedID
+        let preset = LyricsStyle(outlineWidth: 7, outlineColor: RGBColor(red: 0, green: 1, blue: 0),
+                                 typography: LyricsTypography(fontSize: 100, x: 560, y: 640))
+        try applyPreset(preset, in: editor.lyrics.view, id: "lyrics.presets")
+        XCTAssertEqual(editor.lyrics.track.style, preset)
+        XCTAssertEqual(editor.lyrics.track.clips, previousLyrics.clips)
+        XCTAssertEqual(editor.timeline.selectedID, selectedClip)
+        XCTAssertEqual(try storage.read(from: projectURL).lyrics, editor.lyrics.track)
+        delegate.undoEdit()
+        XCTAssertEqual(editor.lyrics.track, previousLyrics)
+        delegate.redoEdit()
+        XCTAssertEqual(editor.lyrics.track.style, preset)
+
+        editor.restoreTab(.spectrum)
+        let previousSettings = try storage.read(from: projectURL).settings
+        let spectrumPreset = SpectrumSettings(shown: false, style: SpectrumStyle(layout: SpectrumLayout(width: 123)))
+        try applyPreset(spectrumPreset, in: editor.spectrum.view, id: "spectrum.presets")
+        XCTAssertEqual(widthField.integerValue, 123)
+        XCTAssertFalse(preview.settings.spectrum)
+        XCTAssertEqual(preview.settings.spectrumStyle, spectrumPreset.style)
+        XCTAssertEqual(preview.settings.bpm, previousSettings.bpm)
+        XCTAssertEqual(preview.settings.beatOffset, previousSettings.beatOffset)
+        XCTAssertEqual(try storage.read(from: projectURL).settings, preview.settings)
+        delegate.undoEdit()
+        XCTAssertEqual(preview.settings, previousSettings)
+        delegate.redoEdit()
+        XCTAssertEqual(preview.settings.spectrumStyle, spectrumPreset.style)
     }
 
     @MainActor func testKeyboardRoutesToProjectHistoryWhileTyping() throws {

@@ -15,11 +15,19 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     let timeline = TimelineView()
     private let table = NSTableView()
     private let body = NSTextView()
-    private let start = NSTextField(string: "0")
-    private let end = NSTextField(string: "2")
+    private let start = DragValueField(frame: .zero)
+    private let end = DragValueField(frame: .zero)
     private let width = NSSlider(value: 3, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let widthLabel = NSTextField(labelWithString: "3.0 px")
     private let color = NSColorWell()
+    private let font = NSPopUpButton()
+    private lazy var presets = PresetMenu<LyricsStyle>(
+        finishEditing: { [weak self] in self?.finishEditing() ?? false },
+        current: { [weak self] in self?.track.style },
+        apply: { [weak self] in self?.applyPreset($0) }
+    )
+    private var missingFontItem: NSMenuItem?
+    private var typographyFields: [LyricsTypography.Field: DragValueField] = [:]
     private let chain = NSButton(checkboxWithTitle: "直前のテロップ末尾に連結", target: nil, action: nil)
     private let message = NSTextField(labelWithString: "音声を読み込んで歌詞を追加してください")
     private var editControls: [NSControl] = []
@@ -40,9 +48,18 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         width.target = self; width.action = #selector(changeStyle); width.isContinuous = true
         width.widthAnchor.constraint(equalToConstant: 120).isActive = true
         widthLabel.widthAnchor.constraint(equalToConstant: 60).isActive = true
-        let toolbar = NSStackView(views: [title, add, remove]); toolbar.spacing = 10
+        presets.button.identifier = NSUserInterfaceItemIdentifier("lyrics.presets")
+        let toolbar = NSStackView(views: [title, add, remove, presets.button]); toolbar.spacing = 10
         let style = NSStackView(views: [NSTextField(labelWithString: "縁取り色"), color, NSTextField(labelWithString: "太さ"), width, widthLabel])
         style.spacing = 10
+        configureFontMenu()
+        let fontRow = typographyRow([NSTextField(labelWithString: "フォント"), font])
+        let placement = typographyRow([
+            NSTextField(labelWithString: "サイズ"), typographyField(.fontSize, title: "フォントサイズ"),
+            NSTextField(labelWithString: "X"), typographyField(.x, title: "描画位置 X"),
+            NSTextField(labelWithString: "Y"), typographyField(.y, title: "描画位置 Y"),
+            NSTextField(labelWithString: "px（1080p）")
+        ])
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lyrics"))
         column.title = "歌詞（開始〜終了 秒）"
         column.resizingMask = .autoresizingMask
@@ -55,6 +72,8 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         end.identifier = NSUserInterfaceItemIdentifier("lyrics.end")
         body.delegate = self
         start.delegate = self; end.delegate = self
+        start.stringValue = "0"; end.stringValue = "2"
+        bindTimingFields()
         body.font = .systemFont(ofSize: 14); body.isRichText = false
         body.isAutomaticQuoteSubstitutionEnabled = false
         let textScroll = NSScrollView(); textScroll.documentView = body; textScroll.hasVerticalScroller = true
@@ -79,17 +98,20 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         timeline.onPreview = { [weak self] value in self?.onPreview?(value) }
         timeline.onCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
         timeline.onError = { [weak self] error in self?.message.stringValue = error.localizedDescription }
-        for child in [toolbar, content, style, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
-        editControls = [add, remove, start, end, color, width, chain]
+        for child in [toolbar, content, fontRow, placement, style, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        editControls = [add, remove, start, end, color, width, chain, font, presets.button] + Array(typographyFields.values)
+        updateTypographyControls()
         setAvailable(false)
     }
+
+    func clearPresetSelection() { presets.clearSelection() }
 
     func load(_ value: LyricsTrack) {
         timeline.cancelDrag()
         track = value; timingIsValid = true
         timeline.track = value; timeline.selectedID = nil
-        width.doubleValue = value.outlineWidth; color.color = value.outlineColor.nsColor
-        updateWidthLabel(); table.reloadData(); table.deselectAll(nil)
+        updateStyleControls()
+        table.reloadData(); table.deselectAll(nil)
         body.string = ""; start.stringValue = "0"; end.stringValue = "2"; chain.state = .off
     }
     func restore(_ value: LyricsTrack) {
@@ -186,12 +208,32 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     }
     func textDidEndEditing(_ notification: Notification) { applyEditorChanges(); onEndTextEditing?() }
     func controlTextDidBeginEditing(_ obj: Notification) { onBeginTextEditing?() }
+    private func bindTimingFields() {
+        for (field, isStart) in [(start, true), (end, false)] {
+            field.bindClipTime(isStart: isStart, interval: { [weak self] in
+                self?.track.clips.first { $0.id == self?.timeline.selectedID }.map { ($0.start, $0.end) }
+            }, duration: { [weak self] in self?.duration ?? 0 }, commit: { [weak self] in self?.finishTimingEdit() })
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
-        if let field = obj.object as? NSTextField,
-           let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
+        guard let field = obj.object as? NSTextField, field === start || field === end else { return }
+        if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
         applyEditorChanges()
     }
     func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if let parameter = typographyFields.first(where: { $0.value === field })?.key {
+            let value = Int(field.stringValue.trimmingCharacters(in: .whitespaces))
+                ?? track.typography[keyPath: parameter.keyPath]
+            commitTypography(track.typography.updating(parameter, to: value))
+            onEndTextEditing?()
+        } else {
+            finishTimingEdit()
+        }
+    }
+
+    private func finishTimingEdit() {
         defer { onEndTextEditing?() }
         applyEditorChanges()
         if let clip = track.clips.first(where: { $0.id == timeline.selectedID }) {
@@ -214,11 +256,116 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
             }
         } catch { timingIsValid = false; message.stringValue = error.localizedDescription }
     }
+    private func updateStyleControls() {
+        width.doubleValue = track.outlineWidth
+        color.color = track.outlineColor.nsColor
+        updateWidthLabel()
+        updateTypographyControls()
+    }
+
+    private func applyPreset(_ style: LyricsStyle) {
+        guard style != track.style else { return }
+        color.deactivate()
+        track.style = style
+        updateStyleControls()
+        timeline.track = track
+        onChange?(track)
+    }
+
     private func updateWidthLabel() { widthLabel.stringValue = String(format: "%.1f px", track.outlineWidth) }
+
+    private func typographyRow(_ views: [NSView]) -> NSStackView {
+        let row = NSStackView(views: views)
+        row.spacing = 8
+        row.alignment = .centerY
+        return row
+    }
+
+    private func configureFontMenu() {
+        font.identifier = NSUserInterfaceItemIdentifier("lyrics.font")
+        font.setAccessibilityLabel("フォント")
+        font.widthAnchor.constraint(equalToConstant: 230).isActive = true
+        font.target = self
+        font.action = #selector(changeFont)
+        let names = NSFontManager.shared.availableFonts.map { name in
+            (name: name, title: NSFont(name: name, size: 12)?.displayName ?? name)
+        }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        for (name, title) in names {
+            let label = font.item(withTitle: title) == nil ? title : "\(title) (\(name))"
+            font.addItem(withTitle: label)
+            font.lastItem?.representedObject = name
+        }
+    }
+
+    private func typographyField(_ parameter: LyricsTypography.Field, title: String) -> DragValueField {
+        let field = DragValueField(frame: .zero)
+        field.identifier = NSUserInterfaceItemIdentifier("lyrics.\(parameter)")
+        field.setAccessibilityLabel(title)
+        field.delegate = self
+        field.alignment = .right
+        field.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        let keyPath = parameter.keyPath
+        let range = parameter.range
+        field.bindNumber(current: { [weak self] in self.map { Double($0.track.typography[keyPath: keyPath]) } },
+                         initial: { Double(LyricsTypography()[keyPath: keyPath]) },
+                         normalize: { min(Double(range.upperBound), max(Double(range.lowerBound), $0)) },
+                         preview: { [weak self] value in
+            guard let self else { return }
+            var draft = self.track
+            if let value { draft.typography = draft.typography.updating(parameter, to: Int(value)) }
+            self.onPreview?(draft)
+        }, commit: { [weak self] value in
+            guard let self else { return }
+            self.commitTypography(self.track.typography.updating(parameter, to: Int(value)))
+        })
+        if parameter == .x { field.toolTip = "映像の左端から文字の中央まで。\(DragValueField.numberEditingHint)" }
+        if parameter == .y { field.toolTip = "映像の上端からテキスト枠の上端まで。\(DragValueField.numberEditingHint)" }
+        typographyFields[parameter] = field
+        return field
+    }
+
+    private func updateTypographyControls() {
+        for (parameter, field) in typographyFields {
+            field.integerValue = track.typography[keyPath: parameter.keyPath]
+        }
+        selectFont(track.typography.fontName)
+    }
+
+    private func selectFont(_ name: String) {
+        guard font.selectedItem?.representedObject as? String != name else { return }
+        if let missingFontItem { font.menu?.removeItem(missingFontItem) }
+        missingFontItem = nil
+        if let item = font.itemArray.first(where: { $0.representedObject as? String == name }) {
+            font.select(item)
+        } else {
+            font.insertItem(withTitle: "\(name)（未インストール）", at: 0)
+            missingFontItem = font.item(at: 0)
+            missingFontItem?.representedObject = name
+            font.selectItem(at: 0)
+        }
+    }
+
+    @objc private func changeFont() {
+        guard let name = font.selectedItem?.representedObject as? String else { return }
+        var typography = track.typography
+        typography.fontName = name
+        commitTypography(typography)
+    }
+
+    private func commitTypography(_ value: LyricsTypography) {
+        guard available else { return }
+        let changed = value != track.typography
+        track.typography = value
+        updateTypographyControls()
+        guard changed else { return }
+        timeline.track = track
+        onChange?(track)
+    }
+
     @objc private func changeStyle() {
         guard available else { return }
         track.outlineWidth = (width.doubleValue * 10).rounded() / 10
-        track.outlineColor = LyricsColor(color.color)
+        track.outlineColor = RGBColor(color.color)
         updateWidthLabel(); timeline.track = track; onChange?(track)
     }
 }

@@ -76,7 +76,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         _ = editor.view
         editor.duration = 421
         editor.currentTime = 25
-        editor.setAvailable(true)
+        editor.setAvailable(hasAudio: true, isBusy: false)
         var savedSpans: [Double] = []
         var savedWholeSong: [Bool] = []
         editor.onVisibleSpanChange = { savedSpans.append($0) }
@@ -105,7 +105,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         let slider = try XCTUnwrap(editor.view.subviews.first?.subviews.compactMap { $0 as? NSSlider }.first)
         XCTAssertEqual(slider.doubleValue, editor.visibleSpan)
 
-        editor.restoreMode(true)
+        editor.restoreTab(.images)
         var images = ImageTrack()
         let projectURL = URL(fileURLWithPath: "/tmp/zoom.mvproject")
         let asset = images.register(url: URL(fileURLWithPath: "/tmp/zoom.png"), projectURL: projectURL)
@@ -150,7 +150,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         try wheel(1)
         XCTAssertTrue(editor.showsWholeSong)
         XCTAssertEqual(editor.timeline.visibleSpan, 1.5)
-        editor.setAvailable(false)
+        editor.setAvailable(hasAudio: true, isBusy: true)
         try wheel(-1)
         XCTAssertEqual(savedWholeSong, [false])
     }

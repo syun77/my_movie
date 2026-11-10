@@ -14,7 +14,7 @@ final class LyricsEditorTests: XCTestCase {
         }
         let body = try XCTUnwrap(find(editor.view, "lyrics.body") as? NSTextView)
         let start = try XCTUnwrap(find(editor.view, "lyrics.start") as? NSTextField)
-        let end = try XCTUnwrap(find(editor.view, "lyrics.end") as? NSTextField)
+        let end = try XCTUnwrap(find(editor.view, "lyrics.end") as? DragValueField)
         var saved = [LyricsTrack]()
         editor.onChange = { saved.append($0) }
         body.string = "自動反映"; body.setSelectedRange(NSRange(location: 2, length: 0))
@@ -45,6 +45,19 @@ final class LyricsEditorTests: XCTestCase {
         editor.textDidChange(Notification(name: NSText.didChangeNotification, object: body))
         XCTAssertEqual(editor.track.clips.first?.text, "か")
         XCTAssertEqual(saved.count, 5)
-    }
 
+        func mouse(_ type: NSEvent.EventType, x: Double) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 0), modifierFlags: [],
+                                            timestamp: 0, windowNumber: 0, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        end.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        end.mouseDragged(with: try mouse(.leftMouseDragged, x: 147))
+        XCTAssertEqual(saved.count, 5)
+        end.mouseUp(with: try mouse(.leftMouseUp, x: 149))
+        XCTAssertEqual(editor.track.clips.first?.end, 5)
+        XCTAssertEqual(saved.count, 6)
+        XCTAssertTrue(end.resetValue())
+        XCTAssertEqual(editor.track.clips.first?.end, 3.25)
+    }
 }

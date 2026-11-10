@@ -26,7 +26,17 @@ enum AudioAnalyzer {
         var realOut = imaginary
         var imagOut = imaginary
         var frames = [[Float]]()
-        var smooth = [Float](repeating: 0, count: 32)
+        let bandCount = SpectrumStyle.Resolution.high.rawValue
+        let top = min(20000, rate / 2)
+        let edges = (0...bandCount).map { band in
+            Int(20 * pow(top / 20, Double(band) / Double(bandCount)) * Double(count) / rate)
+        }
+        let bandBins = zip(edges, edges.dropFirst()).map { low, high in
+            let first = min(count / 2 - 1, max(1, low))
+            let last = min(count / 2, max(first + 1, high))
+            return first..<last
+        }
+        var smooth = [Float](repeating: 0, count: bandCount)
         for index in 0..<Int(ceil(duration / step)) {
             try Task.checkCancellation()
             let center = Int64(Double(index) * step * rate)
@@ -44,13 +54,8 @@ enum AudioAnalyzer {
                     power[bin] += (realOut[bin] * realOut[bin] + imagOut[bin] * imagOut[bin]) / Float(file.processingFormat.channelCount * UInt32(count * count))
                 }
             }
-            let top = min(20000, rate / 2)
-            for band in 0..<32 {
-                let low = 20 * pow(top / 20, Double(band) / 32)
-                let high = 20 * pow(top / 20, Double(band + 1) / 32)
-                let first = min(count / 2 - 1, max(1, Int(low * Double(count) / rate)))
-                let last = min(count / 2, max(first + 1, Int(high * Double(count) / rate)))
-                let sum = power[first..<last].reduce(0, +)
+            for (band, bins) in bandBins.enumerated() {
+                let sum = power[bins].reduce(0, +)
                 let normalized = max(0, min(1, (10 * log10(max(sum, 1e-10)) + 70) / 70))
                 let factor: Float = normalized > smooth[band] ? 0.8 : 0.22
                 smooth[band] += (normalized - smooth[band]) * factor

@@ -12,6 +12,86 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(TimelineGeometry(time: 2, duration: 3, span: 12, width: 1000).origin, 0)
         XCTAssertEqual(TimelineGeometry.label(61.234), "01:01.234")
     }
+    @MainActor func testShiftWheelPansWithoutSeekingAndStopsAtSongEdges() throws {
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 1000, height: 210))
+        view.duration = 100
+        view.currentTime = 25
+        view.isEnabled = true
+        view.onSeek = { _ in XCTFail("横スクロールでシークしない") }
+        view.onWheelZoom = { _ in XCTFail("横スクロールでズームしない") }
+
+        func wheel(y: Int32 = 0, x: Int32 = 0, units: CGScrollEventUnit = .line,
+                   shift: Bool = true) throws {
+            let event = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2,
+                                              wheel1: y, wheel2: x, wheel3: 0))
+            if shift { event.flags = .maskShift }
+            view.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: event)))
+        }
+
+        let start = view.geometry.origin
+        try wheel(y: -1, shift: false)
+        XCTAssertEqual(view.geometry.origin, start)
+        try wheel(y: -1)
+        let scrolled = view.geometry.origin
+        XCTAssertGreaterThan(scrolled, start)
+        XCTAssertEqual(view.currentTime, 25)
+        XCTAssertEqual(view.visibleSpan, 12)
+        view.currentTime = 26
+        view.imageMode = true
+        XCTAssertEqual(view.geometry.origin, scrolled)
+
+        try wheel(x: -10, units: .pixel)
+        XCTAssertGreaterThan(view.geometry.origin, scrolled)
+        try wheel(y: -1000)
+        XCTAssertEqual(view.geometry.origin, 88)
+        try wheel(y: 1000)
+        XCTAssertEqual(view.geometry.origin, 0)
+        view.followPlayhead()
+        XCTAssertEqual(view.geometry.origin, 20)
+        view.visibleSpan = view.duration
+        try wheel(y: -1000)
+        XCTAssertEqual(view.geometry.origin, 0)
+    }
+
+    @MainActor func testOptionWheelSeeksByVisibleSpanAndRevealsOffscreenPlayhead() throws {
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 1000, height: 210))
+        view.duration = 120
+        view.currentTime = 30
+        view.isEnabled = true
+        view.onSeek = { [unowned view] in view.currentTime = $0 }
+        view.onWheelZoom = { _ in XCTFail("Option＋ホイールでズームしない") }
+
+        func wheel(_ lines: Int32, modifiers: CGEventFlags = .maskAlternate) throws {
+            let event = try XCTUnwrap(CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+                                              wheel1: lines, wheel2: 0, wheel3: 0))
+            event.flags = modifiers
+            view.scrollWheel(with: try XCTUnwrap(NSEvent(cgEvent: event)))
+        }
+
+        view.visibleSpan = 2
+        try wheel(-1)
+        let fineStep = view.currentTime - 30
+        XCTAssertGreaterThan(fineStep, 0)
+        try wheel(1)
+        XCTAssertEqual(view.currentTime, 30, accuracy: 1e-9)
+
+        view.imageMode = true
+        view.visibleSpan = 20
+        try wheel(-1)
+        XCTAssertEqual(view.currentTime - 30, fineStep * 10, accuracy: 1e-9)
+        try wheel(-1000, modifiers: .maskShift)
+        XCTAssertGreaterThan(view.geometry.origin, view.currentTime)
+        try wheel(1)
+        XCTAssertEqual(view.currentTime, 30, accuracy: 1e-9)
+        XCTAssertLessThanOrEqual(view.geometry.origin, view.currentTime)
+        XCTAssertGreaterThanOrEqual(view.geometry.origin + view.geometry.span, view.currentTime)
+
+        try wheel(1000)
+        XCTAssertEqual(view.currentTime, 0)
+        try wheel(-1000)
+        XCTAssertEqual(view.currentTime, view.duration)
+    }
+
     private func sample() throws -> LyricsTrack {
         let first = try LyricsTrack().adding(at: 1, duration: 20)
         let second = try first.track.adding(at: 2, duration: 20)
