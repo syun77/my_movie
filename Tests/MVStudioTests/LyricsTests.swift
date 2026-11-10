@@ -90,7 +90,7 @@ final class LyricsTests: XCTestCase {
 
     private func render(track: LyricsTrack, time: Double) throws -> CGImage {
         let context = CGContext(data: nil, width: 1280, height: 720, bitsPerComponent: 8, bytesPerRow: 1280 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        SceneRenderer.draw(in: context, size: CGSize(width: 1280, height: 720), features: nil, settings: SceneSettings(spectrum: false), time: time, lyrics: track)
+        LyricsRenderer.draw(in: context, size: CGSize(width: 1280, height: 720), track: track, time: time)
         return try XCTUnwrap(context.makeImage())
     }
 

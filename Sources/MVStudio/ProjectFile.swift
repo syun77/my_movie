@@ -1,9 +1,9 @@
 import Foundation
 
 struct ProjectFile: Codable {
-    static let currentVersion = 4
+    static let currentVersion = 5
 
-    let version: Int
+    private(set) var version: Int
     let audio: AssetReference
     let imageAssets: [ImageAsset]
     let imageLayers: [ImageLayer]
@@ -20,8 +20,10 @@ struct ProjectFile: Codable {
         self.lyrics = lyrics
     }
 
+    mutating func upgradeVersion() { version = Self.currentVersion }
+
     func validate() throws {
-        guard version == Self.currentVersion else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
+        guard version == Self.currentVersion || (version == 4 && images.clips.allSatisfy { $0.effects == nil }) else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         try lyrics.validate()
         try images.validate()
         let imageClips = images.clips
@@ -71,9 +73,11 @@ struct ProjectStorage {
 
     func save(_ project: ProjectFile, to url: URL) throws {
         try project.validate()
+        var updated = project
+        updated.upgradeVersion()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(project).write(to: url, options: .atomic)
+        try encoder.encode(updated).write(to: url, options: .atomic)
         remember(url)
     }
 

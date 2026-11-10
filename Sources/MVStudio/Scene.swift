@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 struct SceneSettings: Codable, Sendable, Equatable {
     var bpm: Double
@@ -77,34 +77,5 @@ struct AudioFeatures: Sendable {
         let current = frames[index]
         let following = frames[next]
         return current.indices.map { current[$0] + (following[$0] - current[$0]) * fraction }
-    }
-}
-
-enum SceneRenderer {
-    static func draw(in context: CGContext, size: CGSize, images: [ImageRenderLayer] = [], features: AudioFeatures?, settings: SceneSettings, time: Double, lyrics: LyricsTrack = LyricsTrack()) {
-        let rect = CGRect(origin: .zero, size: size)
-        context.setFillColor(CGColor(red: 0.025, green: 0.035, blue: 0.065, alpha: 1))
-        context.fill(rect)
-        let pulse = images.isEmpty ? 0 : features?.transientPulse(at: time) ?? 0
-        for layer in images where layer.clip.start <= time && time < layer.clip.end {
-            let image = layer.image
-            let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
-            let scale = fit * layer.clip.scale(at: time, settings: settings, transientPulse: pulse)
-            let width = CGFloat(image.width) * scale, height = CGFloat(image.height) * scale
-            context.saveGState()
-            context.clip(to: rect)
-            context.interpolationQuality = .high
-            let x = layer.clip.manualValue(.x, at: time) * (size.width / 1920)
-            let y = layer.clip.manualValue(.y, at: time) * (size.height / 1080)
-            let degrees = layer.clip.manualValue(.rotation, at: time).truncatingRemainder(dividingBy: 360)
-            context.translateBy(x: size.width / 2 + x, y: size.height / 2 + y)
-            context.rotate(by: -degrees * (.pi / 180))
-            context.draw(image, in: CGRect(x: -width / 2, y: -height / 2, width: width, height: height))
-            context.restoreGState()
-        }
-        if settings.spectrum, let features {
-            SpectrumRenderer.draw(in: context, size: size, features: features, time: time, style: settings.spectrumStyle)
-        }
-        LyricsRenderer.draw(in: context, size: size, track: lyrics, time: time)
     }
 }

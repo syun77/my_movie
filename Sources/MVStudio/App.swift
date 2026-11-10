@@ -3,28 +3,6 @@ import AVFoundation
 import UniformTypeIdentifiers
 import ImageIO
 
-final class PreviewView: NSView {
-    var images: [ImageRenderLayer] = []
-    var features: AudioFeatures?
-    var settings = SceneSettings()
-    var spectrumLayoutPreview: SpectrumLayout?
-    var lyrics = LyricsTrack()
-    var time = 0.0
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.setFillColor(NSColor.black.cgColor)
-        context.fill(bounds)
-        let width = min(bounds.width, bounds.height * 16 / 9)
-        let size = CGSize(width: width, height: width * 9 / 16)
-        context.saveGState()
-        context.translateBy(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-        var displaySettings = settings
-        if let spectrumLayoutPreview { displaySettings.spectrumStyle.layout = spectrumLayoutPreview }
-        SceneRenderer.draw(in: context, size: size, images: images, features: features, settings: displaySettings, time: time, lyrics: lyrics)
-        context.restoreGState()
-    }
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, NSWindowDelegate, NSMenuItemValidation {
     private(set) var window: NSWindow!
@@ -128,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         }
         placementEditor.spectrum.onLayoutPreview = { [weak self] layout in
             self?.preview.spectrumLayoutPreview = layout
-            self?.preview.needsDisplay = true
+            self?.preview.invalidateFrame()
         }
         placementEditor.spectrum.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
         placementEditor.spectrum.onChange = { [weak self] value in
@@ -139,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             guard settings != self.preview.settings else { return }
             self.recordEdit(settings: settings)
             self.preview.settings = settings
-            self.preview.needsDisplay = true
+            self.preview.invalidateFrame()
             _ = self.saveProject()
         }
         lyricsEditor.onBeginTextEditing = { [weak self] in self?.endHistoryGroup() }
@@ -148,10 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.images.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
         lyricsEditor.onChange = { [weak self] value in
             guard let self else { return }
-            self.recordEdit(lyrics: value); self.stopPlayback(); self.preview.lyrics = value; self.preview.needsDisplay = true; _ = self.saveProject()
+            self.recordEdit(lyrics: value); self.stopPlayback(); self.preview.lyrics = value; self.preview.invalidateFrame(); _ = self.saveProject()
         }
         lyricsEditor.onPreview = { [weak self] value in
-            self?.preview.lyrics = value; self?.preview.needsDisplay = true
+            self?.preview.lyrics = value; self?.preview.invalidateFrame()
         }
         lyricsEditor.onCapturePlaybackTime = { [weak self] in
             guard let self else { return 0 }
@@ -299,7 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 _ = saveProject(); refreshPreviewImages()
             } catch is CancellationError { status.stringValue = "解析をキャンセルしました。" }
             catch { showError(error) }
-            progress.stopAnimation(nil); progress.isIndeterminate = false; progress.doubleValue = 0; setBusy(false); preview.needsDisplay = true
+            progress.stopAnimation(nil); progress.isIndeterminate = false; progress.doubleValue = 0; setBusy(false); preview.invalidateFrame()
         }
     }
     @discardableResult private func saveProject() -> Bool {
@@ -330,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.snapGrid = TimelineSnapGrid(bpm: settings.bpm, origin: settings.beatOffset)
         bpm.stringValue = String(format: "%.1f", preview.settings.bpm)
         offset.stringValue = String(format: "%.2f", preview.settings.beatOffset)
-        preview.needsDisplay = true
+        preview.invalidateFrame()
     }
     private func restoreSceneSettings(_ settings: SceneSettings) {
         preview.settings = settings
@@ -382,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         restoreSceneSettings(value.settings); preview.lyrics = value.lyrics
         imageTrack = value.images; previewTrack = value.images
         lyricsEditor.restore(value.lyrics); placementEditor.images.restore(value.images)
-        lastPreviewKey = nil; refreshPreviewImages(); preview.needsDisplay = true
+        lastPreviewKey = nil; refreshPreviewImages(); preview.invalidateFrame()
         _ = saveProject()
     }
     @objc private func togglePlay() {
@@ -401,10 +379,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.timeline.followPlayhead()
         scrub()
     }
-    private func scrub() { player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue; preview.needsDisplay = true; updateTime() }
+    private func scrub() { player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue; preview.invalidateFrame(); updateTime() }
     private func tick() {
         guard let player, !busy else { return }
-        if player.isPlaying { preview.time = player.currentTime; seek.doubleValue = player.currentTime; preview.needsDisplay = true }
+        if player.isPlaying { preview.time = player.currentTime; seek.doubleValue = player.currentTime; preview.invalidateFrame() }
         play.title = player.isPlaying ? "一時停止" : "再生"; updateTime()
     }
     private func updateTime() {
@@ -433,14 +411,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
            let previous = previousKey?.clips, preview.images.map(\.clip) == previous,
            previous.map(\.assetID) == active.map(\.assetID) {
             preview.images = zip(active, preview.images).map { ImageRenderLayer(clip: $0, image: $1.image) }
-            preview.needsDisplay = true
+            preview.invalidateFrame()
             return
         }
         previewImageTask = Task { [weak self] in
             guard let self else { return }
             let layers = (try? await imageStore.layers(track: track, projectURL: projectURL, time: time, allowMissing: true)) ?? []
             guard !Task.isCancelled, revision == previewRevision else { return }
-            preview.images = layers; preview.needsDisplay = true
+            preview.images = layers; preview.invalidateFrame()
         }
     }
     @objc private func exportVideo() {

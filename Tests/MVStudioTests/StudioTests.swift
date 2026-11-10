@@ -112,7 +112,9 @@ final class StudioTests: XCTestCase {
                                              bitsPerComponent: 8, bytesPerRow: Int(size.width) * 4,
                                              space: CGColorSpaceCreateDeviceRGB(),
                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        SceneRenderer.draw(in: context, size: size, features: features, settings: settings, time: 0)
+        if settings.spectrum {
+            SpectrumRenderer.draw(in: context, size: size, features: features, time: 0, style: settings.spectrumStyle)
+        }
         return try XCTUnwrap(context.makeImage())
     }
 
@@ -132,7 +134,7 @@ final class StudioTests: XCTestCase {
         let url = directory.appendingPathComponent("tone.wav")
         let rate = 48000.0
         let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
-        let count: AVAudioFrameCount = 48000
+        let count: AVAudioFrameCount = 48011
         let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count)!
         buffer.frameLength = count
         for index in 0..<Int(count) {
@@ -176,6 +178,8 @@ final class StudioTests: XCTestCase {
         var animated = ImageClip(assetID: overlayID, start: 0.5, end: 0.8, automaticAnimation: .off)
         _ = animated.setKey(.x, at: 0.6, value: 0)
         _ = animated.setKey(.x, at: 0.7, value: 600)
+        animated.effects = ImageEffects(blur: .init(radius: 3), bloom: .init(threshold: 10), particles: .init(color: RGBColor(red: 0, green: 1, blue: 0), seed: 1),
+                                        embers: .init(seed: 18))
         images.layers[2].clips = [animated]
         let layout = SpectrumLayout(x: 300, y: 650, width: 900, height: 180)
         let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 1), resolution: .medium, layout: layout)
@@ -184,11 +188,32 @@ final class StudioTests: XCTestCase {
         let duration = try await asset.load(.duration)
         let videos = try await asset.loadTracks(withMediaType: .video)
         let audios = try await asset.loadTracks(withMediaType: .audio)
-        XCTAssertEqual(CMTimeGetSeconds(duration), 1, accuracy: 1.0 / 30)
+        let expectedFrameCount = Int64(ceil(features.duration * 30))
+        XCTAssertEqual(duration.seconds, Double(expectedFrameCount) / 30, accuracy: 1e-6)
         XCTAssertEqual(videos.count, 1); XCTAssertEqual(audios.count, 1)
+        let audioRange = try await audios[0].load(.timeRange)
+        XCTAssertEqual(audioRange.duration.seconds, features.duration, accuracy: 1.0 / 48000)
+        let formats = try await videos[0].load(.formatDescriptions)
+        let videoFormat = try XCTUnwrap(formats.first)
+        let transfer = CMFormatDescriptionGetExtension(videoFormat, extensionKey: kCMFormatDescriptionExtension_TransferFunction) as? String
+        XCTAssertEqual(transfer, kCVImageBufferTransferFunction_ITU_R_709_2 as String)
+        let videoReader = try AVAssetReader(asset: asset)
+        let compressedFrames = AVAssetReaderTrackOutput(track: videos[0], outputSettings: nil)
+        videoReader.add(compressedFrames)
+        XCTAssertTrue(videoReader.startReading())
+        var frameIndex: Int64 = 0
+        while let buffer = compressedFrames.copyNextSampleBuffer() {
+            let count = CMSampleBufferGetNumSamples(buffer)
+            guard count > 0 else { continue }
+            XCTAssertEqual(count, 1)
+            XCTAssertEqual(CMSampleBufferGetPresentationTimeStamp(buffer).seconds, Double(frameIndex) / 30, accuracy: 1e-6)
+            frameIndex += 1
+        }
+        XCTAssertEqual(videoReader.status, .completed)
+        XCTAssertEqual(frameIndex, expectedFrameCount)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
-        let frame = try generator.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil)
+        let frame = try generator.copyCGImage(at: CMTime(seconds: 0.4, preferredTimescale: 600), actualTime: nil)
         XCTAssertEqual(frame.width, 1920); XCTAssertEqual(frame.height, 1080)
         let naturalSize = try await videos[0].load(.naturalSize)
         let frameRate = try await videos[0].load(.nominalFrameRate)
@@ -203,14 +228,17 @@ final class StudioTests: XCTestCase {
             pixels[$0 * 4] > 140 && pixels[$0 * 4 + 1] < 70 && pixels[$0 * 4 + 2] > 140
         }
         XCTAssertGreaterThan(magentaPixels.count, 500, "書出し動画に設定した折れ線の色を保持")
+        let spectrumRows = magentaPixels.map { $0 / frame.width }
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(spectrumRows.min()), layout.y - 4)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(spectrumRows.max()), layout.y + layout.height + 4)
         let spectrumColumns = magentaPixels.map { $0 % frame.width }
         XCTAssertEqual(try XCTUnwrap(spectrumColumns.min()), layout.x, accuracy: 16)
         XCTAssertEqual(try XCTUnwrap(spectrumColumns.max()), layout.x + layout.width, accuracy: 16)
-        for (time, expectsBlue) in [(0.2, false), (0.6, true), (0.733, false), (0.9, false)] {
-            let sample = try generator.copyCGImage(at: CMTime(seconds: time, preferredTimescale: 30), actualTime: nil)
+        for (index, expectsBlue) in [(6, false), (18, true), (22, false), (27, false)] {
+            let sample = try generator.copyCGImage(at: CMTime(value: Int64(index), timescale: 30), actualTime: nil)
             decoded.draw(sample, in: CGRect(x: 0, y: 0, width: sample.width, height: sample.height))
-            let index = (900 * sample.width + 960) * 4
-            XCTAssertEqual(pixels[index + 2] > pixels[index], expectsBlue, "上段画像の表示区間 \(time)秒")
+            let offset = (900 * sample.width + 960) * 4
+            XCTAssertEqual(pixels[offset + 2] > pixels[offset], expectsBlue, "上段画像の表示フレーム \(index)")
         }
         for (videoFrame, expectsZoom) in [(9, false), (10, true)] {
             let sample = try generator.copyCGImage(at: CMTime(value: Int64(videoFrame), timescale: 30), actualTime: nil)
@@ -221,8 +249,15 @@ final class StudioTests: XCTestCase {
         let emptyOutput = directory.appendingPathComponent("background-only.mp4")
         try await VideoExporter.export(projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(spectrum: false), lyrics: lyrics, destination: emptyOutput, cancellation: ExportCancellation(), progress: { _ in })
         XCTAssertTrue(FileManager.default.fileExists(atPath: emptyOutput.path))
-        let token = ExportCancellation(); token.cancel()
-        XCTAssertThrowsError(try token.check())
+        let token = ExportCancellation()
+        let original = try Data(contentsOf: output)
+        do {
+            try await VideoExporter.export(projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(),
+                                           destination: output, cancellation: token, progress: { _ in token.cancel() })
+            XCTFail("取消済みの書き出しが成功した")
+        } catch is CancellationError {
+            XCTAssertEqual(try Data(contentsOf: output), original)
+        }
     }
 
     func testSilence() throws {

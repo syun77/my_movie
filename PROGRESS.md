@@ -1,9 +1,91 @@
-# 画像クリップの追加演出（設計中）
+# 火の粉の揺れの速さ（完了）
 
-- 最終更新: 2026-11-10 09:19 JST
+- 最終更新: 2026-11-11 00:27 JST
+- 要件: 参考シェーダーに近い、ゆったりとした火の粉の揺れに調整する。
+- 完了: 「揺れの速さ」を0〜200%で編集し、初期値と未設定時は40%。100%は変更前の揺れの速さ、0%は揺れなし。上昇・横風・明滅から分離。編集は既存のDragValueField、保存、Undo/Redoを使用。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageEffectsTests.swift、README.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 40%での速度変化の低減、0%での揺れ停止、明滅への非干渉、保存と既定値、Metal描画、MP4を含む48件に成功（`/tmp/my_movie-ember-sway-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名検証、`git diff --check` に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-ember-sway-build.log`）。
+- 次: 「舞い上がる火の粉」の「揺れの速さ」を調整する。実行中の処理なし。
+
+# 火の粉の補間ノイズ（完了）
+
+- 最終更新: 2026-11-11 00:19 JST
+- 要件: 添付されたJan Mrózのシェーダーを参考に、既存の「舞い上がる火の粉」を更新する。
+- 完了: 2層の補間ノイズで上昇中の流れと明滅を作り、粒ごとに橙色の細長い芯と光のにじみの向き・幅を変えた。固定シードと時刻から軌道を再現する。
+- 変更: ImageEffects.swift、Shaders/Scene.metal、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 上昇中の速度変化、保存とトリム、Metalの画素比較、MP4出力を含む全48件に成功（`/tmp/my_movie-ember-noise-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名確認、同梱シェーダー照合、`git diff --check` に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-ember-noise-build.log`）。
+- 次: 最新アプリの「舞い上がる火の粉」を再生して確認する。実行中の処理なし。
+
+# 光の粒子の複数発生源（完了）
+
+- 最終更新: 2026-11-11 00:14 JST
+- 要件: 同じ画像クリップ内で光の粒子の発生源を複数指定する。
+- 完了: 最大4つの発生源を追加・削除し、映像左上を原点とする1080p基準のX・Yで軌道中心を編集できる。座標・位相は個別、粒の個数や色などは共有。発生源が未保存のプロジェクトはX960・Y508に1つ置く。編集の自動保存・Undo、共通Metal描画に対応。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、MetalSceneRenderer.swift、ImageEffectsTests.swift、UndoTests.swift、README.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 複数の中心と保存、発生源の追加・座標編集・削除・Undo、同一フレームの2発生源の画素比較、MP4書き出しを含む全48件に成功（`/tmp/my_movie-multiple-emitters-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名確認、`git diff --check` 成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-multiple-emitters-build.log`）。
+- 次: 「光の粒子」の発生源欄で＋を押し、番号ごとにX・Yを調整する。実行中の処理なし。
+
+# Magic particlesを参考にした光の粒子（完了）
+
+- 最終更新: 2026-11-11 00:03 JST
+- 要件: 提供されたShadertoyの粒子の軌道と色を「光の粒子」に反映する。
+- 完了: 添付コードの軌道と光り方を参考に、発光点の過去位置に生じる粒・星形の明滅・色相の循環を独自実装。初期値は90粒と青紫の基準色。保存済みの個数と色を読み込み、色を色相循環の起点にする。位置、寿命、色を時刻と固定シードから求める。Shadertoy本体の取得には失敗し、添付コードを参照した。
+- 変更: ImageEffects.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift、README.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 軌道、曲線の強さ、停止時の明滅、保存・トリム、星形と色相の画素検証、MP4書き出しを含む全47件に成功（`/tmp/my_movie-magic-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名確認、同梱シェーダー照合、`git diff --check` に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-magic-build.log`）。
+- 次: 最新アプリで「追加演出 → 光の粒子」の動きと色を確認する。実行中の処理なし。
+
+# 舞い上がる火の粉（完了）
+
+- 最終更新: 2026-11-10 23:59 JST
+- 要件: Shadertoyのwl2Gzcを参考に、新しい画像クリップ演出「舞い上がる火の粉」を追加する。
+- 完了: 参照先を明記したOBS移植版で確認した暖色の芯、にじみ、奥行き、フェードを、固定シードの上昇・揺れとMetalの加算合成で表現。個数・大きさ・上昇速度・横風・明るさを編集でき、自動保存・Undo/Redo・左トリム時の位相保持に対応。Shadertoy本体の直接確認は取得制限により未実施。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageAnimation.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageEffectsTests.swift、UndoTests.swift、StudioTests.swift、README、関連設計書、AGENTS.md、PROGRESS.md。
+- 検証: 軌道、保存・再読込、範囲検証、編集とUndo/Redo、暖色と光のにじみの画素比較、上段の遮蔽、MP4出力を含む全47件成功（`/tmp/my_movie-embers-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名確認、同梱シェーダー照合、`git diff --check` に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-embers-build.log`）。
+- 次: 画像クリップを選び「追加演出 → ＋ 演出を追加 → 舞い上がる火の粉」を選択する。実行中の処理なし。
+
+# 光の粒子の曲線の強さ（完了）
+
+- 最終更新: 2026-11-10 23:46 JST
+- 要件: 光の粒子の曲線の動きの強さを指定できるようにする。
+- 完了: DragValueFieldで「曲線の強さ」を0〜200%で編集し、自動保存・Undo/Redoと共通の粒子描画へ反映。既定100%、未保存時も100%。0%は加減速する直線、200%は100%の2倍の横振れ。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、README.md、AGENTS.md、PROGRESS.md。
+- 検証: 0%の直進と加減速、200%の振れ幅、保存と既定値、範囲外の拒否、Metal描画と動画書き出しを含む全46件が成功（`/tmp/my_movie-particle-curve-test.log`）。
+- 生成: `./scripts/build-app.sh`、署名確認、`git diff --check` に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-particle-curve-build.log`）。
+- 次: 最新アプリの「画像・演出 → 追加演出 → 光の粒子」で調整する。実行中の処理・未解決事項なし。
+
+# 光の粒子の動きとサイズ（完了）
+
+- 最終更新: 2026-11-10 23:36 JST
+- 要件: 光の粒子にサイズと速さの個体差を付け、緩やかな加減速を繰り返す曲線の動きにする。
+- 完了: 基準直径・速度に粒子ごとの0.55〜1.45倍の倍率を適用。6〜12秒周期の加減速と、横方向の正弦波から軌道を直接評価。基準速度0は位置を固定し、明滅を続ける。クリップ相対時刻と固定シードを使い、シーク・保存・左トリム時の再現性を維持。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、README.md、AGENTS.md、PROGRESS.md。
+- 検証: 粒子の直径差・速度差・曲線・加減速・速度0、保存とトリム、Metal描画、動画書き出しを含む46件が成功（`/tmp/my_movie-particle-motion-test.log`）。
+- 生成: `./scripts/build-app.sh` と署名検証に成功。最新の `dist/MV Studio.app` を生成（`/tmp/my_movie-particle-motion-build.log`）。
+- 次: 最新アプリを開いて「光の粒子」の基準直径と基準速度を調整する。実行中の処理・未解決事項なし。
+
+# 画像クリップの追加演出（実装完了）
+
+- 最終更新: 2026-11-10 09:49 JST
+- 要件: 画像クリップのガウスブラー、ブルーム、光の粒子を設定し、Metalでプレビューと書き出しを共通化する。
+- 完了: 「画像・演出」の折りたたみ式追加演出、DragValueField、仮プレビュー、取消、自動保存、Undo/Redo、version 5保存とversion 4読込、左トリム時の粒子位相保持。Metalで変形・粒子・合成、Core Imageで色変換・ブラー。内部960×540のプレビューと1080p/30fpsのH.264／AAC出力を共通化。曲末の端数映像フレームを保持し、同じAVAssetWriterで音声を元の長さで出力する。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageEditor.swift、ImageTrack.swift、ImageAnimation.swift、ProjectFile.swift、MetalSceneRenderer.swift、PreviewView.swift、Scene.swift、App.swift、VideoExporter.swift、Shaders/Scene.metal、Package.swift、scripts/build-app.sh、関連テスト、READMEと関連設計書、AGENTS.md、PROGRESS.md。
+- 検証: 通常45件と一時の60秒負荷検証1件がすべて成功（`/tmp/my_movie-effects-final-tests.log`）。3段すべてに全演出を適用して1800枚の表示時刻と60秒の音声を確認。Apple M1のプレビュー描画経路p95 13.1ms（`/tmp/my_movie-effects-verified.log`）、最終書き出しのサンプル時点のメモリ699〜720MiB。Intel Macでの実機計測は未実施。
+- 生成: `./scripts/build-app.sh` 成功。最新の `dist/MV Studio.app` を生成し、署名検証と同梱シェーダーの内容一致を確認（`/tmp/my_movie-effects-release-final.log`）。`git diff --check` 成功。
+- 次: アプリを開き、画像クリップ選択後に「追加演出 → ＋ 演出を追加」から設定する。実行中の処理なし。
+
+# 画像クリップの追加演出（設計完了）
+
+- 最終更新: 2026-11-10 09:21 JST
 - 要件: 画像クリップにブラー、ブルーム、光の粒子を重ねる機能を設計し、Metalの採用を検討する。
-- 状態: 現行の画像クリップとプレビュー・書き出しの共通描画、およびMetal関連のApple公式APIを確認。設計文書のみ変更する。
-- 次: 編集UI、保存モデル、合成順、GPU導入方針、実装順、受け入れ条件をまとめる。実行中の処理なし。
+- 完了: 編集・保存、作用範囲、合成順、粒子の時刻評価、MetalとCore Imageの分担、実装順と受け入れ条件を記載。既存の未コミット変更を保持。
+- 変更: docs/IMAGE_EFFECTS.md、docs/ARCHITECTURE.md、docs/IMAGE_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 現行の描画・保存・編集コードとの対応、Apple公式API、設計書への相対リンク、差分の空白エラーを確認。文書のみの変更のためビルド対象外。
+- 未解決・次の手順: 実装着手時に共通MetalフレームのMTKView／AVAssetWriter出力を試作し、基準Macで色・アルファ・音画同期・性能を測る。実行中の処理なし。
 
 # 選択中のプリセットの上書き（完了）
 

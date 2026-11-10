@@ -5,8 +5,9 @@ export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/my_movie-clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="${TMPDIR:-/tmp}/my_movie-swift-cache"
 swift build -c release --disable-sandbox --cache-path "${TMPDIR:-/tmp}/my_movie-spm-cache"
 app="$(pwd)/dist/MV Studio.app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/MVStudio "$app/Contents/MacOS/MVStudio"
+ditto .build/release/MVStudio_MVStudio.bundle "$app/Contents/Resources/MVStudio_MVStudio.bundle"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

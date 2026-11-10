@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "MVStudio", targets: ["MVStudio"])],
     targets: [
-        .executableTarget(name: "MVStudio"),
+        .executableTarget(name: "MVStudio", resources: [.copy("Shaders")]),
         .testTarget(name: "MVStudioTests", dependencies: ["MVStudio"])
     ],
     swiftLanguageModes: [.v5]

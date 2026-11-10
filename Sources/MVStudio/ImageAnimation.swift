@@ -173,6 +173,8 @@ extension ImageClip {
         for index in curves.indices {
             for keyIndex in curves[index].keys.indices { curves[index].keys[keyIndex].time -= delta }
         }
+        effects?.particles?.phaseOffset += delta
+        effects?.embers?.phaseOffset += delta
         start = time
     }
 

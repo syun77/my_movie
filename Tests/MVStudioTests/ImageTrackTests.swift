@@ -56,22 +56,12 @@ final class ImageTrackTests: XCTestCase {
         XCTAssertEqual(unused.assets.count, 1)
         let project = ProjectFile(audioURL: projectURL.deletingPathExtension(), images: unused, settings: SceneSettings(), projectURL: projectURL)
         let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(project))
-        try decoded.validate(); XCTAssertEqual(decoded.version, 4); XCTAssertEqual(decoded.images, unused)
+        try decoded.validate(); XCTAssertEqual(decoded.version, ProjectFile.currentVersion); XCTAssertEqual(decoded.images, unused)
         let existingID = images.register(url: replacement, projectURL: projectURL)
         let merged = try images.replacingAsset(id: id, url: replacement, projectURL: projectURL)
         XCTAssertEqual(merged.assets.count, 1); XCTAssertTrue(merged.clips.allSatisfy { $0.assetID == existingID })
     }
-    func testLayerCompositionAlphaAndIntervals() throws {
-        func image(_ color: CGColor) -> CGImage {
-            let context = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-            context.setFillColor(color); context.fill(CGRect(x: 0, y: 0, width: 8, height: 8)); return context.makeImage()!
-        }
-        let red = ImageRenderLayer(clip: ImageClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off), image: image(CGColor(red: 1, green: 0, blue: 0, alpha: 1)))
-        let blue = ImageRenderLayer(clip: ImageClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off), image: image(CGColor(red: 0, green: 0, blue: 1, alpha: 0.5)))
-        let context = CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        SceneRenderer.draw(in: context, size: CGSize(width: 8, height: 8), images: [red, blue], features: nil, settings: SceneSettings(spectrum: false), time: 0.5)
-        let pixels = context.data!.assumingMemoryBound(to: UInt8.self)
-        XCTAssertEqual(Double(pixels[0]), 127, accuracy: 3); XCTAssertEqual(Double(pixels[2]), 128, accuracy: 3)
+    func testActiveIntervalsIncludeStartAndExcludeEnd() throws {
         let (images, _) = try sample()
         XCTAssertTrue(images.active(at: 0.999).isEmpty); XCTAssertEqual(images.active(at: 1).count, 1); XCTAssertTrue(images.active(at: 3).isEmpty)
     }

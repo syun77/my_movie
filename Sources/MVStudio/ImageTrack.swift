@@ -15,6 +15,7 @@ struct ImageClip: Codable, Sendable, Equatable, Identifiable {
     var pulseAmount = 0.08
     var fixedValues: [ImageParameter: Double] = [:]
     var curves: [ImageCurve] = []
+    var effects: ImageEffects?
 }
 
 struct ImageLayer: Codable, Sendable, Equatable, Identifiable {
@@ -52,6 +53,7 @@ struct ImageTrack: Codable, Sendable, Equatable {
                       duration.map({ clip.end <= $0 + 1e-9 }) ?? true else {
                     throw StudioError.message("画像の区間は曲内で、同じレイヤー内では重ならないようにしてください（最小1フレーム）。")
                 }
+                guard clip.effects?.isValid != false else { throw StudioError.message("画像クリップの追加演出の設定が不正です。") }
                 try clip.validateAnimation(ids: &ids)
                 previousEnd = clip.end
             }

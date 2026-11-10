@@ -11,7 +11,8 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     var onPreview: ((ImageTrack) -> Void)?
     var onSeek: ((Double) -> Void)?
     var onBeginEdit: (() -> Void)?
-    var currentTime = 0.0
+    var currentTime = 0.0 { didSet { effectsEditor.time = currentTime } }
+    private let effectsEditor = ImageEffectsEditor()
     var duration = 0.0
     var snapGrid = TimelineSnapGrid()
     var timeline: TimelineView? { didSet { connectTimeline() } }
@@ -150,7 +151,13 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, effect, horizontal, vertical, graphs, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, effect, horizontal, vertical, graphs, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        effectsEditor.onCommit = { [weak self] effects in self?.applyEffects(effects, preview: false) }
+        effectsEditor.onPreview = { [weak self] effects in
+            guard let self else { return }
+            if let effects { self.applyEffects(effects, preview: true) }
+            else { self.onPreview?(self.track) }
+        }
         clipControls += [remove, replace, start, end, slot, automatic, amount, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
@@ -204,8 +211,23 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         clipControls.forEach { $0.isEnabled = available && !processing && manager == nil && track.clip(selectedID) != nil }
         timeline?.isEnabled = available && !processing && manager == nil
         refreshGraphControls()
+        effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
         amount.isEnabled = automatic.isEnabled && track.clip(selectedID)?.automaticAnimation != AutomaticAnimation.off
     }
+    private func applyEffects(_ effects: ImageEffects, preview: Bool) {
+        guard available, !processing, manager == nil, var clip = track.clip(selectedID),
+              let slot = track.slot(of: clip.id) else { return }
+        clip.effects = effects == ImageEffects() ? nil : effects
+        do {
+            let value = try track.updating(clip, slot: slot, duration: duration)
+            if preview { onPreview?(value) }
+            else {
+                commit(value, selectedID: clip.id, refreshEditor: false)
+                effectsEditor.load(clip, editable: true)
+            }
+        } catch { report(error) }
+    }
+
     private func select(_ id: UUID?, slot: Int) {
         cancelValueDrag()
         drafts.removeAll()
@@ -289,7 +311,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
 
     @discardableResult
     func cancelValueDrag() -> Bool {
-        guard let drag = valueDrag else { return false }
+        guard let drag = valueDrag else { return effectsEditor.cancelDrag() }
         valueDrag = nil
         drag.field.cancelTracking()
         timeline?.automationPreview = nil
@@ -324,6 +346,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
             let value = try track.updating(clip, slot: slot.indexOfSelectedItem + 1, duration: duration)
             timingIsValid = true
             commit(value, selectedID: clip.id, refreshEditor: false)
+            effectsEditor.load(clip, editable: true)
         } catch { timingIsValid = false; report(error) }
     }
 
