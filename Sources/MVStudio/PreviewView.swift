@@ -3,12 +3,20 @@ import MetalKit
 
 @MainActor
 final class PreviewView: NSView, MTKViewDelegate {
-    var images: [ImageRenderLayer] = []
+    var visuals: [VisualRenderLayer] = []
     var features: AudioFeatures?
     var settings = SceneSettings()
     var spectrumLayoutPreview: SpectrumLayout?
     var lyrics = LyricsTrack()
     var time = 0.0
+    var renderedTime = 0.0
+    var frameFailure = false
+    var frameStatus: String? {
+        didSet {
+            errorLabel.stringValue = frameStatus ?? ""
+            errorLabel.isHidden = frameStatus == nil
+        }
+    }
 
     private let surface = MTKView()
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -65,8 +73,8 @@ final class PreviewView: NSView, MTKViewDelegate {
         var displaySettings = settings
         if let spectrumLayoutPreview { displaySettings.spectrumStyle.layout = spectrumLayoutPreview }
         do {
-            let commands = try renderer.encode(images: images, features: features, settings: displaySettings, lyrics: lyrics,
-                                               time: time, target: drawable.texture, video: false)
+            let commands = try renderer.encode(visuals: visuals, features: features, settings: displaySettings, lyrics: lyrics,
+                                               time: renderedTime, target: drawable.texture, video: false)
             inFlight = true
             commands.addCompletedHandler { [weak self] buffer in
                 let failed = buffer.status != .completed
@@ -76,7 +84,7 @@ final class PreviewView: NSView, MTKViewDelegate {
                     if failed {
                         self.renderer?.discardCache()
                         self.showError(MetalSceneRenderer.renderError)
-                    } else { self.errorLabel.isHidden = true }
+                    } else if self.frameStatus == nil { self.errorLabel.isHidden = true }
                     if self.dirty { self.surface.needsDisplay = true }
                 }
             }

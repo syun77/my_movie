@@ -3,11 +3,11 @@ import AppKit
 @MainActor
 final class PlacementEditor: NSViewController {
     enum Tab: Int {
-        case lyrics, images, spectrum
+        case lyrics, visuals, spectrum
     }
 
     let lyrics = LyricsEditor()
-    let images = ImageEditor()
+    let visuals = VisualEditor()
     let spectrum = SpectrumEditor()
     var timeline: TimelineView { lyrics.timeline }
     var onVisibleSpanChange: ((Double) -> Void)?
@@ -31,7 +31,7 @@ final class PlacementEditor: NSViewController {
     var timelineHeights: TimelineHeights { timeline.heights }
     var onTimelineHeightsCommit: (() -> Void)?
     private(set) var selectedTab: Tab = .lyrics
-    var imageMode: Bool { timeline.imageMode }
+    var visualMode: Bool { timeline.visualMode }
     var visibleSpan = TimelineDisplaySettings.defaultSpan {
         didSet { updateDisplayRange() }
     }
@@ -41,20 +41,20 @@ final class PlacementEditor: NSViewController {
             updateDisplayRange()
         }
     }
-    var currentTime = 0.0 { didSet { lyrics.currentTime = currentTime; images.currentTime = currentTime } }
-    var duration = 0.0 { didSet { lyrics.duration = duration; images.duration = duration; updateDisplayRange() } }
+    var currentTime = 0.0 { didSet { lyrics.currentTime = currentTime; visuals.currentTime = currentTime } }
+    var duration = 0.0 { didSet { lyrics.duration = duration; visuals.duration = duration; updateDisplayRange() } }
     var snapGrid = TimelineSnapGrid() {
         didSet {
             lyrics.snapGrid = snapGrid
-            images.snapGrid = snapGrid
+            visuals.snapGrid = snapGrid
             snapDivision.selectItem(withTag: snapGrid.division.rawValue)
         }
     }
 
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 8; view = root
-        _ = lyrics.view; _ = images.view
-        images.timeline = timeline
+        _ = lyrics.view; _ = visuals.view
+        visuals.timeline = timeline
         timeline.canPerformClipCommand = { [weak self] command in
             self?.canEditClip(command, pasteboard: .general) == true
         }
@@ -65,7 +65,7 @@ final class PlacementEditor: NSViewController {
         timeline.onWheelZoom = { [weak self] steps in self?.zoomTimeline(by: steps) }
         timeline.onError = { [weak self] error in
             guard let self else { return }
-            if self.imageMode { self.images.report(error) }
+            if self.visualMode { self.visuals.report(error) }
             self.onError?(error.localizedDescription)
         }
         tabs.target = self; tabs.action = #selector(changePlacementMode); tabs.selectedSegment = 0
@@ -120,13 +120,13 @@ final class PlacementEditor: NSViewController {
         selectedTab = tab
         tabs.selectedSegment = tab.rawValue
         if tab != .spectrum {
-            timeline.imageMode = tab == .images
+            timeline.visualMode = tab == .visuals
             updatePreferredTimelineHeight()
         }
         let child: NSView
         switch tab {
         case .lyrics: child = lyrics.view
-        case .images: child = images.view
+        case .visuals: child = visuals.view
         case .spectrum: child = spectrum.view
         }
         inspectorDocument.subviews.first?.removeFromSuperview()
@@ -166,7 +166,7 @@ final class PlacementEditor: NSViewController {
 
     private func updatePreferredTimelineHeight() {
         preferredTimelineHeight.constant = timeline.heights.viewport.map { CGFloat($0) }
-            ?? (imageMode ? 210 : Self.minimumTimelineHeight)
+            ?? (visualMode ? 210 : Self.minimumTimelineHeight)
     }
 
     @objc private func changeSnapDivision() {
@@ -185,7 +185,7 @@ final class PlacementEditor: NSViewController {
             return
         }
         restoreTab(tab)
-        if tab != .spectrum { onModeChange?(imageMode) }
+        if tab != .spectrum { onModeChange?(visualMode) }
     }
     private func updateDisplayRange() {
         wheelZoomTimer?.invalidate()
@@ -251,7 +251,7 @@ final class PlacementEditor: NSViewController {
     func setAvailable(hasAudio: Bool, isBusy: Bool) {
         available = hasAudio && !isBusy
         lyrics.setAvailable(available)
-        images.setAvailable(available)
+        visuals.setAvailable(available)
         tabs.isEnabled = !isBusy
         spectrum.setAvailable(!isBusy, hasAudio: hasAudio)
         wholeSong.isEnabled = available
@@ -263,14 +263,14 @@ final class PlacementEditor: NSViewController {
         lyrics.track.clips.first { $0.id == timeline.selectedID }
     }
 
-    private var selectedImage: ImageClip? { images.track.clip(timeline.selectedImageID) }
+    private var selectedImage: VisualClip? { visuals.track.clip(timeline.selectedImageID) }
 
     func canEditClip(_ command: ClipEditCommand, pasteboard: NSPasteboard) -> Bool {
         guard available, timeline.canEditClips else { return false }
         if command == .paste {
             return pasteSource(from: pasteboard) != nil
         }
-        return imageMode ? selectedImage != nil : selectedLyric != nil
+        return visualMode ? selectedImage != nil : selectedLyric != nil
     }
 
     func editClip(_ command: ClipEditCommand, pasteboard: NSPasteboard) {
@@ -285,18 +285,18 @@ final class PlacementEditor: NSViewController {
                 switch pasteSource(from: pasteboard) {
                 case let .lyrics(clip):
                     try insertLyricCopy(clip, at: timeline.currentTime)
-                case let .image(clip, url):
-                    guard let projectURL = images.projectURL else { return }
-                    var track = images.track
+                case let .visual(clip, url, kind):
+                    guard let projectURL = visuals.projectURL else { return }
+                    var track = visuals.track
                     var source = clip
-                    source.assetID = track.register(url: url, projectURL: projectURL)
+                    source.assetID = track.register(url: url, projectURL: projectURL, kind: kind)
                     try insertImageCopy(source, in: track, at: timeline.currentTime, slot: timeline.selectedSlot)
                 case nil: break
                 }
             case .duplicate:
-                if imageMode {
-                    guard let clip = selectedImage, let slot = images.track.slot(of: clip.id) else { return }
-                    try insertImageCopy(clip, in: images.track, at: clip.end, slot: slot)
+                if visualMode {
+                    guard let clip = selectedImage, let slot = visuals.track.slot(of: clip.id) else { return }
+                    try insertImageCopy(clip, in: visuals.track, at: clip.end, slot: slot)
                 } else if let clip = selectedLyric {
                     try insertLyricCopy(clip, at: clip.end)
                 }
@@ -307,23 +307,23 @@ final class PlacementEditor: NSViewController {
     private func pasteSource(from pasteboard: NSPasteboard) -> ClipClipboard? {
         let source = ClipClipboard.read(from: pasteboard)
         switch source {
-        case .lyrics where !imageMode: return source
-        case let .image(_, url) where imageMode && images.projectURL != nil && url.isFileURL: return source
+        case .lyrics where !visualMode: return source
+        case let .visual(_, url, _) where visualMode && visuals.projectURL != nil && url.isFileURL: return source
         default: return nil
         }
     }
 
     private func copySelection(to pasteboard: NSPasteboard) throws -> Bool {
-        if imageMode {
-            guard let clip = selectedImage, let asset = images.track.asset(clip.assetID) else { return false }
+        if visualMode {
+            guard let clip = selectedImage, let asset = visuals.track.asset(clip.assetID) else { return false }
             let url: URL
-            if let projectURL = images.projectURL {
+            if let projectURL = visuals.projectURL {
                 url = asset.reference.resolve(projectURL: projectURL)
             } else {
                 guard !asset.reference.relative else { return false }
                 url = URL(fileURLWithPath: asset.reference.path)
             }
-            try ClipClipboard.image(clip, assetURL: url).write(to: pasteboard)
+            try ClipClipboard.visual(clip, assetURL: url, kind: asset.kind).write(to: pasteboard)
         } else {
             guard let clip = selectedLyric else { return false }
             try ClipClipboard.lyrics(clip).write(to: pasteboard)
@@ -332,8 +332,8 @@ final class PlacementEditor: NSViewController {
     }
 
     private func removeSelection() throws {
-        if imageMode {
-            if let clip = selectedImage { images.commit(images.track.removingClip(id: clip.id)) }
+        if visualMode {
+            if let clip = selectedImage { visuals.commit(visuals.track.removingClip(id: clip.id)) }
         } else if let clip = selectedLyric {
             let remainder = try lyrics.track.removing(id: clip.id, duration: duration)
             lyrics.commit(remainder, selectedID: nil)
@@ -346,7 +346,7 @@ final class PlacementEditor: NSViewController {
         lyrics.commit(track, selectedID: clip.id)
     }
 
-    private func insertImageCopy(_ source: ImageClip, in track: ImageTrack, at time: Double, slot: Int) throws {
+    private func insertImageCopy(_ source: VisualClip, in track: VisualTrack, at time: Double, slot: Int) throws {
         var clip = source
         clip.id = UUID()
         clip.start = time
@@ -357,17 +357,17 @@ final class PlacementEditor: NSViewController {
             }
         }
         let updated = try track.inserting(clip, slot: slot, duration: duration)
-        images.commit(updated, selectedID: clip.id)
+        visuals.commit(updated, selectedID: clip.id)
     }
 
     func cancelTimelineEdit() {
         timeline.cancelDrag()
-        images.cancelValueDrag()
+        visuals.cancelValueDrag()
         for field in DragValueField.fields(in: inspector) { field.cancelNumberDrag() }
     }
     func finishEditing() -> Bool {
         if selectedTab == .spectrum { return spectrum.finishEditing() }
-        return imageMode ? images.finishEditing() : lyrics.finishEditing()
+        return visualMode ? visuals.finishEditing() : lyrics.finishEditing()
     }
 }
 

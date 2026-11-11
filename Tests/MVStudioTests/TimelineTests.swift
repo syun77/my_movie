@@ -37,7 +37,7 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(view.currentTime, 25)
         XCTAssertEqual(view.visibleSpan, 12)
         view.currentTime = 26
-        view.imageMode = true
+        view.visualMode = true
         XCTAssertEqual(view.geometry.origin, scrolled)
 
         try wheel(x: -10, units: .pixel)
@@ -75,7 +75,7 @@ final class TimelineTests: XCTestCase {
         try wheel(1)
         XCTAssertEqual(view.currentTime, 30, accuracy: 1e-9)
 
-        view.imageMode = true
+        view.visualMode = true
         view.visibleSpan = 20
         try wheel(-1)
         XCTAssertEqual(view.currentTime - 30, fineStep * 10, accuracy: 1e-9)
@@ -124,24 +124,24 @@ final class TimelineTests: XCTestCase {
         try resize(from: 141, to: 100, row: .lyrics, cancel: true)
         XCTAssertEqual(timeline.heights[.lyrics], 98)
 
-        timeline.imageMode = true
-        var images = ImageTrack()
-        let asset = images.register(url: URL(fileURLWithPath: "/tmp/a.png"), projectURL: URL(fileURLWithPath: "/tmp/a.mvproject"))
-        var clip = ImageClip(assetID: asset, start: 1, end: 4)
+        timeline.visualMode = true
+        var visuals = VisualTrack()
+        let asset = visuals.register(url: URL(fileURLWithPath: "/tmp/a.png"), projectURL: URL(fileURLWithPath: "/tmp/a.mvproject"))
+        var clip = VisualClip(assetID: asset, start: 1, end: 4)
         _ = clip.setKey(.scale, at: 1, value: 100)
         _ = clip.setKey(.rotation, at: 1, value: 0)
-        images.layers[2].clips = [clip]
-        timeline.images = images
+        visuals.layers[2].clips = [clip]
+        timeline.visuals = visuals
         timeline.revealAutomation(in: 3)
-        try resize(from: 94, to: 130, row: .image(3))
-        XCTAssertEqual(timeline.heights[.image(3)], 82)
-        XCTAssertEqual(timeline.heights[.image(2)], 46)
+        try resize(from: 94, to: 130, row: .visual(3))
+        XCTAssertEqual(timeline.heights[.visual(3)], 82)
+        XCTAssertEqual(timeline.heights[.visual(2)], 46)
         try resize(from: 192, to: 220, row: .automation(3, .scale))
         XCTAssertEqual(timeline.heights[.automation(3, .scale)], 90)
         XCTAssertEqual(timeline.heights[.automation(3, .rotation)], 62)
         XCTAssertEqual(timeline.heights[.automation(2, .scale)], 62)
         XCTAssertEqual(commits, 3)
-        XCTAssertEqual(timeline.images, images)
+        XCTAssertEqual(timeline.visuals, visuals)
 
         timeline.onSeek = nil
         let x = timeline.x(at: 2)
@@ -150,8 +150,8 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(timeline.selectedParameter, .rotation, "手前の行を拡大しても後続レーンでキーを選択できる")
         try resize(from: 220, to: 145, row: .automation(3, .scale))
         XCTAssertEqual(timeline.heights[.automation(3, .scale)], 27)
-        try resize(from: 130, to: 0, row: .image(3))
-        XCTAssertEqual(timeline.heights[.image(3)], 21)
+        try resize(from: 130, to: 0, row: .visual(3))
+        XCTAssertEqual(timeline.heights[.visual(3)], 21)
 
         let compactScaleKey = try XCTUnwrap(clip.curve(.scale)?.keys.first)
         let keyX = timeline.x(at: clip.start + compactScaleKey.time)
@@ -162,7 +162,7 @@ final class TimelineTests: XCTestCase {
         timeline.mouseUp(with: try event(.leftMouseUp, y: 59, x: 65))
         XCTAssertFalse(timeline.expandedLayerSlots.contains(3))
 
-        timeline.imageMode = false
+        timeline.visualMode = false
         try resize(from: 141, to: 0, row: .lyrics)
         XCTAssertEqual(timeline.heights[.lyrics], 20)
         XCTAssertTrue(timeline.heights.isValid)
@@ -248,14 +248,14 @@ final class TimelineTests: XCTestCase {
         view.duration = 20
         view.isEnabled = true
 
-        var images = ImageTrack()
+        var visuals = VisualTrack()
         let project = URL(fileURLWithPath: "/tmp/trim.mvproject")
-        let asset = images.register(url: URL(fileURLWithPath: "/tmp/trim.png"), projectURL: project)
-        images.layers[2].clips = [ImageClip(assetID: asset, start: 2, end: 4)]
-        view.images = images
+        let asset = visuals.register(url: URL(fileURLWithPath: "/tmp/trim.png"), projectURL: project)
+        visuals.layers[2].clips = [VisualClip(assetID: asset, start: 2, end: 4)]
+        view.visuals = visuals
         view.track = LyricsTrack(clips: [LyricClip(start: 2, end: 4, text: "歌詞")])
         var trimmedLyrics: LyricsTrack?
-        var trimmedImages: ImageTrack?
+        var trimmedImages: VisualTrack?
         view.onCommit = { value, _ in trimmedLyrics = value }
         view.onImageCommit = { value, _ in trimmedImages = value }
 
@@ -273,9 +273,9 @@ final class TimelineTests: XCTestCase {
                 return color.redComponent > 0.75 && color.greenComponent > 0.6 && color.blueComponent < 0.5
             }
         }
-        for imageMode in [false, true] {
-            view.imageMode = imageMode
-            let y = imageMode ? 68.0 : 55.0
+        for visualMode in [false, true] {
+            view.visualMode = visualMode
+            let y = visualMode ? 68.0 : 55.0
             let left = view.x(at: 2) + 4
             let right = view.x(at: 4) - 4
             view.mouseMoved(with: event(.mouseMoved, x: left, y: y))
@@ -287,7 +287,7 @@ final class TimelineTests: XCTestCase {
             view.mouseMoved(with: event(.mouseMoved, x: view.x(at: 3), y: y))
             XCTAssertFalse(try hasYellow(at: right))
 
-            let edge = imageMode ? right : left
+            let edge = visualMode ? right : left
             let destination = edge + view.geometry.pointsPerSecond * 0.5
             view.mouseDown(with: event(.leftMouseDown, x: edge, y: y))
             view.mouseDragged(with: event(.leftMouseDragged, x: destination, y: y))

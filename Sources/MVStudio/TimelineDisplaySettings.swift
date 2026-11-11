@@ -13,7 +13,7 @@ struct TimelineDisplaySettings {
         nonmutating set { defaults.set(newValue, forKey: "timelineShowsWholeSong") }
     }
 
-    var imageMode: Bool {
+    var visualMode: Bool {
         get { defaults.bool(forKey: "timelineImageMode") }
         nonmutating set { defaults.set(newValue, forKey: "timelineImageMode") }
     }

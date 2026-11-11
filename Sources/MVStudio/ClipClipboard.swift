@@ -20,7 +20,7 @@ enum ClipEditCommand: String, CaseIterable {
 
 enum ClipClipboard: Codable {
     case lyrics(LyricClip)
-    case image(ImageClip, assetURL: URL)
+    case visual(VisualClip, assetURL: URL, kind: VisualAssetKind = .still)
 
     private static let type = NSPasteboard.PasteboardType("local.mymovie.mvstudio.clip")
 

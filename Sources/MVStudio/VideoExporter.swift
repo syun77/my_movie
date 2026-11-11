@@ -18,17 +18,20 @@ enum VideoExporter {
     static let fps: Int32 = 30
     static let averageBitRate = 12_000_000
 
-    static func export(images: ImageTrack = ImageTrack(), projectURL: URL, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), destination: URL, cancellation: ExportCancellation, progress: @escaping (Double) -> Void) async throws {
+    static func export(visuals: VisualTrack = VisualTrack(), projectURL: URL, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), destination: URL, cancellation: ExportCancellation, progress: @escaping (Double) -> Void) async throws {
         try cancellation.check()
+        guard features.duration.isFinite, features.duration > 0,
+              features.duration < Double(Int.max) / Double(fps) else { throw StudioError.message("音声の長さが不正です。") }
+        try visuals.validate(duration: features.duration)
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
         let finalURL = temporary.appendingPathComponent("final.mp4")
-        let imageStore = ImageAssetStore()
-        try await imageStore.validateUsed(track: images, projectURL: projectURL)
+        let frames = VisualFrameProvider()
+        try await frames.validateUsed(track: visuals, projectURL: projectURL, cancellation: cancellation)
         try cancellation.check()
         try await Task.detached {
-            try await renderVideo(images: images, projectURL: projectURL, imageStore: imageStore, audioURL: audioURL,
+            try await renderVideo(visuals: visuals, projectURL: projectURL, frames: frames, audioURL: audioURL,
                                   features: features, settings: settings, lyrics: lyrics, url: finalURL,
                                   cancellation: cancellation, progress: progress)
         }.value
@@ -60,7 +63,7 @@ enum VideoExporter {
             guard reader.canAdd(output) else { throw StudioError.message("音声トラックを読み込めません。") }
             reader.add(output)
             input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: min(48_000, format.mSampleRate),
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
                 AVNumberOfChannelsKey: channels, AVEncoderBitRateKey: channels == 1 ? 128_000 : 192_000
             ])
             guard reader.startReading() else { throw reader.error ?? StudioError.message("音声の読込を開始できません。") }
@@ -86,7 +89,7 @@ enum VideoExporter {
         deinit { reader.cancelReading() }
     }
 
-    private static func renderVideo(images: ImageTrack, projectURL: URL, imageStore: ImageAssetStore, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack, url: URL, cancellation: ExportCancellation, progress: (Double) -> Void) async throws {
+    private static func renderVideo(visuals: VisualTrack, projectURL: URL, frames: VisualFrameProvider, audioURL: URL, features: AudioFeatures, settings: SceneSettings, lyrics: LyricsTrack, url: URL, cancellation: ExportCancellation, progress: (Double) -> Void) async throws {
         let renderer = try MetalSceneRenderer()
         var textureCache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, renderer.device, nil, &textureCache) == kCVReturnSuccess,
@@ -136,7 +139,7 @@ enum VideoExporter {
                 try audio.appendAvailable(through: .infinity, writer: writer, cancellation: cancellation)
                 try await Task.sleep(for: .milliseconds(2))
             }
-            let layers = try await imageStore.layers(track: images, projectURL: projectURL, time: time, allowMissing: false)
+            let layers = try await frames.layers(track: visuals, projectURL: projectURL, time: time, allowMissingImages: false, cancellation: cancellation)
             try autoreleasepool {
                 var pixel: CVPixelBuffer?
                 guard let pool = adaptor.pixelBufferPool,
@@ -150,7 +153,7 @@ enum VideoExporter {
                 let attributes = [kCVMetalTextureUsage: MTLTextureUsage.renderTarget.rawValue] as CFDictionary
                 guard CVMetalTextureCacheCreateTextureFromImage(nil, textureCache, pixel, attributes, .bgra8Unorm, width, height, 0, &wrapped) == kCVReturnSuccess,
                       let wrapped, let texture = CVMetalTextureGetTexture(wrapped) else { throw MetalSceneRenderer.renderError }
-                let commands = try renderer.encode(images: layers, features: features, settings: settings, lyrics: lyrics,
+                let commands = try renderer.encode(visuals: layers, features: features, settings: settings, lyrics: lyrics,
                                                    time: time, target: texture, video: true)
                 commands.commit()
                 withExtendedLifetime(wrapped) { commands.waitUntilCompleted() }

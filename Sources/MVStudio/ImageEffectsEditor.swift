@@ -50,7 +50,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private var contents: [Kind: NSStackView] = [:]
     private var numbers: [NumberInput] = []
     private var selected: Kind?
-    private var shownClip: ImageClip?
+    private var shownClip: VisualClip?
     private var effects = ImageEffects()
     private var editable = false
     private var expanded = false
@@ -63,10 +63,10 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         alignment = .leading
         spacing = 4
         disclosure.target = self; disclosure.action = #selector(toggleDisclosure)
-        disclosure.identifier = NSUserInterfaceItemIdentifier("images.effects")
+        disclosure.identifier = NSUserInterfaceItemIdentifier("visuals.effects")
         outside.textColor = .secondaryLabelColor
         outside.font = .systemFont(ofSize: 11)
-        add.identifier = NSUserInterfaceItemIdentifier("images.effects.add")
+        add.identifier = NSUserInterfaceItemIdentifier("visuals.effects.add")
         add.addItem(withTitle: "＋ 演出を追加")
         add.item(at: 0)?.tag = -1
         add.menu?.autoenablesItems = false
@@ -154,7 +154,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
 
     required init?(coder: NSCoder) { nil }
 
-    func load(_ clip: ImageClip?, editable: Bool) {
+    func load(_ clip: VisualClip?, editable: Bool) {
         if clip?.id != shownClip?.id { selectedEmitter = 0 }
         if clip?.id != shownClip?.id || !editable { color.deactivate() }
         shownClip = clip

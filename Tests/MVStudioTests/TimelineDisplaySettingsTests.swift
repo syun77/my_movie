@@ -105,14 +105,14 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         let slider = try XCTUnwrap(editor.view.subviews.first?.subviews.compactMap { $0 as? NSSlider }.first)
         XCTAssertEqual(slider.doubleValue, editor.visibleSpan)
 
-        editor.restoreTab(.images)
-        var images = ImageTrack()
+        editor.restoreTab(.visuals)
+        var visuals = VisualTrack()
         let projectURL = URL(fileURLWithPath: "/tmp/zoom.mvproject")
-        let asset = images.register(url: URL(fileURLWithPath: "/tmp/zoom.png"), projectURL: projectURL)
-        var clip = ImageClip(assetID: asset, start: 24, end: 26)
+        let asset = visuals.register(url: URL(fileURLWithPath: "/tmp/zoom.png"), projectURL: projectURL)
+        var clip = VisualClip(assetID: asset, start: 24, end: 26)
         _ = clip.setKey(.scale, at: 25, value: 120)
-        images.layers[2].clips = [clip]
-        editor.images.load(images, projectURL: nil)
+        visuals.layers[2].clips = [clip]
+        editor.visuals.load(visuals, projectURL: nil)
         editor.timeline.revealAutomation(in: 3)
         try wheel(-2)
         XCTAssertEqual(editor.visibleSpan, 12, accuracy: 1e-9)
@@ -136,7 +136,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         try await waitForZoom(editor)
         XCTAssertEqual(editor.timeline.visibleSpan, 300)
         XCTAssertTrue(editor.timeline.expandedLayerSlots.contains(3))
-        XCTAssertEqual(editor.images.track, images)
+        XCTAssertEqual(editor.visuals.track, visuals)
 
         try wheel(1)
         slider.doubleValue = 40

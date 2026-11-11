@@ -28,11 +28,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private let storage: ProjectStorage
     let placementEditor = PlacementEditor()
     private var lyricsEditor: LyricsEditor { placementEditor.lyrics }
-    private let imageStore = ImageAssetStore()
-    private var previewImageTask: Task<Void, Never>?
+    private let previewFrames = VisualFrameProvider()
+    private var pendingFrame: FrameRequest?
+    private var playbackPreparation: Task<Void, Never>?
+    private var wasPlaying = false
+    private var playbackRequestID = UUID()
+    private struct FrameRequest {
+        let track: VisualTrack
+        let projectURL: URL
+        let time: Double
+        let revision: Int
+    }
+    private var previewFrameTask: Task<Void, Never>?
     private var previewRevision = 0
-    private var imageTrack = ImageTrack()
-    private var previewTrack = ImageTrack()
+    private var visualTrack = VisualTrack()
+    private var previewTrack = VisualTrack()
 
     private var timer: Timer?
     private var analysisTask: Task<Void, Never>?
@@ -56,8 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         studioWindow.clipEditor = placementEditor
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
-        studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.images.cancelValueDrag() ?? false }
-        studioWindow.onEscapeText = { [weak self] text in self?.placementEditor.images.cancelAnimationInput(text) ?? false }
+        studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.visuals.cancelValueDrag() ?? false }
+        studioWindow.onEscapeText = { [weak self] text in self?.placementEditor.visuals.cancelAnimationInput(text) ?? false }
         studioWindow.onHistoryAction = { [weak self] redo in self?.performHistoryAction(redo: redo) }
 
         studioWindow.onTogglePlayback = { [weak self] in
@@ -101,8 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.onSnapDivisionChange = { [weak self] value in self?.timelineDisplaySettings.snapDivision = value }
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
-        placementEditor.restoreTab(timelineDisplaySettings.imageMode ? .images : .lyrics)
-        placementEditor.onModeChange = { [weak self] value in self?.timelineDisplaySettings.imageMode = value }
+        placementEditor.restoreTab(timelineDisplaySettings.visualMode ? .visuals : .lyrics)
+        placementEditor.onModeChange = { [weak self] value in self?.timelineDisplaySettings.visualMode = value }
         placementEditor.onError = { [weak self] value in self?.status.stringValue = value }
         placementEditor.onVisibleSpanChange = { [weak self] value in
             self?.timelineDisplaySettings.visibleSpan = value
@@ -125,8 +135,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         }
         lyricsEditor.onBeginTextEditing = { [weak self] in self?.endHistoryGroup() }
         lyricsEditor.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
-        placementEditor.images.onBeginTextEditing = { [weak self] in self?.endHistoryGroup() }
-        placementEditor.images.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
+        placementEditor.visuals.onBeginTextEditing = { [weak self] in self?.endHistoryGroup() }
+        placementEditor.visuals.onEndTextEditing = { [weak self] in self?.finishTextHistoryGroup() }
         lyricsEditor.onChange = { [weak self] value in
             guard let self else { return }
             self.recordEdit(lyrics: value); self.stopPlayback(); self.preview.lyrics = value; self.preview.invalidateFrame(); _ = self.saveProject()
@@ -145,18 +155,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             guard let self else { return }
             self.stopPlayback(); self.seek.doubleValue = time; self.scrub()
         }
-        placementEditor.images.onProcessing = { [weak self] value in self?.imageProcessing = value; self?.refreshControls() }
-        placementEditor.images.onAssetsReload = { [weak self] in
+        placementEditor.visuals.onProcessing = { [weak self] value in self?.imageProcessing = value; self?.refreshControls() }
+        placementEditor.visuals.onAssetsReload = { [weak self] in
             guard let self else { return }
-            self.lastPreviewKey = nil; self.refreshPreviewImages()
+            self.lastPreviewKey = nil; self.previewRevision += 1
+            Task { await self.previewFrames.invalidate(); self.refreshPreviewFrames() }
         }
-        placementEditor.images.onBeginEdit = { [weak self] in _ = self?.lyricsEditor.onCapturePlaybackTime?() }
-        placementEditor.images.onSeek = { [weak self] time in self?.lyricsEditor.onSeek?(time) }
-        placementEditor.images.onChange = { [weak self] value in
+        placementEditor.visuals.onBeginEdit = { [weak self] in _ = self?.lyricsEditor.onCapturePlaybackTime?() }
+        placementEditor.visuals.onSeek = { [weak self] time in self?.lyricsEditor.onSeek?(time) }
+        placementEditor.visuals.onChange = { [weak self] value in
             guard let self else { return }
-            self.recordEdit(images: value); self.stopPlayback(); self.imageTrack = value; self.previewTrack = value; self.refreshPreviewImages(); _ = self.saveProject()
+            self.recordEdit(visuals: value); self.stopPlayback(); self.visualTrack = value; self.previewTrack = value; self.refreshPreviewFrames(); self.refreshControls(); _ = self.saveProject()
         }
-        placementEditor.images.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewImages() }
+        placementEditor.visuals.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewFrames() }
         installLayout(toolbar: row([files, output]), options: options, transport: transport, timeline: timeline)
         controls = [audioButton, bpm, offset, play, seek, export]
         refreshControls()
@@ -164,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             Task { @MainActor in self?.tick() }
         }
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        editHistory.reset(EditSnapshot(lyrics: preview.lyrics, images: imageTrack, settings: preview.settings))
+        editHistory.reset(EditSnapshot(lyrics: preview.lyrics, visuals: visualTrack, settings: preview.settings))
         if let url = storage.lastProjectURL { openProject(at: url) }
     }
 
@@ -285,9 +296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 let task = Task.detached { try AudioAnalyzer.analyze(url: url) }
                 let features = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
                 try Task.checkCancellation()
+                await previewFrames.invalidate()
                 let loaded = try AVAudioPlayer(contentsOf: url); loaded.prepareToPlay()
                 try project?.lyrics.validate(duration: features.duration)
-                try project?.images.validate(duration: features.duration)
+                try project?.visuals.validate(duration: features.duration)
                 player = loaded; audioURL = url; preview.features = features; preview.time = 0
                 self.projectURL = projectURL
                 lyricsEditor.clearPresetSelection()
@@ -295,14 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 if let project { restoreSceneSettings(project.settings) }
                 placementEditor.restoreTimelineHeights(project?.timelineHeights ?? TimelineHeights())
                 preview.lyrics = project?.lyrics ?? LyricsTrack()
-                imageTrack = project?.images ?? ImageTrack(); previewTrack = imageTrack
-                placementEditor.images.load(imageTrack, projectURL: projectURL)
+                visualTrack = project?.visuals ?? VisualTrack(); previewTrack = visualTrack
+                placementEditor.visuals.load(visualTrack, projectURL: projectURL)
                 lyricsEditor.load(preview.lyrics); placementEditor.duration = features.duration
                 seek.maxValue = features.duration; seek.doubleValue = 0; updateTime()
                 audioName.stringValue = "音声: " + url.lastPathComponent
-                lastPreviewKey = nil; preview.images = []
-                editHistory.reset(EditSnapshot(lyrics: preview.lyrics, images: imageTrack, settings: preview.settings)); endHistoryGroup()
-                _ = saveProject(); refreshPreviewImages()
+                previewRevision += 1; lastPreviewKey = nil; preview.visuals = []
+                editHistory.reset(EditSnapshot(lyrics: preview.lyrics, visuals: visualTrack, settings: preview.settings)); endHistoryGroup()
+                _ = saveProject(); refreshPreviewFrames()
             } catch is CancellationError { status.stringValue = "解析をキャンセルしました。" }
             catch { showError(error) }
             progress.stopAnimation(nil); progress.isIndeterminate = false; progress.doubleValue = 0; setBusy(false); preview.invalidateFrame()
@@ -311,7 +323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     @discardableResult private func saveProject() -> Bool {
         guard let audioURL, let projectURL else { return true }
         do {
-            try storage.save(ProjectFile(audioURL: audioURL, images: imageTrack, settings: preview.settings, lyrics: preview.lyrics,
+            try storage.save(ProjectFile(audioURL: audioURL, visuals: visualTrack, settings: preview.settings, lyrics: preview.lyrics,
                                          timelineHeights: placementEditor.timelineHeights, projectURL: projectURL), to: projectURL)
             status.stringValue = "自動保存済み: " + projectURL.lastPathComponent
             return true
@@ -361,20 +373,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         endHistoryGroup()
         if mouseHistoryGroup != nil { mouseHistoryGroup = UUID() }
     }
-    private func recordEdit(lyrics: LyricsTrack? = nil, images: ImageTrack? = nil, settings: SceneSettings? = nil) {
+    private func recordEdit(lyrics: LyricsTrack? = nil, visuals: VisualTrack? = nil, settings: SceneSettings? = nil) {
         if let text = window?.firstResponder as? NSTextView, text.isEditable {
             let identity = ObjectIdentifier(text)
             if textHistoryResponder != identity { textHistoryGroup = UUID(); textHistoryResponder = identity }
         } else { endHistoryGroup() }
         var value = editHistory.current
         if let lyrics { value.lyrics = lyrics }
-        if let images { value.images = images }
+        if let visuals { value.visuals = visuals }
         if let settings { value.settings = settings }
         editHistory.record(value, group: mouseHistoryGroup ?? textHistoryGroup)
     }
     private var historyIsAvailable: Bool {
         guard let window, !busy, !imageProcessing, NSApp.modalWindow == nil else { return false }
-        if let sheet = window.attachedSheet { return sheet === placementEditor.images.managerWindow }
+        if let sheet = window.attachedSheet { return sheet === placementEditor.visuals.managerWindow }
         return true
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -394,67 +406,123 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         guard let value = redo ? editHistory.redo() : editHistory.undo() else { return }
         stopPlayback()
         restoreSceneSettings(value.settings); preview.lyrics = value.lyrics
-        imageTrack = value.images; previewTrack = value.images
-        lyricsEditor.restore(value.lyrics); placementEditor.images.restore(value.images)
-        lastPreviewKey = nil; refreshPreviewImages(); preview.invalidateFrame()
+        visualTrack = value.visuals; previewTrack = value.visuals
+        lyricsEditor.restore(value.lyrics); placementEditor.visuals.restore(value.visuals)
+        lastPreviewKey = nil; refreshPreviewFrames(); refreshControls(); preview.invalidateFrame()
         _ = saveProject()
     }
     @objc private func togglePlay() {
         guard let player else { return }
-        if player.isPlaying {
-            player.pause()
-        } else {
-            placementEditor.timeline.followPlayhead()
-            if player.currentTime >= player.duration - 0.01 { player.currentTime = 0 }
-            player.play()
+        if player.isPlaying || playbackPreparation != nil { stopPlayback(); return }
+        placementEditor.timeline.followPlayhead()
+        if player.currentTime >= player.duration - 0.01 { player.currentTime = 0 }
+        preview.time = player.currentTime
+        updateTime()
+        let revision = previewRevision
+        let requestID = UUID(); playbackRequestID = requestID
+        play.title = "準備中…"
+        playbackPreparation = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.playbackRequestID == requestID {
+                    self.playbackPreparation = nil
+                    self.play.title = player.isPlaying ? "一時停止" : "再生"
+                }
+            }
+            // The preview worker coalesces requests while paused; begin audio after its first frame.
+            while self.previewFrameTask != nil {
+                do { try await Task.sleep(nanoseconds: 5_000_000) } catch { return }
+                guard !Task.isCancelled, self.previewRevision == revision else { return }
+            }
+            guard !Task.isCancelled, self.previewRevision == revision else { return }
+            self.playbackPreparation = nil
+            if self.preview.frameFailure { self.play.title = "再生"; return }
+            player.play(); self.wasPlaying = true; self.tick()
         }
-        tick()
     }
-    private func stopPlayback() { player?.pause(); play.title = "再生" }
+    private func stopPlayback() {
+        playbackRequestID = UUID(); playbackPreparation?.cancel(); playbackPreparation = nil
+        if let player, player.isPlaying { preview.time = player.currentTime; seek.doubleValue = preview.time }
+        player?.pause(); wasPlaying = false; play.title = "再生"
+    }
     @objc private func scrubWholeSong() {
         placementEditor.timeline.followPlayhead()
         scrub()
     }
-    private func scrub() { player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue; preview.invalidateFrame(); updateTime() }
+    private func scrub() {
+        previewRevision += 1; lastPreviewKey = nil
+        player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue
+        preview.visuals = []; preview.renderedTime = preview.time
+        updateTime()
+    }
     private func tick() {
         guard let player, !busy else { return }
-        if player.isPlaying { preview.time = player.currentTime; seek.doubleValue = player.currentTime; preview.invalidateFrame() }
-        play.title = player.isPlaying ? "一時停止" : "再生"; updateTime()
+        if player.isPlaying {
+            preview.time = player.currentTime; seek.doubleValue = preview.time
+        } else if wasPlaying {
+            preview.time = player.duration; seek.doubleValue = player.duration; wasPlaying = false
+        }
+        if playbackPreparation == nil { play.title = player.isPlaying ? "一時停止" : "再生" }
+        updateTime()
     }
     private func updateTime() {
         placementEditor.currentTime = preview.time
-        refreshPreviewImages()
+        refreshPreviewFrames()
         func format(_ value: Double) -> String { String(format: "%d:%02d", Int(value) / 60, Int(value) % 60) }
         timeLabel.stringValue = "\(format(preview.time)) / \(format(preview.features?.duration ?? 0))"
     }
     private struct PreviewKey: Equatable {
         let projectURL: URL
-        let clips: [ImageClip]
-        let assets: [ImageAsset]
+        let clips: [VisualClip]
+        let assets: [VisualAsset]
     }
     private var lastPreviewKey: PreviewKey?
-    private func refreshPreviewImages() {
+    private func refreshPreviewFrames() {
         guard let projectURL else { return }
         let track = previewTrack, time = preview.time
         let active = track.active(at: time)
         let key = PreviewKey(projectURL: projectURL, clips: active, assets: active.compactMap { track.asset($0.assetID) })
-        guard key != lastPreviewKey else { return }
-        let previousKey = lastPreviewKey
-        lastPreviewKey = key; previewRevision += 1
-        let revision = previewRevision
-        previewImageTask?.cancel()
-        if previousKey?.projectURL == projectURL, previousKey?.assets == key.assets,
-           let previous = previousKey?.clips, preview.images.map(\.clip) == previous,
-           previous.map(\.assetID) == active.map(\.assetID) {
-            preview.images = zip(active, preview.images).map { ImageRenderLayer(clip: $0, image: $1.image) }
+        let dynamic = active.contains { $0.content.sourceIn != nil }
+        if key != lastPreviewKey {
+            previewRevision += 1; lastPreviewKey = key
+            preview.visuals = []; preview.renderedTime = time
+            preview.frameStatus = dynamic ? "映像を準備しています…" : nil
             preview.invalidateFrame()
-            return
+        } else if preview.frameFailure { return
+        } else if previewFrameTask == nil, !dynamic || (preview.renderedTime == time && !preview.visuals.isEmpty) {
+            preview.renderedTime = time; preview.invalidateFrame(); return
         }
-        previewImageTask = Task { [weak self] in
+        pendingFrame = FrameRequest(track: track, projectURL: projectURL, time: time, revision: previewRevision)
+        guard previewFrameTask == nil else { return }
+        previewFrameTask = Task { [weak self] in
             guard let self else { return }
-            let layers = (try? await imageStore.layers(track: track, projectURL: projectURL, time: time, allowMissing: true)) ?? []
-            guard !Task.isCancelled, revision == previewRevision else { return }
-            preview.images = layers; preview.invalidateFrame()
+            defer { self.previewFrameTask = nil }
+            while let request = self.pendingFrame {
+                self.pendingFrame = nil
+                do {
+                    let layers = try await self.previewFrames.layers(track: request.track, projectURL: request.projectURL, time: request.time, allowMissingImages: true)
+                    guard !Task.isCancelled, request.revision == self.previewRevision else { continue }
+                    let lag = abs(self.preview.time - request.time)
+                    if self.player?.isPlaying == true, lag > 0.25 {
+                        self.stopPlayback()
+                        self.preview.frameFailure = true; self.preview.frameStatus = "動画の読み込みが再生に追従できません。"
+                        self.status.stringValue = "動画の読み込みが再生に追従できません。一時停止しました。"
+                        continue
+                    }
+                    self.preview.visuals = layers
+                    self.preview.renderedTime = request.time
+                    self.preview.frameFailure = false; self.preview.frameStatus = nil
+                    self.preview.invalidateFrame()
+                } catch is CancellationError { return }
+                catch {
+                    guard request.revision == self.previewRevision else { continue }
+                    self.stopPlayback(); self.preview.visuals = []
+                    self.preview.frameFailure = true; self.preview.frameStatus = "動画を確認してください。素材管理から置き換えられます。"
+                    self.status.stringValue = "動画を確認してください: " + error.localizedDescription
+                    self.preview.invalidateFrame()
+                    self.pendingFrame = nil
+                }
+            }
         }
     }
     @objc private func exportVideo() {
@@ -466,22 +534,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let token = ExportCancellation(); cancellation = token
         let settings = preview.settings
         let lyrics = preview.lyrics
-        let images = imageTrack
+        let visuals = visualTrack
         let progressIndicator = progress
         exportTask = Task {
             do {
-                try await VideoExporter.export(images: images, projectURL: projectURL, audioURL: audioURL, features: features, settings: settings, lyrics: lyrics, destination: destination, cancellation: token) { value in
+                try await VideoExporter.export(visuals: visuals, projectURL: projectURL, audioURL: audioURL, features: features, settings: settings, lyrics: lyrics, destination: destination, cancellation: token) { value in
                     Task { @MainActor in progressIndicator.doubleValue = value }
                 }
                 status.stringValue = "書き出し完了: " + destination.lastPathComponent
                 NSWorkspace.shared.activateFileViewerSelecting([destination])
             } catch is CancellationError { status.stringValue = "書き出しをキャンセルしました。" }
             catch {
-                placementEditor.restoreTab(.images)
+                placementEditor.restoreTab(.visuals)
                 let alert = NSAlert(error: error)
-                alert.addButton(withTitle: "閉じる"); alert.addButton(withTitle: "画像管理…")
+                alert.addButton(withTitle: "閉じる"); alert.addButton(withTitle: "素材管理…")
                 alert.beginSheetModal(for: window) { [weak self = self] response in
-                    if response == .alertSecondButtonReturn { self?.placementEditor.images.openManager() }
+                    if response == .alertSecondButtonReturn { self?.placementEditor.visuals.openManager() }
                 }
             }
             cancellation = nil; setBusy(false)
@@ -517,7 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         prepareToClose() ? .terminateNow : .terminateCancel
     }
     func applicationWillTerminate(_ notification: Notification) {
-        previewImageTask?.cancel()
+        playbackPreparation?.cancel(); previewFrameTask?.cancel(); pendingFrame = nil
+        Task { await previewFrames.invalidate() }
         timer?.invalidate(); timer = nil
         player?.stop()
     }

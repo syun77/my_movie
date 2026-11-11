@@ -28,14 +28,14 @@ final class MetalSceneRenderer {
     private let scene: MTLTexture
 
     private struct ImageKey: Equatable {
-        let source: CGImage
+        let source: VisualFrame
         let transform: CGAffineTransform
         let blur: Double
         let threshold: Double
         let glowRadius: Double
 
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.source === rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
+            lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
                 && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
         }
     }
@@ -48,7 +48,7 @@ final class MetalSceneRenderer {
     }
 
     private struct SourceImage {
-        let image: CGImage
+        let image: VisualFrame
         let texture: MTLTexture
     }
 
@@ -118,7 +118,7 @@ final class MetalSceneRenderer {
     }
 
     // The caller keeps one frame in flight per renderer.
-    func encode(images: [ImageRenderLayer], features: AudioFeatures?, settings: SceneSettings, lyrics: LyricsTrack,
+    func encode(visuals: [VisualRenderLayer], features: AudioFeatures?, settings: SceneSettings, lyrics: LyricsTrack,
                 time: Double, target: MTLTexture, video: Bool) throws -> MTLCommandBuffer {
         if framesSinceCleanup == Self.filterCacheCleanupInterval {
             filters.clearCaches()
@@ -127,20 +127,20 @@ final class MetalSceneRenderer {
         framesSinceCleanup += 1
         guard let commands = queue.makeCommandBuffer() else { throw Self.renderError }
         let pulse = features?.transientPulse(at: time) ?? 0
-        var prepared: [(ImageClip, ProcessedImage, Float)] = []
+        var prepared: [(VisualClip, ProcessedImage, Float)] = []
         var nextSources: [UUID: SourceImage] = [:]
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
-        for layer in images where layer.clip.start <= time && time < layer.clip.end {
+        for layer in visuals where layer.clip.start <= time && time < layer.clip.end {
             let clip = layer.clip
             let blur = clip.effects?.blur
             let bloom = clip.effects?.bloom
             let glows = bloom.map { $0.isEnabled && $0.intensity > 0 && $0.threshold < 100 } ?? false
-            let key = ImageKey(source: layer.image, transform: transform(layer, at: time, settings: settings, pulse: pulse),
+            let key = ImageKey(source: layer.frame, transform: transform(layer, at: time, settings: settings, pulse: pulse),
                                blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
                                threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
                                glowRadius: glows ? bloom?.radius ?? 0 : 0)
-            let source = try sourceTexture(layer.image, cached: nextSources[clip.assetID] ?? sourceCache[clip.assetID], commands: commands)
+            let source = try sourceTexture(layer.frame, cached: nextSources[clip.assetID] ?? sourceCache[clip.assetID], commands: commands)
             nextSources[clip.assetID] = source
             let previous = imageCache[clip.id]
             let image = try (previous?.key == key ? previous : nil)
@@ -210,6 +210,7 @@ final class MetalSceneRenderer {
         output.setFragmentBytes(&transfer, length: MemoryLayout<UInt32>.size, index: 0)
         quad(output)
         output.endEncoding()
+        commands.addCompletedHandler { _ in _ = visuals }
         sourceCache = nextSources
         imageCache = nextCache
         return commands
@@ -224,8 +225,8 @@ final class MetalSceneRenderer {
         transformScratch = nil
     }
 
-    private func transform(_ layer: ImageRenderLayer, at time: Double, settings: SceneSettings, pulse: Double) -> CGAffineTransform {
-        let image = layer.image
+    private func transform(_ layer: VisualRenderLayer, at time: Double, settings: SceneSettings, pulse: Double) -> CGAffineTransform {
+        let image = layer.frame
         let clip = layer.clip
         let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
         let imageScale = fit * clip.scale(at: time, settings: settings, transientPulse: pulse)
@@ -236,10 +237,9 @@ final class MetalSceneRenderer {
             .translatedBy(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2)
     }
 
-    private func sourceTexture(_ image: CGImage, cached: SourceImage?, commands: MTLCommandBuffer) throws -> SourceImage {
-        if let cached, cached.image === image { return cached }
-        let options: [CIImageOption: Any] = image.colorSpace == nil ? [.colorSpace: Self.sRGB] : [:]
-        let source = CIImage(cgImage: image, options: options)
+    private func sourceTexture(_ image: VisualFrame, cached: SourceImage?, commands: MTLCommandBuffer) throws -> SourceImage {
+        if let cached, cached.image == image { return cached }
+        let source = image.image
         let texture = try render(source, bounds: source.extent, reusing: nil, commands: commands)
         return SourceImage(image: image, texture: texture)
     }

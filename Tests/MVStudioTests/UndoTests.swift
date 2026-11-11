@@ -120,33 +120,33 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit(); XCTAssertEqual(editor.lyrics.track, dragged)
         delegate.redoEdit(); XCTAssertEqual(editor.lyrics.track, removed)
 
-        var images = editor.images.track
-        let asset = images.register(url: directory.appendingPathComponent("missing.png"), projectURL: projectURL)
-        let result = try images.adding(assetID: asset, at: 1, slot: 2, duration: 10, grid: TimelineSnapGrid())
-        editor.images.commit(result.track, selectedID: result.clip.id)
-        delegate.undoEdit(); XCTAssertTrue(editor.images.track.clips.isEmpty)
-        delegate.redoEdit(); XCTAssertEqual(editor.images.track, result.track)
+        var visuals = editor.visuals.track
+        let asset = visuals.register(url: directory.appendingPathComponent("missing.png"), projectURL: projectURL)
+        let result = try visuals.adding(assetID: asset, at: 1, slot: 2, duration: 10, grid: TimelineSnapGrid())
+        editor.visuals.commit(result.track, selectedID: result.clip.id)
+        delegate.undoEdit(); XCTAssertTrue(editor.visuals.track.clips.isEmpty)
+        delegate.redoEdit(); XCTAssertEqual(editor.visuals.track, result.track)
         XCTAssertEqual(editor.timeline.selectedSlot, 2)
-        editor.images.deleteAsset(asset, includingPlacements: true)
-        XCTAssertTrue(editor.images.track.assets.isEmpty)
+        editor.visuals.deleteAsset(asset, includingPlacements: true)
+        XCTAssertTrue(editor.visuals.track.assets.isEmpty)
         delegate.undoEdit()
-        XCTAssertEqual(editor.images.track, result.track)
-        XCTAssertEqual(try storage.read(from: projectURL).images, result.track)
-        delegate.redoEdit(); XCTAssertTrue(editor.images.track.clips.isEmpty)
+        XCTAssertEqual(editor.visuals.track, result.track)
+        XCTAssertEqual(try storage.read(from: projectURL).visuals, result.track)
+        delegate.redoEdit(); XCTAssertTrue(editor.visuals.track.clips.isEmpty)
 
         // Restoring a deleted asset also restores every placement and its reference.
         delegate.undoEdit()
-        let replaced = try editor.images.track.replacingAsset(id: asset, url: directory.appendingPathComponent("replacement.png"), projectURL: projectURL)
-        editor.images.commit(replaced)
-        delegate.undoEdit(); XCTAssertEqual(editor.images.track, result.track)
-        delegate.redoEdit(); XCTAssertEqual(editor.images.track, replaced)
+        let replaced = try editor.visuals.track.replacingAsset(id: asset, url: directory.appendingPathComponent("replacement.png"), projectURL: projectURL)
+        editor.visuals.commit(replaced)
+        delegate.undoEdit(); XCTAssertEqual(editor.visuals.track, result.track)
+        delegate.redoEdit(); XCTAssertEqual(editor.visuals.track, replaced)
         var movedClip = replaced.clips[0]; movedClip.start = 2; movedClip.end = 4
         movedClip.automaticAnimation = .off; movedClip.pulseAmount = 0.2
         _ = movedClip.setKey(.x, at: 2.5, value: 240)
         let moved = try replaced.updating(movedClip, slot: 3, duration: 10)
-        editor.images.commit(moved, selectedID: movedClip.id)
-        delegate.undoEdit(); XCTAssertEqual(editor.images.track, replaced)
-        delegate.redoEdit(); XCTAssertEqual(editor.images.track, moved)
+        editor.visuals.commit(moved, selectedID: movedClip.id)
+        delegate.undoEdit(); XCTAssertEqual(editor.visuals.track, replaced)
+        delegate.redoEdit(); XCTAssertEqual(editor.visuals.track, moved)
 
         let studioWindow = try XCTUnwrap(delegate.window as? StudioWindow)
         studioWindow.onBeginInteraction?()
@@ -275,67 +275,67 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit()
         delegate.undoEdit()
 
-        editor.restoreTab(.images)
+        editor.restoreTab(.visuals)
         editor.timeline.onImageSelect?(movedClip.id, 3)
-        let disclosure = try XCTUnwrap(find(editor.images.view, "images.effects") as? NSButton)
+        let disclosure = try XCTUnwrap(find(editor.visuals.view, "visuals.effects") as? NSButton)
         disclosure.performClick(nil)
-        let addEffect = try XCTUnwrap(find(editor.images.view, "images.effects.add") as? NSPopUpButton)
+        let addEffect = try XCTUnwrap(find(editor.visuals.view, "visuals.effects.add") as? NSPopUpButton)
         let addBlur = try XCTUnwrap(addEffect.item(withTitle: "ガウスブラー"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addBlur.action), to: addBlur.target, from: addBlur))
         XCTAssertFalse(addBlur.isEnabled)
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.blur?.radius, 8)
-        let blurField = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.blur?.radius, 8)
+        let blurField = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
             .first { $0.isEnabled && $0.accessibilityLabel() == "半径 px" })
         blurField.mouseDown(with: try mouse(.leftMouseDown, x: 100))
         blurField.mouseDragged(with: try mouse(.leftMouseDragged, x: 111))
         XCTAssertEqual(blurField.doubleValue, 19)
-        XCTAssertEqual(editor.images.track.clip(movedClip.id)?.effects?.blur?.radius, 8)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects?.blur?.radius, 8)
         XCTAssertTrue(studioWindow.cancelNumberDrags())
         XCTAssertEqual(blurField.doubleValue, 8)
         blurField.mouseDown(with: try mouse(.leftMouseDown, x: 100))
         blurField.mouseDragged(with: try mouse(.leftMouseDragged, x: 111))
         blurField.mouseUp(with: try mouse(.leftMouseUp, x: 111))
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.blur?.radius, 19)
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.blur?.radius, 19)
         delegate.undoEdit()
         XCTAssertEqual(blurField.doubleValue, 8)
         delegate.redoEdit()
         XCTAssertEqual(blurField.doubleValue, 19)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
 
         let addEmbers = try XCTUnwrap(addEffect.item(withTitle: "舞い上がる火の粉"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addEmbers.action), to: addEmbers.target, from: addEmbers))
-        let wind = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+        let wind = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
             .first { $0.isEnabled && $0.accessibilityLabel() == "横風 px/秒" })
         wind.mouseDown(with: try mouse(.leftMouseDown, x: 100))
         wind.mouseDragged(with: try mouse(.leftMouseDragged, x: 70))
         wind.mouseUp(with: try mouse(.leftMouseUp, x: 70))
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.embers?.wind, -6)
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.embers?.wind, -6)
         delegate.undoEdit()
         XCTAssertEqual(wind.doubleValue, 24)
         delegate.redoEdit()
         XCTAssertEqual(wind.doubleValue, -6)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
 
         let addSnow = try XCTUnwrap(addEffect.item(withTitle: "雪"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addSnow.action), to: addSnow.target, from: addSnow))
         XCTAssertFalse(addSnow.isEnabled)
-        let fallSpeed = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+        let fallSpeed = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
             .first { $0.isEnabled && $0.accessibilityLabel() == "落下速度 px/秒" })
         fallSpeed.mouseDown(with: try mouse(.leftMouseDown, x: 100))
         fallSpeed.mouseDragged(with: try mouse(.leftMouseDragged, x: 130))
         fallSpeed.mouseUp(with: try mouse(.leftMouseUp, x: 130))
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.snow?.fallSpeed, 250)
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.snow?.fallSpeed, 250)
         delegate.undoEdit()
         XCTAssertEqual(fallSpeed.doubleValue, 220)
         delegate.redoEdit()
         XCTAssertEqual(fallSpeed.doubleValue, 250)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
 
         let addOrbs = try XCTUnwrap(addEffect.item(withTitle: "光の粒子2"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addOrbs.action), to: addOrbs.target, from: addOrbs))
@@ -344,13 +344,13 @@ final class UndoTests: XCTestCase {
             ("速度 %", \.speed), ("発生数", \.count), ("彩度 %", \.saturation)
         ]
         for (label, key) in orbControls {
-            let field = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+            let field = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
                 .first { $0.isEnabled && $0.accessibilityLabel() == label })
             let initial = ImageEffects.Orbs()[keyPath: key]
             field.mouseDown(with: try mouse(.leftMouseDown, x: 100))
             field.mouseDragged(with: try mouse(.leftMouseDragged, x: 70))
             field.mouseUp(with: try mouse(.leftMouseUp, x: 70))
-            let saved = try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.orbs
+            let saved = try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.orbs
             XCTAssertEqual(saved?[keyPath: key], initial - 30)
             delegate.undoEdit()
             XCTAssertEqual(field.doubleValue, initial)
@@ -359,15 +359,15 @@ final class UndoTests: XCTestCase {
             delegate.undoEdit()
         }
         delegate.undoEdit()
-        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
 
         let addParticles = try XCTUnwrap(addEffect.item(withTitle: "光の粒子"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addParticles.action), to: addParticles.target, from: addParticles))
-        let addSource = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? NSButton }
+        let addSource = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? NSButton }
             .first { $0.accessibilityLabel() == "発生源を追加" })
-        let removeSource = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? NSButton }
+        let removeSource = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? NSButton }
             .first { $0.accessibilityLabel() == "発生源を削除" })
-        let sourceX = try XCTUnwrap(editor.images.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+        let sourceX = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
             .first { $0.accessibilityLabel() == "発生源のX" })
         XCTAssertFalse(removeSource.isEnabled)
         addSource.performClick(nil)
@@ -375,21 +375,21 @@ final class UndoTests: XCTestCase {
         sourceX.mouseDown(with: try mouse(.leftMouseDown, x: 100))
         sourceX.mouseDragged(with: try mouse(.leftMouseDragged, x: 120))
         sourceX.mouseUp(with: try mouse(.leftMouseUp, x: 120))
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.particles?.emitters.map(\.x), [960, 1460])
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.particles?.emitters.map(\.x), [960, 1460])
         removeSource.performClick(nil)
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.particles?.emitters.count, 1)
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.particles?.emitters.count, 1)
         delegate.undoEdit()
-        XCTAssertEqual(try storage.read(from: projectURL).images.clip(movedClip.id)?.effects?.particles?.emitters.map(\.x), [960, 1460])
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.particles?.emitters.map(\.x), [960, 1460])
         delegate.undoEdit()
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.images.track.clip(movedClip.id)?.effects)
+        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
 
-        editor.images.openManager()
-        XCTAssertNotNil(editor.images.managerWindow?.sheetParent)
+        editor.visuals.openManager()
+        XCTAssertNotNil(editor.visuals.managerWindow?.sheetParent)
         delegate.undoEdit(); XCTAssertEqual(offset.doubleValue, 0, "画像管理シートでも共通Undoを利用する")
         delegate.redoEdit(); XCTAssertEqual(offset.doubleValue, 0.25)
-        if let sheet = editor.images.managerWindow { delegate.window.endSheet(sheet) }
+        if let sheet = editor.visuals.managerWindow { delegate.window.endSheet(sheet) }
 
         func applyPreset<Settings: PresetSettings>(_ value: Settings, in view: NSView, id: String) throws {
             let button = try XCTUnwrap(find(view, id) as? NSPopUpButton)

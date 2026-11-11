@@ -1,11 +1,6 @@
 import AppKit
 import ImageIO
 
-struct ImageRenderLayer: @unchecked Sendable {
-    let clip: ImageClip
-    let image: CGImage
-}
-
 actor ImageAssetStore {
     private final class Entry: NSObject {
         let image: CGImage
@@ -32,19 +27,12 @@ actor ImageAssetStore {
         return image
     }
 
-    func layers(track: ImageTrack, projectURL: URL, time: Double, allowMissing: Bool) throws -> [ImageRenderLayer] {
-        try track.active(at: time).compactMap { clip in
+    func layers(track: VisualTrack, projectURL: URL, time: Double, allowMissing: Bool) throws -> [VisualRenderLayer] {
+        try track.active(at: time).filter { $0.content == .still }.compactMap { clip in
             guard let asset = track.asset(clip.assetID) else { throw StudioError.message("画像の参照が不正です。") }
-            do { return ImageRenderLayer(clip: clip, image: try image(at: asset.reference.resolve(projectURL: projectURL))) }
-            catch { if allowMissing { return nil }; throw StudioError.message("画像を確認してください: \(asset.name)（画像管理から置き換え可能）") }
+            do { return VisualRenderLayer(clip: clip, image: try image(at: asset.reference.resolve(projectURL: projectURL))) }
+            catch { if allowMissing { return nil }; throw StudioError.message("画像を確認してください: \(asset.name)（素材管理から置き換え可能）") }
         }
     }
 
-    func validateUsed(track: ImageTrack, projectURL: URL) throws {
-        for id in Set(track.clips.map(\.assetID)) {
-            guard let asset = track.asset(id) else { throw StudioError.message("画像の参照が不正です。") }
-            do { _ = try image(at: asset.reference.resolve(projectURL: projectURL)) }
-            catch { throw StudioError.message("画像を確認してください: \(asset.name)（画像管理から置き換え可能）") }
-        }
-    }
 }

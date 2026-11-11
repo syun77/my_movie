@@ -19,9 +19,9 @@ final class ProjectStorageTests: XCTestCase {
         let layout = SpectrumLayout(x: -20, y: 150, width: 900, height: 210, barGap: 46)
         let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 0), resolution: .minimal, layout: layout)
         let settings = SceneSettings(bpm: 143, beatOffset: 0.75, spectrum: false, spectrumStyle: style)
-        var images = ImageTrack()
-        let imageID = images.register(url: image, projectURL: url)
-        var clip = ImageClip(assetID: imageID, start: 0, end: 1, automaticAnimation: .beat, pulseAmount: 0.2)
+        var visuals = VisualTrack()
+        let imageID = visuals.register(url: image, projectURL: url)
+        var clip = VisualClip(assetID: imageID, start: 0, end: 1, automaticAnimation: .beat, pulseAmount: 0.2)
         _ = clip.setKey(.rotation, at: 0, value: 0)
         _ = clip.setKey(.rotation, at: 1, value: 360)
         var curve = try XCTUnwrap(clip.curve(.rotation))
@@ -29,19 +29,19 @@ final class ProjectStorageTests: XCTestCase {
         clip.setCurve(curve)
         clip.fixedValues[.x] = 120
         clip.setBaseValue(45, for: .rotation)
-        images.layers[0].clips = [clip]
+        visuals.layers[0].clips = [clip]
         var heights = TimelineHeights()
         heights.viewport = 380
         heights[.lyrics] = 20
-        heights[.image(1)] = 21
+        heights[.visual(1)] = 21
         heights[.automation(1, .rotation)] = 27
-        try storage.save(ProjectFile(audioURL: audio, images: images, settings: settings, timelineHeights: heights, projectURL: url), to: url)
+        try storage.save(ProjectFile(audioURL: audio, visuals: visuals, settings: settings, timelineHeights: heights, projectURL: url), to: url)
         let restarted = ProjectStorage(defaults: UserDefaults(suiteName: suite)!)
         XCTAssertEqual(restarted.lastProjectURL, url)
         let loaded = try restarted.read(from: url)
         XCTAssertEqual(loaded.audio.resolve(projectURL: url), audio)
-        XCTAssertEqual(loaded.images.assets.first?.reference.resolve(projectURL: url), image)
-        XCTAssertEqual(loaded.images.clips, [clip])
+        XCTAssertEqual(loaded.visuals.assets.first?.reference.resolve(projectURL: url), image)
+        XCTAssertEqual(loaded.visuals.clips, [clip])
         XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("\"automaticAnimation\""))
         XCTAssertEqual(loaded.settings, settings)
         XCTAssertEqual(loaded.timelineHeights, heights)
@@ -51,7 +51,7 @@ final class ProjectStorageTests: XCTestCase {
         XCTAssertEqual(AssetReference(url: outside, projectURL: url).resolve(projectURL: moved), outside)
         try storage.save(ProjectFile(audioURL: audio, settings: SceneSettings(), projectURL: url), to: url)
         let defaultProject = try storage.read(from: url)
-        XCTAssertTrue(defaultProject.images.assets.isEmpty)
+        XCTAssertTrue(defaultProject.visuals.assets.isEmpty)
         XCTAssertNil(defaultProject.timelineHeights)
         heights[.automation(1, .rotation)] = 0
         XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: settings, timelineHeights: heights, projectURL: url), to: url))

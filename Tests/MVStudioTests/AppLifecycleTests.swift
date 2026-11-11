@@ -46,7 +46,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(snap.sendAction(snap.action, to: snap.target))
         XCTAssertEqual(displaySettings.snapDivision, .whole)
         XCTAssertEqual(editor.lyrics.snapGrid.step, 2)
-        XCTAssertEqual(editor.images.snapGrid.step, 2)
+        XCTAssertEqual(editor.visuals.snapGrid.step, 2)
         XCTAssertEqual(editor.timeline.snapGrid.step, 2)
         func findPreview(in view: NSView) -> PreviewView? {
             if let preview = view as? PreviewView { return preview }
@@ -55,7 +55,7 @@ final class AppLifecycleTests: XCTestCase {
         let preview = try XCTUnwrap(findPreview(in: content))
         window.setContentSize(window.contentMinSize)
         for (tab, settings) in [(PlacementEditor.Tab.lyrics, editor.lyrics.view),
-                                (.images, editor.images.view), (.spectrum, editor.spectrum.view)] {
+                                (.visuals, editor.visuals.view), (.spectrum, editor.spectrum.view)] {
             editor.restoreTab(tab)
             content.layoutSubtreeIfNeeded()
             let previewFrame = content.convert(preview.bounds, from: preview)
@@ -92,7 +92,7 @@ final class AppLifecycleTests: XCTestCase {
         }
 
         window.setContentSize(NSSize(width: 1000, height: 1000))
-        editor.restoreTab(.images)
+        editor.restoreTab(.visuals)
         content.layoutSubtreeIfNeeded()
         let originalPreviewHeight = preview.frame.height
         let originalTimelineHeight = editor.timeline.frame.height
@@ -112,7 +112,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(preview.frame.height, originalPreviewHeight - 80, accuracy: 1)
 
         editor.restoreTab(.spectrum)
-        editor.restoreTab(.images)
+        editor.restoreTab(.visuals)
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.timeline.frame.height, originalTimelineHeight + 80, accuracy: 1)
 
@@ -122,13 +122,13 @@ final class AppLifecycleTests: XCTestCase {
         try dragDivider(by: 1000)
         XCTAssertEqual(preview.frame.height, 100, accuracy: 1)
         XCTAssertTrue(content.bounds.contains(content.convert(editor.timeline.bounds, from: editor.timeline)))
-        let imageScroll = try XCTUnwrap(editor.images.view.enclosingScrollView)
-        XCTAssertGreaterThan(editor.images.view.frame.height, imageScroll.documentVisibleRect.height)
+        let imageScroll = try XCTUnwrap(editor.visuals.view.enclosingScrollView)
+        XCTAssertGreaterThan(editor.visuals.view.frame.height, imageScroll.documentVisibleRect.height)
         let scrolled = imageScroll.contentView
         scrolled.scroll(to: NSPoint(x: 0, y: 40))
         XCTAssertGreaterThan(scrolled.bounds.minY, 0)
         editor.restoreTab(.spectrum)
-        editor.restoreTab(.images)
+        editor.restoreTab(.visuals)
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(scrolled.bounds.minY, 0, accuracy: 1)
 
@@ -141,15 +141,15 @@ final class AppLifecycleTests: XCTestCase {
 
         var savedHeights = TimelineHeights()
         savedHeights.viewport = 245
-        savedHeights[.image(2)] = 110
+        savedHeights[.visual(2)] = 110
         editor.restoreTimelineHeights(savedHeights)
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.timeline.frame.height, 245, accuracy: 1)
-        XCTAssertEqual(editor.timeline.heights[.image(2)], 110)
+        XCTAssertEqual(editor.timeline.heights[.visual(2)], 110)
         editor.restoreTimelineHeights(TimelineHeights())
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.timeline.frame.height, originalTimelineHeight, accuracy: 1)
-        XCTAssertEqual(editor.timeline.heights[.image(2)], 46)
+        XCTAssertEqual(editor.timeline.heights[.visual(2)], 46)
         XCTAssertEqual(layoutCommits, 4, "復元時は保存通知を送らない")
     }
 }

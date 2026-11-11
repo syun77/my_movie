@@ -7,7 +7,7 @@ import ImageIO
 final class StudioTests: XCTestCase {
     func testTransientZoomAndSpectrumInterpolation() {
         let features = AudioFeatures(duration: 1, step: 0.5, frames: [[0, 1], [1, 0]], transientTimes: [0.12, 0.28])
-        var clip = ImageClip(assetID: UUID(), start: 0, end: 1, pulseAmount: 0.1)
+        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, pulseAmount: 0.1)
         XCTAssertEqual(clip.scale(at: 0.119, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.119)), 1)
         XCTAssertEqual(clip.scale(at: 0.28, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.28)), 1.1, accuracy: 0.0001)
         XCTAssertEqual(clip.scale(at: 0.43, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.43)), 1.0125, accuracy: 0.0001)
@@ -167,23 +167,23 @@ final class StudioTests: XCTestCase {
         let imageDestination = CGImageDestinationCreateWithURL(imageURL as CFURL, "public.png" as CFString, 1, nil)!
         CGImageDestinationAddImage(imageDestination, context.makeImage()!, nil); XCTAssertTrue(CGImageDestinationFinalize(imageDestination))
         let projectURL = ProjectStorage.projectURL(for: url)
-        var images = ImageTrack()
-        let assetID = images.register(url: imageURL, projectURL: projectURL)
-        images.layers[0].clips = [ImageClip(assetID: assetID, start: 0, end: 1, pulseAmount: 0.25)]
+        var visuals = VisualTrack()
+        let assetID = visuals.register(url: imageURL, projectURL: projectURL)
+        visuals.layers[0].clips = [VisualClip(assetID: assetID, start: 0, end: 1, pulseAmount: 0.25)]
         let overlayURL = directory.appendingPathComponent("overlay.png")
         context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         let overlayDestination = CGImageDestinationCreateWithURL(overlayURL as CFURL, "public.png" as CFString, 1, nil)!
         CGImageDestinationAddImage(overlayDestination, context.makeImage()!, nil); XCTAssertTrue(CGImageDestinationFinalize(overlayDestination))
-        let overlayID = images.register(url: overlayURL, projectURL: projectURL)
-        var animated = ImageClip(assetID: overlayID, start: 0.5, end: 0.8, automaticAnimation: .off)
+        let overlayID = visuals.register(url: overlayURL, projectURL: projectURL)
+        var animated = VisualClip(assetID: overlayID, start: 0.5, end: 0.8, automaticAnimation: .off)
         _ = animated.setKey(.x, at: 0.6, value: 0)
         _ = animated.setKey(.x, at: 0.7, value: 600)
         animated.effects = ImageEffects(blur: .init(radius: 3), bloom: .init(threshold: 10), particles: .init(color: RGBColor(red: 0, green: 1, blue: 0), seed: 1),
                                         embers: .init(seed: 18), snow: .init(seed: 42), orbs: .init(opacity: 30))
-        images.layers[2].clips = [animated]
+        visuals.layers[2].clips = [animated]
         let layout = SpectrumLayout(x: 300, y: 650, width: 900, height: 180)
         let style = SpectrumStyle(shape: .line, color: RGBColor(red: 1, green: 0, blue: 1), resolution: .medium, layout: layout)
-        try await VideoExporter.export(images: images, projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(spectrumStyle: style), lyrics: lyrics, destination: output, cancellation: ExportCancellation(), progress: { _ in })
+        try await VideoExporter.export(visuals: visuals, projectURL: projectURL, audioURL: url, features: features, settings: SceneSettings(spectrumStyle: style), lyrics: lyrics, destination: output, cancellation: ExportCancellation(), progress: { _ in })
         let asset = AVURLAsset(url: output)
         let duration = try await asset.load(.duration)
         let videos = try await asset.loadTracks(withMediaType: .video)

@@ -2,7 +2,7 @@ import Foundation
 
 struct EditSnapshot: Equatable {
     var lyrics = LyricsTrack()
-    var images = ImageTrack()
+    var visuals = VisualTrack()
     var settings = SceneSettings()
 }
 

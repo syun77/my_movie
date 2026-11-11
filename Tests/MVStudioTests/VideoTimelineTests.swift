@@ -1,0 +1,240 @@
+import AppKit
+import AVFoundation
+import CoreImage
+import Metal
+import XCTest
+@testable import MVStudio
+
+final class VideoTimelineTests: XCTestCase {
+    private let project = URL(fileURLWithPath: "/tmp/video-test/song.wav.mvproject")
+
+    @MainActor func testSourceMappingTrimBoundariesAndPersistence() throws {
+        var track = VisualTrack()
+        let id = track.register(url: URL(fileURLWithPath: "/tmp/video-test/clip.mov"), projectURL: project, kind: .video(duration: 8))
+        let result = try track.adding(assetID: id, at: 10, slot: 1, duration: 30, grid: TimelineSnapGrid())
+        track = result.track
+        XCTAssertEqual(result.clip.end, 18)
+        XCTAssertEqual(result.clip.automaticAnimation, .off)
+        let trimmed = try track.dragging(id: result.clip.id, part: .start, delta: 3, duration: 30, grid: TimelineSnapGrid())
+        let clip = try XCTUnwrap(trimmed.clip(result.clip.id))
+        XCTAssertEqual(clip.content.sourceIn, 3)
+        XCTAssertEqual(clip.end, 18)
+        let moved = try trimmed.dragging(id: clip.id, part: .move, delta: 7, duration: 30, grid: TimelineSnapGrid())
+        XCTAssertEqual(moved.clip(clip.id)?.start, 20)
+        XCTAssertEqual(moved.clip(clip.id)?.content.sourceIn, 3)
+        XCTAssertEqual(try moved.dragging(id: clip.id, part: .end, delta: 5, duration: 30, grid: TimelineSnapGrid()).clip(clip.id)?.end, 25)
+        let extended = try trimmed.dragging(id: clip.id, part: .start, delta: -100, duration: 30, grid: TimelineSnapGrid())
+        XCTAssertEqual(extended.clip(clip.id)?.start, 10)
+        XCTAssertEqual(extended.clip(clip.id)?.content.sourceIn, 0)
+        var invalid = clip; invalid.content = .video(sourceIn: 4)
+        XCTAssertThrowsError(try trimmed.updating(invalid, slot: 1, duration: 30))
+        XCTAssertThrowsError(try trimmed.replacingAsset(id: id, url: URL(fileURLWithPath: "/tmp/short.mov"), projectURL: project, kind: .video(duration: 4)))
+        XCTAssertThrowsError(try trimmed.replacingAsset(id: id, url: URL(fileURLWithPath: "/tmp/still.png"), projectURL: project))
+        let file = ProjectFile(audioURL: project.deletingPathExtension(), visuals: moved, settings: SceneSettings(), projectURL: project)
+        let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(file))
+        try decoded.validate()
+        XCTAssertEqual(decoded.version, 6); XCTAssertEqual(decoded.visuals, moved)
+        let history = EditHistory()
+        history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: track, settings: SceneSettings()))
+        history.record(EditSnapshot(lyrics: LyricsTrack(), visuals: moved, settings: SceneSettings()))
+        XCTAssertEqual(history.undo()?.visuals, track)
+        XCTAssertEqual(history.redo()?.visuals, moved)
+    }
+
+    func testReaderSelectsPTSForVFRSeeksAndIndependentPlacements() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("vfr.mov")
+        try await VideoTestFixtures.makeVideo(url, codec: .h264, times: [0, 0.1, 0.35, 0.8, 1.1], end: 1.5, rotated: true)
+        let provider = VideoFrameProvider()
+        let (kind, _) = try await provider.inspect(url)
+        XCTAssertEqual(try XCTUnwrap(kind.videoDuration), 1.5, accuracy: 0.001)
+        var track = VisualTrack()
+        let id = track.register(url: url, projectURL: project, kind: kind)
+        var first = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0), automaticAnimation: .off)
+        let second = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0.4), automaticAnimation: .off)
+        track.layers[0].clips = [first]; track.layers[1].clips = [second]
+        let renderer = try MetalSceneRenderer(scale: 0.1)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 192, height: 108, mipmapped: false)
+        descriptor.storageMode = .shared; descriptor.usage = [.renderTarget, .shaderRead]
+        let target = try XCTUnwrap(renderer.device.makeTexture(descriptor: descriptor))
+        var renderedRed: [Int] = []
+        for (time, pts) in [(10.36, 0.35), (10.05, 0.0), (10.85, 0.8), (10.2, 0.1)] {
+            let layers = try await provider.layers(track: track, projectURL: project, time: time)
+            XCTAssertEqual(layers.count, 2)
+            XCTAssertEqual(layers[0].frame.width, 48); XCTAssertEqual(layers[0].frame.height, 64)
+            XCTAssertEqual(try XCTUnwrap(layers[0].frame.presentationTime).seconds, pts, accuracy: 1e-6)
+            if time == 10.36 { XCTAssertEqual(try XCTUnwrap(layers[1].frame.presentationTime).seconds, 0.35, accuracy: 1e-6) }
+            let commands = try renderer.encode(visuals: [layers[0]], features: nil, settings: SceneSettings(spectrum: false),
+                lyrics: LyricsTrack(), time: time, target: target, video: false)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                commands.addCompletedHandler { _ in continuation.resume() }
+                commands.commit()
+            }
+            XCTAssertEqual(commands.status, .completed)
+            var pixel = [UInt8](repeating: 0, count: 4)
+            target.getBytes(&pixel, bytesPerRow: 4, from: MTLRegionMake2D(96, 54, 1, 1), mipmapLevel: 0)
+            renderedRed.append(Int(pixel[2]))
+        }
+        XCTAssertGreaterThan(renderedRed[0], renderedRed[1] + 30)
+        XCTAssertGreaterThan(renderedRed[2], renderedRed[0] + 20)
+        first.content = .video(sourceIn: 0.5); track.layers[0].clips = [first]
+        let layers = try await provider.layers(track: track, projectURL: project, time: 10.4)
+        XCTAssertEqual(try XCTUnwrap(layers[0].frame.presentationTime).seconds, 0.8, accuracy: 1e-6)
+        let inactive = try await provider.layers(track: track, projectURL: project, time: 11)
+        XCTAssertTrue(inactive.isEmpty)
+        await provider.invalidate()
+    }
+
+    @MainActor func testVideoImportSourceFieldAndClipboard() async throws {
+        _ = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("clip.mov")
+        try await VideoTestFixtures.makeVideo(url, codec: .hevc, times: [0, 0.5, 1, 1.5, 2], end: 3)
+        let editor = PlacementEditor(); _ = editor.view
+        editor.duration = 10; editor.currentTime = 1
+        editor.visuals.load(VisualTrack(), projectURL: project)
+        editor.setAvailable(hasAudio: true, isBusy: false); editor.restoreTab(.visuals)
+        editor.visuals.importFile(url, placement: (2, 1))
+        for _ in 0..<1000 {
+            if !editor.visuals.isProcessing { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(editor.visuals.isProcessing)
+        let clip = try XCTUnwrap(editor.visuals.track.clips.first)
+        XCTAssertEqual(clip.start, 1); XCTAssertEqual(clip.end, 4)
+        let field = try XCTUnwrap(DragValueField.fields(in: editor.visuals.view).first { $0.identifier?.rawValue == "visual.sourceIn" })
+        let end = try XCTUnwrap(DragValueField.fields(in: editor.visuals.view).first { $0.identifier?.rawValue == "visuals.end" })
+        end.stringValue = "3"
+        editor.visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: end))
+        field.stringValue = "0.5"
+        editor.visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+        XCTAssertEqual(editor.visuals.track.clip(clip.id)?.content.sourceIn, 0.5)
+        let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
+        editor.editClip(.copy, pasteboard: board)
+        editor.currentTime = 5
+        editor.editClip(.paste, pasteboard: board)
+        let copied = try XCTUnwrap(editor.visuals.track.clips.first { $0.id != clip.id })
+        XCTAssertEqual(copied.start, 5); XCTAssertEqual(copied.content.sourceIn, 0.5)
+
+    }
+
+    @MainActor func testTransportPreparesFramesAndSeeksWithMainAudioClock() async throws {
+        let app = NSApplication.shared
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("transport.mov")
+        try await VideoTestFixtures.makeVideo(movie, codec: .h264, times: [0, 0.1, 0.35, 0.8, 1.1], end: 1.5)
+        let audio = directory.appendingPathComponent("silence.wav")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000)!
+        buffer.frameLength = 16000; buffer.floatChannelData![0].initialize(repeating: 0, count: 16000)
+        do { let file = try AVAudioFile(forWriting: audio, settings: format.settings); try file.write(from: buffer) }
+        let suite = "VideoTransport." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let storage = ProjectStorage(defaults: defaults), projectURL = ProjectStorage.projectURL(for: audio)
+        var track = VisualTrack()
+        let id = track.register(url: movie, projectURL: projectURL, kind: .video(duration: 1.5))
+        track.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: 0), automaticAnimation: .off)]
+        try storage.save(ProjectFile(audioURL: audio, visuals: track, settings: SceneSettings(spectrum: false), projectURL: projectURL), to: projectURL)
+        let referenceProvider = VideoFrameProvider()
+        let referenceEnd = try await referenceProvider.layers(track: track, projectURL: projectURL, time: 0.85)
+        let expectedEnd = try redValue(referenceEnd[0].frame)
+        let referenceStart = try await referenceProvider.layers(track: track, projectURL: projectURL, time: 0.05)
+        let expectedStart = try redValue(referenceStart[0].frame)
+        let delegate = AppDelegate(storage: storage)
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification, object: app))
+        defer {
+            delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification, object: app))
+            delegate.window.close()
+        }
+        func findPreview(_ view: NSView) -> PreviewView? {
+            if let preview = view as? PreviewView { return preview }
+            return view.subviews.lazy.compactMap { findPreview($0) }.first
+        }
+        let preview = try XCTUnwrap(findPreview(delegate.window.contentView!))
+        for _ in 0..<500 {
+            if delegate.placementEditor.duration > 0, !preview.visuals.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(preview.frameFailure); XCTAssertEqual(preview.visuals.count, 1)
+        delegate.perform(NSSelectorFromString("togglePlay"))
+        try await Task.sleep(for: .milliseconds(350))
+        let time = delegate.placementEditor.currentTime
+        XCTAssertGreaterThan(time, 0.1)
+        XCTAssertEqual(preview.renderedTime, time, accuracy: 0.1)
+        delegate.placementEditor.lyrics.onSeek?(0.85)
+        for _ in 0..<500 {
+            if preview.renderedTime == 0.85, !preview.visuals.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.renderedTime, 0.85)
+        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first).frame), expectedEnd, accuracy: 6)
+        delegate.placementEditor.lyrics.onSeek?(0.05)
+        for _ in 0..<500 {
+            if preview.renderedTime == 0.05, !preview.visuals.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first).frame), expectedStart, accuracy: 6)
+        for time in [0.9, 0.1, 1.2, 0.25, 0.4] { delegate.placementEditor.lyrics.onSeek?(time) }
+        for _ in 0..<500 {
+            if preview.renderedTime == 0.4, !preview.visuals.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.renderedTime, 0.4)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.35, accuracy: 1e-6)
+        func findExport(_ view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == "MP4を書き出す" { return button }
+            return view.subviews.lazy.compactMap { findExport($0) }.first
+        }
+        let export = try XCTUnwrap(findExport(delegate.window.contentView!))
+        XCTAssertTrue(export.isEnabled)
+        delegate.placementEditor.visuals.commit(track.removingClip(id: track.clips[0].id))
+        XCTAssertTrue(export.isEnabled)
+        delegate.undoEdit(); XCTAssertTrue(export.isEnabled)
+        delegate.redoEdit(); XCTAssertTrue(export.isEnabled)
+    }
+
+    func testThree1080pLayersSequentialDecodeAndBackwardSeek() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("1080.mov")
+        try await VideoTestFixtures.makeVideo(url, codec: .h264, times: (0..<60).map { Double($0) / 30 }, end: 2,
+                            width: 1920, height: 1080)
+        let provider = VideoFrameProvider()
+        var track = VisualTrack()
+        let id = track.register(url: url, projectURL: project, kind: .video(duration: 2))
+        for index in 0..<3 {
+            track.layers[index].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: Double(index) / 10), automaticAnimation: .off)]
+        }
+        var samples: [Double] = []
+        for frame in 0..<40 {
+            let start = Date()
+            let layers = try await provider.layers(track: track, projectURL: project, time: Double(frame) / 30)
+            samples.append(Date().timeIntervalSince(start))
+            XCTAssertEqual(layers.count, 3)
+            XCTAssertEqual(layers[0].frame.width, 1920)
+        }
+        let ordered = samples.dropFirst().sorted()
+        print("VIDEO_3x1080_DECODE median_ms=\(ordered[ordered.count / 2] * 1000) p95_ms=\(ordered[Int(Double(ordered.count - 1) * 0.95)] * 1000)")
+        let started = Date()
+        _ = try await provider.layers(track: track, projectURL: project, time: 0.2)
+        print("VIDEO_3x1080_BACKWARD_SEEK ms=\(Date().timeIntervalSince(started) * 1000)")
+    }
+
+    private func redValue(_ frame: VisualFrame) throws -> Int {
+        let context = CIContext()
+        let image = try XCTUnwrap(context.createCGImage(frame.image, from: CGRect(x: 0, y: 0, width: 1, height: 1)))
+        let pixels = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        pixels.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return Int(pixels.data!.assumingMemoryBound(to: UInt8.self)[0])
+    }
+
+}

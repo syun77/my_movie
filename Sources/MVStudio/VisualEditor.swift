@@ -2,13 +2,13 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor
-final class ImageEditor: NSViewController, NSTextFieldDelegate {
+final class VisualEditor: NSViewController, NSTextFieldDelegate {
     var onProcessing: ((Bool) -> Void)?
     var onAssetsReload: (() -> Void)?
     var onBeginTextEditing: (() -> Void)?
     var onEndTextEditing: (() -> Void)?
-    var onChange: ((ImageTrack) -> Void)?
-    var onPreview: ((ImageTrack) -> Void)?
+    var onChange: ((VisualTrack) -> Void)?
+    var onPreview: ((VisualTrack) -> Void)?
     var onSeek: ((Double) -> Void)?
     var onBeginEdit: (() -> Void)?
     var currentTime = 0.0 { didSet { effectsEditor.time = currentTime } }
@@ -16,11 +16,11 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     var duration = 0.0
     var snapGrid = TimelineSnapGrid()
     var timeline: TimelineView? { didSet { connectTimeline() } }
-    private(set) var track = ImageTrack()
+    private(set) var track = VisualTrack()
     private(set) var projectURL: URL?
     private(set) var thumbnails: [UUID: NSImage] = [:]
     private(set) var missing = Set<UUID>()
-    let store = ImageAssetStore()
+    let store = VisualAssetLoader()
     private var generation = UUID()
     private var assetRefreshRevision = 0
     private var available = false
@@ -30,9 +30,11 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     private var timingIsValid = true
     private var selectedID: UUID?
     private var selectedSlot = 1
-    private let name = NSTextField(labelWithString: "画像行を選択し、画像を配置してください")
+    private let name = NSTextField(labelWithString: "素材行を選択し、画像・動画を配置してください")
     private let start = DragValueField(frame: .zero)
     private let end = DragValueField(frame: .zero)
+    private let sourceIn = DragValueField(frame: .zero)
+    private let sourceRow = NSStackView()
     private let slot = NSPopUpButton()
     private let automatic = NSPopUpButton()
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
@@ -61,7 +63,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
             }
         }
 
-        func value(in clip: ImageClip) -> Double? {
+        func value(in clip: VisualClip) -> Double? {
             switch self {
             case .base: return clip.baseValue(parameter)
             case .minimum: return clip.curve(parameter)?.minimum
@@ -69,7 +71,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
             }
         }
 
-        func apply(_ value: Double, to clip: inout ImageClip, resetting: Bool = false) {
+        func apply(_ value: Double, to clip: inout VisualClip, resetting: Bool = false) {
             switch self {
             case .base:
                 clip.setBaseValue(value, for: parameter, resetting: resetting)
@@ -90,46 +92,51 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     private struct ValueDrag {
         let target: ValueTarget
         let field: DragValueField
-        let original: ImageClip
+        let original: VisualClip
         let initial: Double
-        var preview: ImageTrack?
+        var preview: VisualTrack?
     }
     private var drafts: [ImageParameter: String] = [:]
     private var graphParameters: [ImageParameter] = []
     private var rangeParameter: ImageParameter?
     private let amount = NSSlider(value: 8, minValue: 0, maxValue: 25, target: nil, action: nil)
     private let amountLabel = NSTextField(labelWithString: "8%")
-    private let message = NSTextField(labelWithString: "画像を空白へドロップするか、ボタンで配置できます")
+    private let message = NSTextField(labelWithString: "画像・動画を空白へドロップするか、ボタンで配置できます")
     private var controls: [NSControl] = []
     private var clipControls: [NSControl] = []
-    private var manager: ImageAssetManager?
+    private var manager: VisualAssetManager?
     private var importTask: Task<Void, Never>?
 
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 6; view = root
-        let add = NSButton(title: "＋画像を配置…", target: self, action: #selector(addImage))
+        let add = NSButton(title: "＋素材を配置…", target: self, action: #selector(addImage))
         let remove = NSButton(title: "配置を削除", target: self, action: #selector(removeClip))
-        let manage = NSButton(title: "画像管理…", target: self, action: #selector(openManager))
-        let replace = NSButton(title: "画像を変更…", target: self, action: #selector(changeImage))
-        start.delegate = self; end.delegate = self
+        let manage = NSButton(title: "素材管理…", target: self, action: #selector(openManager))
+        let replace = NSButton(title: "素材を変更…", target: self, action: #selector(changeImage))
+        start.delegate = self; end.delegate = self; sourceIn.delegate = self
+        sourceIn.identifier = NSUserInterfaceItemIdentifier("visual.sourceIn")
+        sourceIn.stringValue = "0"
+        sourceIn.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        sourceRow.addArrangedSubview(NSTextField(labelWithString: "素材開始（秒）")); sourceRow.addArrangedSubview(sourceIn)
+        sourceIn.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.sourceIn }, initial: { 0 }, normalize: { max(0, $0) }, commit: { [weak self] _ in self?.finishTimingEdit() })
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
-        start.identifier = NSUserInterfaceItemIdentifier("images.start"); end.identifier = NSUserInterfaceItemIdentifier("images.end")
+        start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
         for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 76).isActive = true }
-        slot.addItems(withTitles: ["画像1（最背面）", "画像2", "画像3（最前面）"])
+        slot.addItems(withTitles: ["素材1（最背面）", "素材2", "素材3（最前面）"])
         slot.target = self; slot.action = #selector(changePlacement)
         automatic.addItems(withTitles: AutomaticAnimation.allCases.map(\.title))
-        automatic.identifier = NSUserInterfaceItemIdentifier("images.automatic")
+        automatic.identifier = NSUserInterfaceItemIdentifier("visuals.automatic")
         automatic.target = self; automatic.action = #selector(changeAutomatic)
         amount.target = self; amount.action = #selector(changeAutomatic); amount.isContinuous = true
         amount.widthAnchor.constraint(equalToConstant: 88).isActive = true
         keySnap.state = .on
-        keySnap.identifier = NSUserInterfaceItemIdentifier("images.keySnap")
+        keySnap.identifier = NSUserInterfaceItemIdentifier("visuals.keySnap")
         keySnap.target = self; keySnap.action = #selector(changeKeySnap)
         keySnap.toolTip = "制御点をタイムラインで選んだ音符の位置またはクリップの端に揃えます"
         graphParameter.target = self; graphParameter.action = #selector(changeGraphParameter)
         for (field, id) in [(minimum, "minimum"), (maximum, "maximum")] {
-            field.identifier = NSUserInterfaceItemIdentifier("images.graph." + id)
+            field.identifier = NSUserInterfaceItemIdentifier("visuals.graph." + id)
             field.delegate = self; field.target = self; field.action = #selector(changeGraphRange)
             field.toolTip = "ダブルクリックで入力、左右ドラッグで調整、ホイールクリックで初期値"
             connectValueField(field) { [weak self, weak field] in
@@ -151,14 +158,14 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, effect, horizontal, vertical, graphs, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, effect, horizontal, vertical, graphs, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         effectsEditor.onCommit = { [weak self] effects in self?.applyEffects(effects, preview: false) }
         effectsEditor.onPreview = { [weak self] effects in
             guard let self else { return }
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, slot, automatic, amount, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, slot, automatic, amount, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
@@ -175,22 +182,22 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         }
         timeline?.keySnapEnabled = keySnap.state == .on
         timeline?.onDropImage = { [weak self] url, slot, time in self?.importFile(url, placement: (slot, time)) }
-        timeline?.images = track
+        timeline?.visuals = track
     }
-    func load(_ value: ImageTrack, projectURL: URL?) {
+    func load(_ value: VisualTrack, projectURL: URL?) {
         timeline?.resetGraphDisclosure()
         replaceTrack(value, projectURL: projectURL)
     }
-    private func replaceTrack(_ value: ImageTrack, projectURL: URL?) {
+    private func replaceTrack(_ value: VisualTrack, projectURL: URL?) {
         cancelValueDrag()
         generation = UUID(); importTask?.cancel(); processing = false; onProcessing?(false)
         drafts.removeAll()
         track = value; self.projectURL = projectURL; selectedID = nil; selectedSlot = 1
-        thumbnails = [:]; missing = []; timeline?.images = value; timeline?.selectedImageID = nil; timeline?.selectedSlot = 1
+        thumbnails = [:]; missing = []; timeline?.visuals = value; timeline?.selectedImageID = nil; timeline?.selectedSlot = 1
         refreshSelection(); refreshAssets()
     }
     var managerWindow: NSWindow? { manager?.window }
-    func restore(_ value: ImageTrack) {
+    func restore(_ value: VisualTrack) {
         let selection = selectedID ?? value.clips.first(where: { candidate in track.clip(candidate.id) == nil })?.id, slot = selectedSlot
         let parameter = timeline?.selectedParameter
         let key = timeline?.selectedKeyID
@@ -212,6 +219,8 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         timeline?.isEnabled = available && !processing && manager == nil
         refreshGraphControls()
         effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
+        sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
+        sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
         amount.isEnabled = automatic.isEnabled && track.clip(selectedID)?.automaticAnimation != AutomaticAnimation.off
     }
     private func applyEffects(_ effects: ImageEffects, preview: Bool) {
@@ -238,16 +247,17 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         refreshing = true; defer { refreshing = false }
         timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
         if let clip = track.clip(selectedID) {
-            name.stringValue = "画像\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
+            name.stringValue = "\(clip.content.sourceIn == nil ? "画像" : "動画")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
+            sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
             slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
             automatic.selectItem(withTitle: clip.automaticAnimation.title); amount.doubleValue = clip.pulseAmount * 100
-        } else { name.stringValue = "画像\(selectedSlot)：空白へ画像を配置してください" }
+        } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画を配置してください" }
         amountLabel.stringValue = String(format: "%.1f%%", amount.doubleValue)
         refreshAnimationValues()
         refreshControls()
     }
-    func commit(_ value: ImageTrack, selectedID: UUID? = nil, refreshEditor: Bool = true) {
+    func commit(_ value: VisualTrack, selectedID: UUID? = nil, refreshEditor: Bool = true) {
         do {
             try value.validate(duration: duration)
             guard value != track else { message.stringValue = "変更は自動保存されます。"; return }
@@ -255,7 +265,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
             if refreshEditor || selectedID != self.selectedID { drafts.removeAll() }
             track = value; self.selectedID = selectedID
             if let selectedID { selectedSlot = value.slot(of: selectedID) ?? selectedSlot }
-            timeline?.images = value; timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
+            timeline?.visuals = value; timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
             if refreshEditor { refreshSelection() }
             message.stringValue = "変更は自動保存されます。"
             onChange?(value)
@@ -289,14 +299,14 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         guard let field = obj.object as? NSTextField else { return }
         if let parameter = valueFields.first(where: { $0.value === field })?.key {
             drafts[parameter] = field.stringValue
-        } else if field === start || field === end {
+        } else if field === start || field === end || field === sourceIn {
             if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
             changePlacement()
         }
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        if let field = obj.object as? NSTextField, field === start || field === end {
+        if let field = obj.object as? NSTextField, field === start || field === end || field === sourceIn {
             finishTimingEdit()
         } else {
             onEndTextEditing?()
@@ -340,8 +350,18 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
               begin.isFinite, finish.isFinite, begin >= 0, finish <= duration else {
             timingIsValid = false; message.stringValue = "開始・終了を秒数で入力してください。"; return
         }
-        if begin != clip.start { clip.trimStart(to: max(0, snapGrid.nearest(begin))) }
-        if finish != clip.end { clip.end = max(0, snapGrid.nearest(finish)) }
+        if begin != clip.start {
+            let newStart = max(0, snapGrid.nearest(begin))
+            clip.end += newStart - clip.start; clip.start = newStart
+            if finish == track.clip(selectedID)?.end { end.stringValue = String(clip.end) }
+        }
+        if finish != track.clip(selectedID)?.end { clip.end = max(0, snapGrid.nearest(finish)) }
+        if clip.content.sourceIn != nil {
+            guard let value = Double(sourceIn.stringValue), value.isFinite, value >= 0 else {
+                timingIsValid = false; message.stringValue = "素材開始を0以上の秒数で入力してください。"; return
+            }
+            clip.content = .video(sourceIn: value)
+        }
         do {
             let value = try track.updating(clip, slot: slot.indexOfSelectedItem + 1, duration: duration)
             timingIsValid = true
@@ -370,10 +390,10 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     private func chooseImage(_ completion: (URL) -> Void) {
         guard let projectURL else { return }
         if !track.assets.isEmpty {
-            let alert = NSAlert(); alert.messageText = "使用する画像"
+            let alert = NSAlert(); alert.messageText = "使用する素材"
             let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 28))
             popup.addItems(withTitles: track.assets.map { $0.name + (missing.contains($0.id) ? "（見つかりません）" : "") })
-            alert.accessoryView = popup; alert.addButton(withTitle: "選択した画像を使用"); alert.addButton(withTitle: "ファイルから読み込む…"); alert.addButton(withTitle: "キャンセル")
+            alert.accessoryView = popup; alert.addButton(withTitle: "選択した素材を使用"); alert.addButton(withTitle: "ファイルから読み込む…"); alert.addButton(withTitle: "キャンセル")
             let response = alert.runModal()
             if response == .alertFirstButtonReturn { completion(track.assets[popup.indexOfSelectedItem].reference.resolve(projectURL: projectURL)); return }
             if response != .alertSecondButtonReturn { return }
@@ -381,7 +401,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         if let url = Self.chooseFile() { completion(url) }
     }
     static func chooseFile() -> URL? {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg, .tiff]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg, .tiff, .mpeg4Movie, .quickTimeMovie, .movie]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url : nil
     }
     func importFile(_ url: URL, placement: (slot: Int, time: Double)? = nil, replacingAsset: UUID? = nil, replacingClip: UUID? = nil) {
@@ -392,18 +412,19 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
             guard let self else { return }
             defer { if generation == token { processing = false; onProcessing?(false); refreshControls(); manager?.setProcessing(false) } }
             do {
-                _ = try await store.image(at: url)
+                let inspected = try await store.inspect(url)
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 var value = track
                 var selection = selectedID
-                if let id = replacingAsset { value = try value.replacingAsset(id: id, url: url, projectURL: projectURL) }
+                if let id = replacingAsset { value = try value.replacingAsset(id: id, url: url, projectURL: projectURL, kind: inspected.kind) }
                 else {
-                    let assetID = value.register(url: url, projectURL: projectURL)
+                    let assetID = value.register(url: url, projectURL: projectURL, kind: inspected.kind)
                     if let placement {
                         let result = try value.adding(assetID: assetID, at: placement.time, slot: placement.slot, duration: duration, grid: snapGrid)
                         value = result.track; selection = result.clip.id
                     } else if let replacingClip, var clip = value.clip(replacingClip) {
+                        guard (clip.content.sourceIn != nil) == (inspected.kind.videoDuration != nil) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
                         clip.assetID = assetID; value = try value.updating(clip, slot: value.slot(of: replacingClip)!, duration: duration)
                     } else if replacingClip != nil { throw StudioError.message("置き換える配置が見つかりません。") }
                 }
@@ -426,7 +447,15 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         Task { [weak self] in
             guard let self else { return }
             for asset in assets {
-                let image = try? await store.image(at: asset.reference.resolve(projectURL: projectURL), maximumSize: 160)
+                let inspected = try? await store.inspect(asset.reference.resolve(projectURL: projectURL), maximumSize: 160)
+                let compatible = inspected.map { info in
+                    (info.kind.videoDuration != nil) == (asset.kind.videoDuration != nil)
+                        && self.track.uses(asset.id).allSatisfy { clip in
+                            guard let sourceIn = clip.content.sourceIn, let length = info.kind.videoDuration else { return true }
+                            return sourceIn + clip.end - clip.start <= length + 1e-9
+                        }
+                } ?? false
+                let image = compatible ? inspected?.thumbnail : nil
                 guard generation == token, revision == assetRefreshRevision, track.asset(asset.id)?.reference == asset.reference else { continue }
                 if let image { thumbnails[asset.id] = NSImage(cgImage: image, size: .zero); missing.remove(asset.id) }
                 else { thumbnails[asset.id] = nil; missing.insert(asset.id) }
@@ -438,7 +467,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     @objc func openManager() {
         guard available, !processing, manager == nil, finishEditing(), let window = view.window else { return }
         timeline?.cancelDrag(); onBeginEdit?()
-        let controller = ImageAssetManager(editor: self)
+        let controller = VisualAssetManager(editor: self)
         manager = controller; refreshControls()
         window.beginSheet(controller.window!) { [weak self] _ in self?.manager = nil; self?.refreshControls() }
     }
@@ -451,14 +480,14 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     }
 }
 
-private extension ImageEditor {
+private extension VisualEditor {
     private func parameterControls(_ parameter: ImageParameter) -> NSStackView {
         let label = NSTextField(labelWithString: parameter.title)
         label.widthAnchor.constraint(equalToConstant: 52).isActive = true
         let field = DragValueField(frame: .zero)
         field.stringValue = String(parameter.defaultValue)
         connectValueField(field) { .base(parameter) }
-        field.identifier = NSUserInterfaceItemIdentifier("images.value." + parameter.rawValue)
+        field.identifier = NSUserInterfaceItemIdentifier("visuals.value." + parameter.rawValue)
         field.delegate = self; field.target = self; field.action = #selector(confirmBaseValue(_:))
         field.toolTip = "固定値・基準値。ダブルクリックで入力、左右ドラッグで調整、ホイールクリックで初期値"
         field.widthAnchor.constraint(equalToConstant: 66).isActive = true
@@ -466,7 +495,7 @@ private extension ImageEditor {
         unit.widthAnchor.constraint(equalToConstant: 16).isActive = true
         let button = NSButton(title: "◇", target: self, action: #selector(addKey(_:)))
         button.tag = ImageParameter.allCases.firstIndex(of: parameter)!
-        button.identifier = NSUserInterfaceItemIdentifier("images.key." + parameter.rawValue)
+        button.identifier = NSUserInterfaceItemIdentifier("visuals.key." + parameter.rawValue)
         button.toolTip = parameter.title + "のキーを打つ"
         button.setAccessibilityLabel(button.toolTip)
         valueFields[parameter] = field
@@ -639,7 +668,7 @@ private extension ImageEditor {
     }
 
     @discardableResult
-    private func commitAnimation(_ clip: ImageClip, refreshEditor: Bool = true) -> Bool {
+    private func commitAnimation(_ clip: VisualClip, refreshEditor: Bool = true) -> Bool {
         do {
             guard let slot = track.slot(of: clip.id) else { return false }
             commit(try track.updating(clip, slot: slot, duration: duration), selectedID: clip.id, refreshEditor: refreshEditor)

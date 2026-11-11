@@ -1,3 +1,34 @@
+# 動画素材を含むMP4出力（完了）
+
+- 最終更新: 2026-11-11 23:56 JST。要件: 動画を配置したプロジェクトもMP4へ出力する。素材動画の音声は使わず主音声だけを出力する。
+- 実装済み: VisualFrameProviderで画像・動画取得と段順を共有し、プレビューと出力は別インスタンス。VideoExporterがn/30秒ごとに全映像フレームを取得・合成して出力。モデルと使用素材の事前検証、デコード中の取消、動画配置時の出力ボタン制限解除に対応。
+- 整理: 静止画専用の不要な検証とhasVideoClipsを削除。動画生成テスト素材をVideoTestFixturesへ共通化。既存の一時生成・確定経路を再利用し、失敗・取消時は保存先を保持する。
+- 検証: 新規VideoExportTests 2件成功（/tmp/my_movie-video-export-focused.log）。VFR/回転/トリム/3段混在/歌詞/スペクトラム/演出、全61フレームのPTSと合成ピクセル、音声長、素材1kHz音声が混入せず主音声440Hzのみ、取消・素材尺不足・欠損時の保存先保持を確認。
+- 判明事項: 8kHz主音声へ高ビットレートAACを直接指定するとエンコード失敗。出力を48kHz AACに統一し、元の音声長を保持して成功。文書・AGENTSへ記録。
+- 検証完了: HEVC素材の正常出力も含め全60テスト成功、コンパイル警告なし（/tmp/my_movie-video-export-full.log）。README、docs/VIDEO_TIMELINE.md、docs/ARCHITECTURE.md、AGENTSを更新済み。
+- 生成・最終確認: ./scripts/build-app.sh成功（/tmp/my_movie-video-export-build.log）。最新dist/MV Studio.appを生成し、codesign --verify --deep --strictとgit diff --checkが成功。実行中の処理・障害なし。
+- 次: 最新アプリで動画を配置し「MP4を書き出す」を利用する。実際の長時間素材を使った手動出力・性能測定は未実施。
+
+# 動画タイムラインの実装（完了）
+
+- 最終更新: 2026-11-11 23:32 JST。要件: docs/VIDEO_TIMELINE.mdに沿って動画配置・映像のみの同期再生を実装する。
+- 実装済み: VisualTrack/VisualClip/VisualAssetとversion 6、AVAssetReaderによる動画専用デコードとPTS選択、CVPixelBufferからCIImage/Metal合成、素材開始欄、素材管理・トリム・コピー・履歴、主音声基準の最新要求集約と再生前準備、読込遅延・失敗表示、動画配置時のMP4出力制限。
+- 整理済み: 共通モデル・クリップボード・行高さ・編集UIの型と命名をVisualへ統一。VisualRenderLayer/VisualFrameをデコーダーから分離し、ImageAssetStoreは静止画専用。時刻範囲計算、GPU完了までのバッファ保持、停止・シーク取消、Undo/Redo後の出力ボタン更新を確認。README・設計書・AGENTS更新。
+- 検証: 制限外で全58テスト成功（/tmp/my_movie-video-test-final.log、23:31実行）。H.264/VFR/回転/HEVC、Metalフレーム更新、素材位置・保存・履歴・コピー、実音声時計での再生準備・連続シーク、3段1080pと既存画像・歌詞・MP4出力を確認。3段デコード中央値2.74ms、p95 6.85ms、逆シーク97ms（短い生成素材・当環境の参考値）。
+- 最終調整: テストのGPU待機を非同期化し、Undo/Redo時の出力ボタン更新の回帰テストを追加。最終コードで全58テスト成功、コンパイル警告なし（23:31、/tmp/my_movie-video-test-final.log）。./scripts/build-app.sh成功（/tmp/my_movie-video-app-build.log）。最新dist/MV Studio.appを生成し、codesign --verify --deep --strictとgit diff --checkが成功。
+- 未測定: 長時間の実音画偏差、非ゼロ開始PTSの実ファイル、長GOP・4K性能。動画配置ありのMP4出力は対象外。旧version 4/5はバックアップして新規作成する既存UIを使用する。
+- 次: 最新アプリを起動し「画像・演出 → ＋素材を配置…」またはドロップから動画を配置する。実行中の処理・障害なし。手動GUI操作と長時間の同期計測は未実施。
+
+# 動画素材のタイムライン配置・同期再生の設計（完了）
+
+- 最終更新: 2026-11-11 JST。要件: 「画像・演出」に動画を配置し、主音声と同期して映像のみ再生するための設計。今回は実装なし。
+- docs/VIDEO_TIMELINE.mdに最小範囲、AVFoundation方式比較、VisualTrackへの一般化、素材時刻対応、トリム、デコード・世代管理、Metal合成、保存version 6案、出力の段階分け、実装順・受入基準を記録。docs/ARCHITECTURE.mdとAGENTS.mdに参照・知見を追記。
+- 採用候補: AVAudioPlayerを主時計としAVAssetReaderで必要な映像を取得。技術検証で性能を確認して確定する。動画内音声は読まない。同期再生の第1段階では動画配置ありの出力を明示的に制限し、第2段階で対応する案。
+- 整理フェーズ: 共通配置モデルとデコード責務を分離。確定要件と提案値、既存実装と次期設計を区別し、時刻・トリム・キャッシュ・非同期競合の整合性をレビュー。
+- 検証: 関連コードとApple公式API資料を確認。文書のみのためアプリビルド・コードテストは対象外。git diff --check成功。
+- 未解決: reader方式のシーク速度・3段同時再生・実音画偏差は未測定。実行中の処理・障害なし。
+- 次: タイムコード動画とクリック音でAVAssetReaderのPTS選択・シーク・3段性能を検証し、方式を確定後に共通モデルから実装する。
+
 # タイムラインのスナップ単位（完了）
 
 - 最終更新: 2026-11-11 09:19 JST。全音符・2分・4分・8分・16分音符から選択し、制御点の追加・横移動にも同じ単位を適用する。

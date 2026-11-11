@@ -132,7 +132,7 @@ struct ImageCurve: Codable, Equatable, Sendable {
     }
 }
 
-extension ImageClip {
+extension VisualClip {
     func curve(_ parameter: ImageParameter) -> ImageCurve? {
         curves.first { $0.parameter == parameter }
     }
@@ -170,6 +170,7 @@ extension ImageClip {
 
     mutating func trimStart(to time: Double) {
         let delta = time - start
+        if let sourceIn = content.sourceIn { content = .video(sourceIn: sourceIn + delta) }
         for index in curves.indices {
             for keyIndex in curves[index].keys.indices { curves[index].keys[keyIndex].time -= delta }
         }

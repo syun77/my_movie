@@ -16,26 +16,26 @@ final class ImageEffectsTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = ProjectStorage(defaults: defaults)
-        var images = ImageTrack()
-        let asset = images.register(url: directory.appendingPathComponent("image.png"), projectURL: url)
-        var clip = ImageClip(assetID: asset, start: 1, end: 4)
+        var visuals = VisualTrack()
+        let asset = visuals.register(url: directory.appendingPathComponent("image.png"), projectURL: url)
+        var clip = VisualClip(assetID: asset, start: 1, end: 4)
         let particles = ImageEffects.Particles(curveStrength: 160, seed: 42)
         clip.effects = ImageEffects(blur: .init(isEnabled: false), bloom: .init(), particles: particles)
         let before = particles.instances(at: 1.5, size: size)
         clip.trimStart(to: 2)
-        images.layers[0].clips = [clip]
-        try store.save(ProjectFile(audioURL: audio, images: images, settings: SceneSettings(), projectURL: url), to: url)
+        visuals.layers[0].clips = [clip]
+        try store.save(ProjectFile(audioURL: audio, visuals: visuals, settings: SceneSettings(), projectURL: url), to: url)
         let saved = try store.read(from: url)
-        XCTAssertEqual(saved.version, 5)
-        XCTAssertEqual(saved.images.clips, [clip])
-        let restored = try XCTUnwrap(saved.images.clips.first?.effects?.particles)
+        XCTAssertEqual(saved.version, ProjectFile.currentVersion)
+        XCTAssertEqual(saved.visuals.clips, [clip])
+        let restored = try XCTUnwrap(saved.visuals.clips.first?.effects?.particles)
         _ = restored.instances(at: -1.75, size: size)
         XCTAssertEqual(restored.instances(at: 0.5, size: size), before)
         XCTAssertNotEqual(restored.instances(at: 0, size: size), before)
 
         var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         legacy["version"] = 4
-        var layers = try XCTUnwrap(legacy["imageLayers"] as? [[String: Any]])
+        var layers = try XCTUnwrap(legacy["visualLayers"] as? [[String: Any]])
         var clips = try XCTUnwrap(layers[0]["clips"] as? [[String: Any]])
         let effects = try XCTUnwrap(clips[0]["effects"] as? [String: Any])
         var savedParticles = try XCTUnwrap(effects["particles"] as? [String: Any])
@@ -47,18 +47,16 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertEqual(defaulted.emitters, [.init()])
         clips[0].removeValue(forKey: "effects")
         layers[0]["clips"] = clips
-        legacy["imageLayers"] = layers
+        legacy["visualLayers"] = layers
         try JSONSerialization.data(withJSONObject: legacy).write(to: url)
-        let decoded = try store.read(from: url)
-        XCTAssertNil(decoded.images.clips.first?.effects)
-        try store.save(decoded, to: url)
-        XCTAssertEqual(try store.read(from: url).version, 5)
+        XCTAssertThrowsError(try store.read(from: url))
+        XCTAssertEqual(try Data(contentsOf: url), try JSONSerialization.data(withJSONObject: legacy))
 
-        images.layers[0].clips[0].effects?.particles?.curveStrength = 201
-        XCTAssertThrowsError(try images.validate())
-        images.layers[0].clips[0].effects?.particles?.curveStrength = 160
-        images.layers[0].clips[0].effects?.particles?.count = 200.5
-        XCTAssertThrowsError(try images.validate())
+        visuals.layers[0].clips[0].effects?.particles?.curveStrength = 201
+        XCTAssertThrowsError(try visuals.validate())
+        visuals.layers[0].clips[0].effects?.particles?.curveStrength = 160
+        visuals.layers[0].clips[0].effects?.particles?.count = 200.5
+        XCTAssertThrowsError(try visuals.validate())
     }
 
     func testParticlesTrailMovingLightAndRespectCurveStrength() throws {
@@ -173,9 +171,9 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertEqual(slower.instances(at: 1.5, size: size).map(\.w), first.map(\.w))
         XCTAssertEqual(embers.instances(at: 1.5, size: size), first)
 
-        var clip = ImageClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(embers: embers))
+        var clip = VisualClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(embers: embers))
         clip.trimStart(to: 2)
-        let restored = try JSONDecoder().decode(ImageClip.self, from: JSONEncoder().encode(clip))
+        let restored = try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip))
         XCTAssertEqual(restored, clip)
         XCTAssertEqual(restored.effects?.embers?.instances(at: 0.5, size: size), first)
         let beforeStart = embers.instances(at: -8, size: size)
@@ -202,9 +200,9 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertGreaterThan(zip(first, next).filter { $1.y > $0.y }.count, 180)
         XCTAssertGreaterThan(zip(first, next).filter { $1.x != $0.x }.count, 180)
 
-        var clip = ImageClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(snow: snow))
+        var clip = VisualClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(snow: snow))
         clip.trimStart(to: 2)
-        let restored = try JSONDecoder().decode(ImageClip.self, from: JSONEncoder().encode(clip))
+        let restored = try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip))
         XCTAssertEqual(restored, clip)
         XCTAssertEqual(restored.effects?.snow?.instances(at: 0.5, size: size), first)
         XCTAssertTrue(snow.instances(at: -8, size: size).allSatisfy { $0.x.isFinite && $0.y.isFinite })
@@ -236,9 +234,9 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertFalse(ImageEffects.Orbs(count: 201).isValid)
         XCTAssertFalse(ImageEffects.Orbs(saturation: 101).isValid)
 
-        var clip = ImageClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(orbs: customized))
+        var clip = VisualClip(assetID: UUID(), start: 1, end: 5, effects: ImageEffects(orbs: customized))
         clip.trimStart(to: 2)
-        let restored = try JSONDecoder().decode(ImageClip.self, from: JSONEncoder().encode(clip))
+        let restored = try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip))
         XCTAssertEqual(restored, clip)
         XCTAssertEqual(restored.effects?.orbs?.instances(at: 0.5, size: size), expanded)
 
@@ -260,8 +258,8 @@ final class ImageEffectsTests: XCTestCase {
             return try XCTUnwrap(context.makeImage())
         }
 
-        func render(_ layers: [ImageRenderLayer], time: Double = 0.5) throws {
-            let buffer = try renderer.encode(images: layers, features: nil, settings: SceneSettings(spectrum: false), lyrics: LyricsTrack(),
+        func render(_ layers: [VisualRenderLayer], time: Double = 0.5) throws {
+            let buffer = try renderer.encode(visuals: layers, features: nil, settings: SceneSettings(spectrum: false), lyrics: LyricsTrack(),
                                              time: time, target: target, video: false)
             if target.storageMode != .shared {
                 let blit = try XCTUnwrap(buffer.makeBlitCommandEncoder())
@@ -283,8 +281,8 @@ final class ImageEffectsTests: XCTestCase {
             context.setFillColor(.white)
             context.fill(CGRect(x: 4, y: 10, width: 8, height: 4))
         }
-        var clip = ImageClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
-        func layer() -> ImageRenderLayer { ImageRenderLayer(clip: clip, image: spot) }
+        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
+        func layer() -> VisualRenderLayer { VisualRenderLayer(clip: clip, image: spot) }
         try render([layer()])
         XCTAssertGreaterThan(pixel(960, 270)[0], 245)
         let background = pixel(960, 650)
@@ -321,7 +319,7 @@ final class ImageEffectsTests: XCTestCase {
         lower.effects = nil
         var upper = lower
         upper.id = UUID()
-        try render([ImageRenderLayer(clip: lower, image: red), ImageRenderLayer(clip: upper, image: halfBlue)])
+        try render([VisualRenderLayer(clip: lower, image: red), VisualRenderLayer(clip: upper, image: halfBlue)])
         XCTAssertEqual(Double(pixel(960, 540)[0]), 188, accuracy: 3)
         XCTAssertEqual(Double(pixel(960, 540)[2]), 188, accuracy: 3)
 
@@ -337,13 +335,13 @@ final class ImageEffectsTests: XCTestCase {
         try render([layer()])
         XCTAssertEqual(lit, pixel(x, y))
 
-        var cover = ImageClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
+        var cover = VisualClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
         cover.fixedValues[.scale] = 200
         let black = try image { context in
             context.setFillColor(.black)
             context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
         }
-        try render([layer(), ImageRenderLayer(clip: cover, image: black)])
+        try render([layer(), VisualRenderLayer(clip: cover, image: black)])
         XCTAssertEqual(pixel(x, y), [0, 0, 0, 255])
 
         var magic = cover
@@ -355,7 +353,7 @@ final class ImageEffectsTests: XCTestCase {
         let mx = Int(center.x), my = Int(center.y)
         let ray = Int(center.z * 0.27)
         let diagonal = Int(Double(ray) / sqrt(2))
-        let magicLayer = ImageRenderLayer(clip: magic, image: black)
+        let magicLayer = VisualRenderLayer(clip: magic, image: black)
         try render([magicLayer], time: 0.5)
         let firstHue = pixel(mx + ray, my)
         XCTAssertGreaterThan(firstHue.prefix(3).max() ?? 0, pixel(mx + ray, my + diagonal).prefix(3).max() ?? 0)
@@ -368,7 +366,7 @@ final class ImageEffectsTests: XCTestCase {
         var twoSources = stationary
         twoSources.emitters = [.init(x: 320, y: 300), .init(x: 950, y: 700, phaseSeed: 42)]
         magic.effects = ImageEffects(particles: twoSources)
-        try render([ImageRenderLayer(clip: magic, image: black)])
+        try render([VisualRenderLayer(clip: magic, image: black)])
         for source in twoSources.emitters {
             let point = twoSources.instances(at: 0.5, size: SIMD2(Double(width), Double(height)), emitter: source)[0]
             XCTAssertGreaterThan(pixel(Int(point.x), Int(point.y)).prefix(3).max() ?? 0, 150)
@@ -382,16 +380,16 @@ final class ImageEffectsTests: XCTestCase {
             $0.x > 50 && $0.x < Float(width - 50) && $0.y > 50 && $0.y < Float(height - 50) && $0.w > 0.4
         })
         let sx = Int(spark.x), sy = Int(spark.y)
-        let emberLayer = ImageRenderLayer(clip: emberClip, image: black)
+        let emberLayer = VisualRenderLayer(clip: emberClip, image: black)
         try render([emberLayer])
         let warm = pixel(sx, sy)
         XCTAssertGreaterThan(warm[2], warm[1])
         XCTAssertGreaterThan(warm[1], warm[0])
         XCTAssertGreaterThan(pixel(sx + Int(spark.z * 0.16), sy)[2], 0)
-        try render([emberLayer, ImageRenderLayer(clip: cover, image: black)])
+        try render([emberLayer, VisualRenderLayer(clip: cover, image: black)])
         XCTAssertEqual(pixel(sx, sy), [0, 0, 0, 255])
         emberClip.effects?.embers?.isEnabled = false
-        try render([ImageRenderLayer(clip: emberClip, image: black)])
+        try render([VisualRenderLayer(clip: emberClip, image: black)])
         XCTAssertEqual(pixel(sx, sy), [0, 0, 0, 255])
 
         var snowClip = cover
@@ -402,7 +400,7 @@ final class ImageEffectsTests: XCTestCase {
             $0.x > 50 && $0.x < Float(width - 50) && $0.y > 50 && $0.y < Float(height - 50)
         })
         let fx = Int(flake.x), fy = Int(flake.y)
-        let snowLayer = ImageRenderLayer(clip: snowClip, image: black)
+        let snowLayer = VisualRenderLayer(clip: snowClip, image: black)
         try render([snowLayer])
         let core = pixel(fx, fy)
         let flakeEdge = pixel(fx + Int(flake.z * 0.3), fy)
@@ -410,17 +408,17 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertEqual(core[1], core[2])
         XCTAssertGreaterThan(core[0], flakeEdge[0])
         XCTAssertGreaterThan(flakeEdge[0], 0)
-        try render([snowLayer, ImageRenderLayer(clip: cover, image: black)])
+        try render([snowLayer, VisualRenderLayer(clip: cover, image: black)])
         XCTAssertEqual(pixel(fx, fy), [0, 0, 0, 255])
         snowClip.effects?.snow?.opacity = 0
-        try render([ImageRenderLayer(clip: snowClip, image: black)])
+        try render([VisualRenderLayer(clip: snowClip, image: black)])
         XCTAssertEqual(pixel(fx, fy), [0, 0, 0, 255])
 
         var orbClip = cover
         orbClip.id = UUID()
         let orbs = ImageEffects.Orbs()
         orbClip.effects = ImageEffects(orbs: orbs)
-        let orbLayer = ImageRenderLayer(clip: orbClip, image: red)
+        let orbLayer = VisualRenderLayer(clip: orbClip, image: red)
         let sprites = orbs.instances(at: 0.5, size: SIMD2(Double(width), Double(height)))
         let index = try XCTUnwrap(sprites.indices.first { candidate in
             let sprite = sprites[candidate]
@@ -432,24 +430,24 @@ final class ImageEffectsTests: XCTestCase {
         })
         let orbX = Int(sprites[index].x), orbY = Int(sprites[index].y)
         let radius = Int(ceil(sprites[index].z / 2))
-        try render([ImageRenderLayer(clip: cover, image: red)])
+        try render([VisualRenderLayer(clip: cover, image: red)])
         let imageColor = pixel(orbX, orbY)
         try render([orbLayer])
         XCTAssertGreaterThan(pixel(orbX, orbY)[1], 100)
         XCTAssertEqual(pixel(orbX, orbY)[2], imageColor[2])
         XCTAssertEqual(pixel(orbX + radius + 2, orbY), imageColor)
         XCTAssertEqual(pixel(orbX + radius / 2, orbY + radius), imageColor)
-        try render([orbLayer, ImageRenderLayer(clip: cover, image: black)])
+        try render([orbLayer, VisualRenderLayer(clip: cover, image: black)])
         XCTAssertEqual(pixel(orbX, orbY), [0, 0, 0, 255])
         orbClip.effects?.orbs?.saturation = 0
         orbClip.effects?.orbs?.count = 200
-        try render([ImageRenderLayer(clip: orbClip, image: black)])
+        try render([VisualRenderLayer(clip: orbClip, image: black)])
         let gray = pixel(orbX, orbY)
         XCTAssertGreaterThan(gray[0], 100)
         XCTAssertEqual(gray[0], gray[1])
         XCTAssertEqual(gray[1], gray[2])
         orbClip.effects?.orbs?.opacity = 0
-        try render([ImageRenderLayer(clip: orbClip, image: red)])
+        try render([VisualRenderLayer(clip: orbClip, image: red)])
         XCTAssertEqual(pixel(orbX, orbY), imageColor)
     }
 }

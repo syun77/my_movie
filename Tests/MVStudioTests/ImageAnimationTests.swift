@@ -3,8 +3,8 @@ import XCTest
 @testable import MVStudio
 
 final class ImageAnimationTests: XCTestCase {
-    private func fixture(slot: Int = 3) throws -> (ImageTrack, ImageClip) {
-        var track = ImageTrack()
+    private func fixture(slot: Int = 3) throws -> (VisualTrack, VisualClip) {
+        var track = VisualTrack()
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/animation.png"), projectURL: URL(fileURLWithPath: "/tmp/animation.mvproject"))
         let added = try track.adding(assetID: asset, at: 1, slot: slot, duration: 10, grid: TimelineSnapGrid())
         return (added.track, added.clip)
@@ -54,7 +54,7 @@ final class ImageAnimationTests: XCTestCase {
 
     @MainActor func testTransformFieldDoubleClickAndHorizontalDrag() throws {
         _ = NSApplication.shared
-        let editor = ImageEditor()
+        let editor = VisualEditor()
         let window = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 450, height: 260),
                                   styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -69,7 +69,7 @@ final class ImageAnimationTests: XCTestCase {
         timeline.onImageSelect?(clip.id, 3)
         editor.currentTime = 2
 
-        let field = try XCTUnwrap(control("images.value.scale", in: editor.view) as DragValueField?)
+        let field = try XCTUnwrap(control("visuals.value.scale", in: editor.view) as DragValueField?)
         func event(_ type: NSEvent.EventType, x: Double = 100, clicks: Int = 1) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: 50), modifierFlags: [], timestamp: 0,
                                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
@@ -82,7 +82,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertNotNil(field.currentEditor())
         XCTAssertTrue(window.makeFirstResponder(nil))
 
-        var previews = [ImageTrack]()
+        var previews = [VisualTrack]()
         var commits = 0
         editor.onPreview = { previews.append($0) }
         editor.onChange = { _ in commits += 1 }
@@ -94,7 +94,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(editor.track.clip(clip.id)?.fixedValues[.scale], 120)
         XCTAssertEqual(commits, 1)
 
-        let key = try XCTUnwrap(control("images.key.scale", in: editor.view) as NSButton?)
+        let key = try XCTUnwrap(control("visuals.key.scale", in: editor.view) as NSButton?)
         key.performClick(nil)
         let keyed = editor.track
         field.mouseDown(with: event(.leftMouseDown))
@@ -114,8 +114,8 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(shifted.curve(.scale)?.maximum, 215)
         XCTAssertEqual(commits, 3)
 
-        let minimum = try XCTUnwrap(control("images.graph.minimum", in: editor.view) as DragValueField?)
-        let maximum = try XCTUnwrap(control("images.graph.maximum", in: editor.view) as DragValueField?)
+        let minimum = try XCTUnwrap(control("visuals.graph.minimum", in: editor.view) as DragValueField?)
+        let maximum = try XCTUnwrap(control("visuals.graph.maximum", in: editor.view) as DragValueField?)
         for bound in [minimum, maximum] {
             bound.mouseDown(with: event(.leftMouseDown))
             bound.mouseDragged(with: event(.leftMouseDragged, x: 110))
@@ -152,7 +152,7 @@ final class ImageAnimationTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = timeline
         defer { window.close() }
-        let editor = ImageEditor()
+        let editor = VisualEditor()
         _ = editor.view
         editor.timeline = timeline
         let grid = TimelineSnapGrid(division: .quarter)
@@ -162,7 +162,7 @@ final class ImageAnimationTests: XCTestCase {
         editor.duration = 10
         editor.load(track, projectURL: nil)
         editor.setAvailable(true)
-        timeline.imageMode = true
+        timeline.visualMode = true
         timeline.duration = 10
         timeline.onSeek = { time in timeline.currentTime = time; editor.currentTime = time }
         editor.onSeek = timeline.onSeek
@@ -170,16 +170,16 @@ final class ImageAnimationTests: XCTestCase {
         timeline.onImageSelect?(clip.id, 3)
         timeline.onSeek?(1.52)
 
-        let value = try XCTUnwrap(control("images.value.scale", in: editor.view) as NSTextField?)
-        let button = try XCTUnwrap(control("images.key.scale", in: editor.view) as NSButton?)
+        let value = try XCTUnwrap(control("visuals.value.scale", in: editor.view) as NSTextField?)
+        let button = try XCTUnwrap(control("visuals.key.scale", in: editor.view) as NSButton?)
         value.stringValue = "150"
         button.performClick(nil)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.time, 0.5)
         XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
         XCTAssertEqual(timeline.selectedParameter, .scale)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.value, 150)
-        let minimum = try XCTUnwrap(control("images.graph.minimum", in: editor.view) as NSTextField?)
-        let maximum = try XCTUnwrap(control("images.graph.maximum", in: editor.view) as NSTextField?)
+        let minimum = try XCTUnwrap(control("visuals.graph.minimum", in: editor.view) as NSTextField?)
+        let maximum = try XCTUnwrap(control("visuals.graph.maximum", in: editor.view) as NSTextField?)
         minimum.stringValue = "50"; maximum.stringValue = "150"
         XCTAssertTrue(maximum.sendAction(maximum.action, to: maximum.target))
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 50)
@@ -249,7 +249,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
         click(NSPoint(x: timeline.x(at: 1.5), y: 98))
         XCTAssertEqual(timeline.selectedImageID, clip.id, "レーンからクリップを再選択できる")
-        let snap = try XCTUnwrap(control("images.keySnap", in: editor.view) as NSButton?)
+        let snap = try XCTUnwrap(control("visuals.keySnap", in: editor.view) as NSButton?)
         snap.performClick(nil)
         timeline.onSeek?(2.123)
         value.stringValue = "90"
