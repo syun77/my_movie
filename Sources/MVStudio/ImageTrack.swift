@@ -105,21 +105,21 @@ struct ImageTrack: Codable, Sendable, Equatable {
     func adding(assetID: UUID, at time: Double, slot: Int, duration: Double, grid: TimelineSnapGrid) throws -> (track: ImageTrack, clip: ImageClip) {
         let range = try placement(at: time, slot: slot, duration: duration, grid: grid)
         let clip = ImageClip(assetID: assetID, start: range.start, end: range.end)
+        return (try inserting(clip, slot: slot, duration: duration), clip)
+    }
+
+    func inserting(_ clip: ImageClip, slot: Int, duration: Double) throws -> ImageTrack {
         var value = self
         guard let index = value.layers.firstIndex(where: { $0.slot == slot }) else { throw StudioError.message("画像レイヤーが見つかりません。") }
         value.layers[index].clips.append(clip)
         value.layers[index].clips.sort { $0.start < $1.start }
         try value.validate(duration: duration)
-        return (value, clip)
+        return value
     }
 
     func updating(_ clip: ImageClip, slot: Int, duration: Double) throws -> ImageTrack {
-        var value = removingClip(id: clip.id)
-        guard self.clip(clip.id) != nil, let index = value.layers.firstIndex(where: { $0.slot == slot }) else { throw StudioError.message("画像の配置が見つかりません。") }
-        value.layers[index].clips.append(clip)
-        value.layers[index].clips.sort { $0.start < $1.start }
-        try value.validate(duration: duration)
-        return value
+        guard self.clip(clip.id) != nil else { throw StudioError.message("画像の配置が見つかりません。") }
+        return try removingClip(id: clip.id).inserting(clip, slot: slot, duration: duration)
     }
 
     func removingClip(id: UUID) -> ImageTrack {

@@ -18,6 +18,11 @@ struct TimelineDisplaySettings {
         nonmutating set { defaults.set(newValue, forKey: "timelineImageMode") }
     }
 
+    var snapDivision: TimelineSnapDivision {
+        get { TimelineSnapDivision(rawValue: defaults.integer(forKey: "timelineSnapDivision")) ?? .sixteenth }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "timelineSnapDivision") }
+    }
+
     var visibleSpan: Double {
         get {
             guard let value = defaults.object(forKey: spanKey) as? Double,

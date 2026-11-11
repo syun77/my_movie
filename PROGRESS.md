@@ -1,3 +1,52 @@
+# タイムラインのスナップ単位（完了）
+
+- 最終更新: 2026-11-11 09:19 JST。全音符・2分・4分・8分・16分音符から選択し、制御点の追加・横移動にも同じ単位を適用する。
+- TimelineSnapGrid・TimelineDisplaySettings・PlacementEditor・Appで選択と保存を接続。ImageEditor・TimelineViewの表示とREADME・設計書・AGENTSを更新。BPM復元・変更の共通処理で選択単位を保持する。
+- AppLifecycleTestsとImageAnimationTestsで設定の選択・復元と制御点の操作を検証。制限外で全53件成功（/tmp/my_movie-snap-test-full.log）。制限環境ではペーストボード・Metal・動画出力・dsymutilにアクセスできなかった。
+- 制限外で ./scripts/build-app.sh 成功（/tmp/my_movie-snap-build-full.log）。最新の dist/MV Studio.app の署名と git diff --check を確認。実行中の処理・障害なし。手動の画面操作は未実施。次: 最新アプリのタイムライン上部で「スナップ」を選択し、「制御点スナップ」をオンにして制御点を追加・移動する。
+
+# タイムライン行の最小高さ（完了）
+
+- 最終更新: 2026-11-11 09:13 JST。歌詞・画像・オートメーション行の最小高さを20・21・27ptに変更。
+- TimelineHeights.swiftとTimelineView.swiftを更新。コンパクト時はクリップ名とトリム、レーンの名前とキーを表示する。ラベルとトリムの描画をクリップ間で共有し、グラフの余白を描画・ヒット判定で統一した。TimelineTests・ProjectStorageTests・AGENTS・docs/IMAGE_ANIMATION.mdを更新。
+- 全53テスト成功。各行の最小値、コンパクト表示でのキー選択とレーン開閉、最小値の保存と復元を確認（/tmp/my_movie-compact-rows-test.log）。
+- ./scripts/build-app.sh 成功、最新dist/MV Studio.appの署名と git diff --check を確認（/tmp/my_movie-compact-rows-build.log）。実行中の処理・障害なし。実画面での手動操作は未実施。次は最新版で行の境界を上へドラッグする。
+
+# プロジェクト別のタイムライン高さ（完了）
+
+- 最終更新: 2026-11-11 09:08 JST。要件はクリップ行とオートメーションレーンの境界をドラッグして高さを調整し、全体の高さとともにプロジェクトごとに保存すること。
+- TimelineHeights.swift・ProjectFile.swiftに保存形式と検証を追加。TimelineView.swift・TimelineDivider.swift・PlacementEditor.swift・App.swiftで仮表示、確定、保存、復元を接続。行の高さ変更と縦スクロールで再利用する表示更新を整理。README・AGENTS・docs/IMAGE_ANIMATION.mdを更新。
+- 制限外で全53テスト成功。行ごとの拡大・縮小、取消、後続レーンのキー操作、全体高さの復元、プロジェクト保存の往復と未設定時の初期値を確認（/tmp/my_movie-row-test-full.log）。
+- ./scripts/build-app.sh 成功。最新dist/MV Studio.appの署名と git diff --check を確認（/tmp/my_movie-row-build.log）。実行中の処理・障害なし。実画面での手動操作は未実施。次は最新アプリで行の下端をドラッグし、プロジェクトを開き直して高さを確認する。
+
+# タイムラインの高さ調整（完了）
+
+- 最終更新: 2026-11-11 08:57 JST。要件は再生ボタンと全曲シークバーの上の境界線を上下に動かし、タイムラインを広げてプレビューを小さくすること。
+- App.swift・PlacementEditor.swift・TimelineDivider.swiftを更新。画像タブでも十分な調整幅を確保するため、インスペクターのタブを固定し、設定を縦スクロール可能にした。プレビューの現在の高さをドラッグの上限計算に再利用するよう整理。README・AGENTS・AppLifecycleTestsを更新。
+- 制限外で全52テスト成功。AppKitのドラッグイベントで上下のサイズ変更、タブ切替、最小ウィンドウ、設定欄のスクロールを検証（/tmp/my_movie-divider-test-full.log）。
+- ./scripts/build-app.sh 成功、最新dist/MV Studio.appの署名とgit diff --checkを確認（/tmp/my_movie-divider-build.log）。実行中の処理と障害なし。実画面での手動操作は未実施。次は最新アプリを起動し、再生操作列の上にある境界線をドラッグする。
+
+# クリップの右クリックメニューとDelete（完了）
+
+- 最終更新: 2026-11-11 08:46 JST。要件: 歌詞・画像クリップの右クリックで切り取り・コピー・貼り付け・複製、Deleteで削除。
+- 実装・整理完了。ClipClipboard.swift、TimelineView.swift、PlacementEditor.swift、ClipShortcutTests.swift、README.md、AGENTS.mdを更新。左クリックと判定・選択処理を共有し、右クリックで再生位置を維持。切り取りとDeleteで削除処理を共有。
+- 全52テスト成功。右クリック対象・再生位置・複製・前方/後方Delete・制御点の優先を確認（/tmp/my_movie-clip-menu-test.log）。
+- ./scripts/build-app.sh 成功（/tmp/my_movie-clip-menu-build.log）。dist/MV Studio.app の署名と git diff --check を確認。実行中の処理・障害なし。実画面の操作は未実施。次: 最新アプリでクリップの右クリックメニューとDeleteを利用する。
+
+# タイムラインのクリップショートカット（完了）
+
+- 最終更新: 2026-11-11 08:39 JST。要件: 歌詞・画像クリップの⌘X/C/V/D。
+- 方針: 再生位置へ貼り付け、元の終端へ複製。区間長を保持し、重複・曲末超過は既存の検証で拒否。画像は選択行へ貼り付け、コピーした歌詞の連結は解除。
+- 実装・整理完了。StudioWindow、App、PlacementEditor、ClipClipboard、TimelineView、LyricsEditor、LyricsChaining、ImageTrack、README、AGENTS、ClipShortcutTests、UndoTestsを更新。全52テスト成功（/tmp/my_movie-clip-shortcuts-test.log）。
+- ./scripts/build-app.sh 成功（/tmp/my_movie-clip-shortcuts-build.log）。dist/MV Studio.app の署名と git diff --check を確認。実行中の処理・障害なし。実画面の操作は未検証。次: 最新版アプリでクリップを選択して⌘X/C/V/Dを使う。
+
+# オートメーションレーンの削除（完了）
+
+- 最終更新: 2026-11-11 08:31 JST。要件: レーン左側の右クリックメニューから該当パラメーターのオートメーションを削除する。
+- TimelineView.swiftで左欄の判定を範囲編集と共有し、選択クリップの該当カーブを既存の確定経路で削除する。基準値は固定値として保持。ImageAnimationTests.swift、docs/IMAGE_ANIMATION.md、AGENTS.mdを更新。
+- 制限外で全50テスト成功（/tmp/my_movie-lane-removal-test-full.log）。AppKitの右クリックイベントによるメニュー取得・削除アクションを検証。実画面での操作は未実施。
+- ./scripts/build-app.sh 成功、dist/MV Studio.app 生成済み（/tmp/my_movie-lane-removal-build.log）。署名検証と git diff --check 成功。実行中の処理・障害なし。次: 生成済みアプリでレーン左欄から削除を利用する。
+
 # 光の粒子2の加算合成・発生数・彩度（完了）
 
 - 最終更新: 2026-11-11 00:54 JST。光の粒子2を加算合成にし、発生数と彩度を編集可能にする。

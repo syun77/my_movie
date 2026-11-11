@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 final class TimelineView: NSView {
-    var imageMode = false { didSet { hoverPoint = nil; cancelDrag(); setAccessibilityLabel(imageMode ? "画像タイムライン" : "歌詞タイムライン"); needsDisplay = true } }
+    var imageMode = false { didSet { hoverPoint = nil; cancelDrag(); updateGraphLayout(); setAccessibilityLabel(imageMode ? "画像タイムライン" : "歌詞タイムライン"); needsDisplay = true } }
     var images = ImageTrack() {
         didSet {
             layerParameters = Dictionary(uniqueKeysWithValues: images.layers.map { layer in
@@ -28,12 +28,35 @@ final class TimelineView: NSView {
     var onGraphRangeEdit: ((Bool) -> Void)?
     var onWheelZoom: ((Double) -> Void)?
     var keySnapEnabled = true
-    private var rowScroll = 0.0
+    var heights = TimelineHeights() { didSet { updateRowLayout() } }
+    var onHeightCommit: (() -> Void)?
+    private var imageScroll = 0.0
+    private var lyricScroll = 0.0
+    private var rowScroll: Double {
+        get { imageMode ? imageScroll : lyricScroll }
+        set {
+            if imageMode { imageScroll = newValue }
+            else { lyricScroll = newValue }
+        }
+    }
     private let rowsTop = 48.0
-    private let rowHeight = 46.0
-    private let graphHeight = 62.0
+    private var rowResize: RowResize?
+
+    private struct RowResize {
+        let row: TimelineHeights.Row
+        let initialY: Double
+        let initialHeight: Double
+        let initialScroll: Double
+        var height: Double
+    }
+
+    private struct RowBoundary {
+        let row: TimelineHeights.Row
+        let y: Double
+    }
     private var keyDrag: KeyDrag?
     private var hoverPoint: NSPoint?
+    private let graphPadding = 4.0
     private let keyHitRadius = 11.0
     private let keyMarkerRadius = 4.0
     private let highlightedKeyRadius = 6.0
@@ -90,6 +113,8 @@ final class TimelineView: NSView {
     var visibleSpan = TimelineDisplaySettings.defaultSpan { didSet { needsDisplay = true } }
     var selectedID: UUID? { didSet { needsDisplay = true } }
     var isEnabled = false { didSet { if !isEnabled { cancelDrag() }; needsDisplay = true } }
+    var canPerformClipCommand: ((ClipEditCommand) -> Bool)?
+    var onClipCommand: ((ClipEditCommand) -> Void)?
     var onBeginEdit: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
     var onSeek: ((Double) -> Void)?
@@ -127,8 +152,12 @@ final class TimelineView: NSView {
     func followPlayhead() { manualOrigin = nil }
 
     static let gutter = 78.0
-    private let clipY = 39.0
-    private let clipHeight = 44.0
+    private var clipY: Double { 39 - lyricScroll }
+    private var clipHeight: Double { rowHeight(.lyrics) }
+    private var lyricBoundaryY: Double { clipY + clipHeight + 4 }
+    private var lyricViewport: NSRect {
+        NSRect(x: timeViewport.minX, y: 24, width: timeViewport.width, height: max(0, bounds.height - 48))
+    }
     private let trimHandleWidth = 8.0
 
     private struct ClipHit {
@@ -142,8 +171,8 @@ final class TimelineView: NSView {
                width: max(0, bounds.width - Self.gutter - 2 * TimelineGeometry.inset), height: bounds.height)
     }
 
-    private var canHighlightTrim: Bool {
-        isEnabled && frozenGeometry == nil && automationPreview == nil
+    var canEditClips: Bool {
+        isEnabled && rowResize == nil && frozenGeometry == nil && automationPreview == nil
     }
 
     override init(frame frameRect: NSRect) {
@@ -153,7 +182,7 @@ final class TimelineView: NSView {
                                        options: [.inVisibleRect, .activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved],
                                        owner: self, userInfo: nil))
         identifier = NSUserInterfaceItemIdentifier("placement.timeline")
-        toolTip = "Shift＋ホイールで横スクロール、⌘＋ホイールで拡大・縮小、Option＋ホイールで再生位置を移動。本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。空白や目盛りでシーク。Escで取り消し。"
+        toolTip = "Shift＋ホイールで横スクロール、⌘＋ホイールで拡大・縮小、Option＋ホイールで再生位置を移動。本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。行の下の境界線で高さを調整。空白や目盛りでシーク。Escで取り消し。"
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("歌詞タイムライン")
@@ -162,7 +191,12 @@ final class TimelineView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.12, alpha: 1).setFill(); bounds.fill()
-        if imageMode { drawImages(); return }
+        if imageMode { drawImages() }
+        else { drawLyrics() }
+        drawRowBoundaries()
+    }
+
+    private func drawLyrics() {
         let geometry = geometry
         let displayed = drag?.draft ?? track
         let interval = geometry.tickInterval
@@ -170,13 +204,15 @@ final class TimelineView: NSView {
         while time <= min(duration, geometry.origin + geometry.span) + 1e-9 {
             let x = x(at: time)
             NSColor.white.withAlphaComponent(0.12).setStroke()
-            let line = NSBezierPath(); line.move(to: NSPoint(x: x, y: 24)); line.line(to: NSPoint(x: x, y: 87)); line.stroke()
+            let line = NSBezierPath(); line.move(to: NSPoint(x: x, y: 24)); line.line(to: NSPoint(x: x, y: min(lyricBoundaryY, lyricViewport.maxY))); line.stroke()
             label(TimelineGeometry.label(time), rect: NSRect(x: x + 3, y: 6, width: 78, height: 15), color: .lightGray, size: 10)
             time += interval
         }
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: lyricViewport).addClip()
         for clip in displayed.clips where clip.end > geometry.origin && clip.start < geometry.origin + geometry.span {
             let rect = lyricRect(clip)
-            let visible = rect.intersection(timeViewport)
+            let visible = rect.intersection(lyricViewport)
             guard !visible.isEmpty else { continue }
             let selected = clip.id == selectedID
             NSColor(calibratedRed: selected ? 0.14 : 0.12, green: selected ? 0.55 : 0.32, blue: selected ? 0.68 : 0.43, alpha: 1).setFill()
@@ -186,24 +222,21 @@ final class TimelineView: NSView {
                 NSBezierPath(roundedRect: visible.insetBy(dx: 1, dy: 0.5), xRadius: 4, yRadius: 4).stroke()
             }
             let text = (clip.predecessorID == nil ? "" : "↳ ") + clip.text.replacingOccurrences(of: "\n", with: " / ")
-            label(text, rect: visible.insetBy(dx: 10, dy: 5), color: .white, size: 12)
-            label("\(TimelineGeometry.label(clip.start)) → \(TimelineGeometry.label(clip.end))", rect: NSRect(x: visible.minX + 10, y: clipY + 25, width: max(0, visible.width - 20), height: 14), color: .white.withAlphaComponent(0.8), size: 9)
-            NSColor.white.withAlphaComponent(0.65).setFill()
-            for x in [rect.minX + 3, rect.maxX - 5] where x >= visible.minX && x + 2 <= visible.maxX {
-                NSRect(x: x, y: clipY + 12, width: 2, height: 20).fill()
-            }
+            drawClipLabels(text, timing: clipTiming(start: clip.start, end: clip.end), in: rect, visible: visible)
+            drawClipGrips(in: rect, visible: visible)
         }
+        NSGraphicsContext.restoreGraphicsState()
         let playhead = x(at: currentTime)
         if playhead >= timeViewport.minX && playhead <= timeViewport.maxX {
             NSColor.systemPink.setStroke()
             let line = NSBezierPath(); line.lineWidth = 2
-            line.move(to: NSPoint(x: playhead, y: 23)); line.line(to: NSPoint(x: playhead, y: 88)); line.stroke()
+            line.move(to: NSPoint(x: playhead, y: 23)); line.line(to: NSPoint(x: playhead, y: min(lyricBoundaryY + 1, lyricViewport.maxY))); line.stroke()
         }
-        if canHighlightTrim, let point = hoverPoint {
+        if canEditClips, let point = hoverPoint {
             drawTrimHighlight(lyricHit(at: point))
         }
-        let footer = duration > 0 ? "再生位置 \(TimelineGeometry.label(currentTime))　｜　本体：移動　端：開始/終了　16分音符スナップ　Esc：取消" : "音声を読み込むと、再生位置の周辺と歌詞の表示区間を確認できます"
-        label(footer, rect: NSRect(x: 14, y: 92, width: bounds.width - 28, height: 16), color: .lightGray, size: 10)
+        let footer = duration > 0 ? "再生位置 \(TimelineGeometry.label(currentTime))　｜　本体：移動　端：開始/終了　Esc：取消" : "音声を読み込むと、再生位置の周辺と歌詞の表示区間を確認できます"
+        label(footer, rect: NSRect(x: 14, y: min(lyricBoundaryY + 5, bounds.height - 20), width: bounds.width - 28, height: 16), color: .lightGray, size: 10)
     }
 
     func x(at time: Double) -> Double { Self.gutter + geometry.x(at: time) }
@@ -213,6 +246,32 @@ final class TimelineView: NSView {
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
         (text as NSString).draw(in: rect, withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), .foregroundColor: color, .paragraphStyle: paragraph])
     }
+    private func clipTiming(start: Double, end: Double) -> String {
+        "\(TimelineGeometry.label(start)) → \(TimelineGeometry.label(end))"
+    }
+
+    private func drawClipLabels(_ title: String, timing: String, in rect: NSRect, visible: NSRect) {
+        let showsTiming = rect.height >= 35
+        let titleHeight = min(rect.height, 17)
+        let titleY = showsTiming ? rect.minY + 3 : rect.midY - titleHeight / 2
+        let textX = visible.minX + 8
+        let textWidth = visible.width - 16
+        label(title, rect: NSRect(x: textX, y: titleY, width: textWidth, height: titleHeight),
+              color: .white, size: rect.height < 17 ? 10 : 11)
+        if showsTiming {
+            label(timing, rect: NSRect(x: textX, y: rect.minY + 22, width: textWidth, height: 13),
+                  color: .white.withAlphaComponent(0.8), size: 9)
+        }
+    }
+
+    private func drawClipGrips(in rect: NSRect, visible: NSRect) {
+        let height = min(20, rect.height - 6)
+        NSColor.white.withAlphaComponent(0.6).setFill()
+        for x in [rect.minX + 3, rect.maxX - 5] where x >= visible.minX && x + 2 <= visible.maxX {
+            NSRect(x: x, y: rect.midY - height / 2, width: 2, height: height).fill()
+        }
+    }
+
     private func trimArea(in rect: NSRect, part: TimelineDragPart, viewport: NSRect) -> NSRect {
         let width = min(trimHandleWidth, rect.width / 2)
         let left = part == .start ? rect.minX : rect.maxX - width
@@ -241,7 +300,7 @@ final class TimelineView: NSView {
 
     private func lyricHit(at point: NSPoint) -> ClipHit? {
         for clip in track.clips {
-            if let hit = clipHit(id: clip.id, at: point, rect: lyricRect(clip), viewport: timeViewport, includingEdges: true) {
+            if let hit = clipHit(id: clip.id, at: point, rect: lyricRect(clip), viewport: lyricViewport, includingEdges: true) {
                 return hit
             }
         }
@@ -268,7 +327,7 @@ final class TimelineView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         hoverPoint = convert(event.locationInWindow, from: nil)
-        if isEnabled { needsDisplay = true }
+        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -279,17 +338,27 @@ final class TimelineView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if frozenGeometry == nil, automationPreview == nil, let boundary = rowBoundary(at: point),
+           window?.makeFirstResponder(self) != false {
+            let height = rowHeight(boundary.row)
+            rowResize = RowResize(row: boundary.row, initialY: point.y, initialHeight: height,
+                                  initialScroll: rowScroll, height: height)
+            hoverPoint = point
+            NSCursor.resizeUpDown.set()
+            needsDisplay = true
+            return
+        }
         guard isEnabled, window?.makeFirstResponder(self) != false else { return }
         mouseMoved(with: event)
         if imageMode {
             imageMouseDown(event)
             return
         }
-        let point = convert(event.locationInWindow, from: nil)
         let frozen = geometry
         onBeginEdit?()
         if let hit = lyricHit(at: point) {
-            selectedID = hit.id; onSelect?(hit.id)
+            selectLyricClip(hit.id)
             drag = Drag(original: track, geometry: frozen, id: hit.id, part: hit.part, initialX: point.x, draft: track)
         } else {
             scrubGeometry = frozen
@@ -298,6 +367,10 @@ final class TimelineView: NSView {
         needsDisplay = true
     }
     override func mouseDragged(with event: NSEvent) {
+        if rowResize != nil {
+            updateRowResize(with: event)
+            return
+        }
         guard isEnabled else { return }
         if imageMode { imageMouseDragged(event); return }
         let point = convert(event.locationInWindow, from: nil)
@@ -309,6 +382,19 @@ final class TimelineView: NSView {
         } else if let frozen = scrubGeometry { seek(at: point.x, geometry: frozen) }
     }
     override func mouseUp(with event: NSEvent) {
+        if rowResize != nil {
+            updateRowResize(with: event)
+            if let resize = rowResize {
+                rowResize = nil
+                if heights[resize.row] != resize.height {
+                    heights[resize.row] = resize.height
+                    onHeightCommit?()
+                } else {
+                    needsDisplay = true
+                }
+            }
+            return
+        }
         guard isEnabled else { return }
         mouseMoved(with: event)
         if imageMode {
@@ -323,6 +409,12 @@ final class TimelineView: NSView {
     }
     private func seek(at x: Double, geometry: TimelineGeometry) { onSeek?(max(0, min(duration, geometry.time(at: x - Self.gutter)))) }
     func cancelDrag() {
+        if let resize = rowResize {
+            rowResize = nil
+            if case .lyrics = resize.row { lyricScroll = resize.initialScroll }
+            else { imageScroll = resize.initialScroll }
+            updateRowLayout()
+        }
         if let value = drag { drag = nil; onPreview?(value.original) }
         if let value = imageDrag { imageDrag = nil; NSCursor.arrow.set(); onImagePreview?(value.original) }
         if let value = keyDrag {
@@ -332,32 +424,119 @@ final class TimelineView: NSView {
         dropGeometry = nil; dropCandidate = nil
         scrubGeometry = nil; needsDisplay = true
     }
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { cancelDrag() }
-        else if event.keyCode == 51 || event.keyCode == 117, imageMode, isEnabled, expandedLayerSlots.contains(selectedSlot),
-                keyDrag == nil, imageDrag == nil, let parameter = selectedParameter, let id = selectedKeyID,
-                var clip = images.clip(selectedImageID), let slot = images.slot(of: clip.id) {
-            do {
-                clip.removeKey(id, parameter: parameter)
-                let updated = try images.updating(clip, slot: slot, duration: duration)
-                onBeginEdit?()
-                onImageCommit?(updated, clip.id)
-                selectGraph(clip.curve(parameter) == nil ? nil : parameter)
-            } catch { onError?(error) }
-        } else { super.keyDown(with: event) }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard canEditClips else { return super.menu(for: event) }
+        let point = convert(event.locationInWindow, from: nil)
+        if canRemoveAutomation, let label = graphLabel(at: point) {
+            let menu = NSMenu()
+            let item = menu.addItem(withTitle: "レーンを削除", action: #selector(removeAutomationLane(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = label.target
+            return menu
+        }
+        guard canPerformClipCommand != nil, selectClipForMenu(at: point) else { return super.menu(for: event) }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for command in ClipEditCommand.allCases {
+            if command == .delete { menu.addItem(.separator()) }
+            let item = menu.addItem(withTitle: command.title, action: #selector(performClipCommand(_:)),
+                                    keyEquivalent: command == .delete ? "" : command.rawValue)
+            item.target = self
+            item.representedObject = command
+            item.isEnabled = canPerformClipCommand?(command) == true
+        }
+        return menu
     }
+
+    private func selectClipForMenu(at point: NSPoint) -> Bool {
+        if imageMode {
+            guard let slot = slot(at: point), let hit = imageHit(at: point, slot: slot),
+                  window?.makeFirstResponder(self) != false else { return false }
+            selectImageClip(hit.id, slot: slot)
+        } else {
+            guard let hit = lyricHit(at: point), window?.makeFirstResponder(self) != false else { return false }
+            selectLyricClip(hit.id)
+        }
+        return true
+    }
+
+    private func selectLyricClip(_ id: UUID) {
+        selectedID = id
+        onSelect?(id)
+    }
+
+    private func selectImageClip(_ id: UUID, slot: Int) {
+        selectedSlot = slot
+        selectedImageID = id
+        if selectedKeyID != nil { selectGraph(selectedParameter) }
+        onImageSelect?(id, slot)
+    }
+
+    @objc private func performClipCommand(_ item: NSMenuItem) {
+        guard let command = item.representedObject as? ClipEditCommand,
+              canPerformClipCommand?(command) == true else { return }
+        onClipCommand?(command)
+    }
+
+    private var canRemoveAutomation: Bool {
+        imageMode && canEditClips && onImageCommit != nil
+    }
+
+    @objc private func removeAutomationLane(_ item: NSMenuItem) {
+        guard canRemoveAutomation, let target = item.representedObject as? GraphTarget,
+              var clip = images.clip(target.clipID), clip.curve(target.parameter) != nil,
+              let slot = images.slot(of: clip.id) else { return }
+        clip.curves.removeAll { $0.parameter == target.parameter }
+        do {
+            let updated = try images.updating(clip, slot: slot, duration: duration)
+            onBeginEdit?()
+            onImageCommit?(updated, clip.id)
+        } catch { onError?(error) }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { cancelDrag(); return }
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        guard modifiers.isEmpty, event.keyCode == 51 || event.keyCode == 117, canEditClips else {
+            super.keyDown(with: event)
+            return
+        }
+        guard !event.isARepeat else { return }
+        if removeSelectedKey() { return }
+        if canPerformClipCommand?(.delete) == true { onClipCommand?(.delete) }
+        else { super.keyDown(with: event) }
+    }
+
+    private func removeSelectedKey() -> Bool {
+        guard imageMode, expandedLayerSlots.contains(selectedSlot), let parameter = selectedParameter,
+              let id = selectedKeyID, var clip = images.clip(selectedImageID),
+              let slot = images.slot(of: clip.id) else { return false }
+        do {
+            clip.removeKey(id, parameter: parameter)
+            let updated = try images.updating(clip, slot: slot, duration: duration)
+            onBeginEdit?()
+            onImageCommit?(updated, clip.id)
+            selectGraph(clip.curve(parameter) == nil ? nil : parameter)
+        } catch { onError?(error) }
+        return true
+    }
+
     override func resetCursorRects() {
-        guard isEnabled else { return }
-        guard !imageMode else { return }
-        for clip in track.clips {
-            let rect = lyricRect(clip)
-            let visible = rect.intersection(timeViewport)
-            guard !visible.isEmpty else { continue }
-            addCursorRect(visible, cursor: .openHand)
-            for part in [TimelineDragPart.start, .end] {
-                let handle = trimArea(in: rect, part: part, viewport: timeViewport)
-                if !handle.isEmpty { addCursorRect(handle, cursor: .resizeLeftRight) }
+        if isEnabled && !imageMode {
+            for clip in track.clips {
+                let rect = lyricRect(clip)
+                let visible = rect.intersection(lyricViewport)
+                guard !visible.isEmpty else { continue }
+                addCursorRect(visible, cursor: .openHand)
+                for part in [TimelineDragPart.start, .end] {
+                    let handle = trimArea(in: rect, part: part, viewport: lyricViewport)
+                    if !handle.isEmpty { addCursorRect(handle, cursor: .resizeLeftRight) }
+                }
             }
+        }
+        for boundary in rowBoundaries {
+            let rect = boundaryHitRect(boundary)
+            if !rect.isEmpty { addCursorRect(rect, cursor: .resizeUpDown) }
         }
     }
 
@@ -365,19 +544,75 @@ final class TimelineView: NSView {
         guard expandedLayerSlots.contains(slot) else { return [] }
         return layerParameters[slot] ?? []
     }
-    private func height(of slot: Int) -> Double {
-        rowHeight + Double(automationParameters(in: slot).count) * graphHeight
+
+    private func rowHeight(_ row: TimelineHeights.Row) -> Double {
+        if let resize = rowResize, resize.row == row { return resize.height }
+        return heights[row]
     }
+
+    private func height(of slot: Int) -> Double {
+        automationParameters(in: slot).reduce(rowHeight(.image(slot))) { $0 + rowHeight(.automation(slot, $1)) }
+    }
+
     private var contentHeight: Double { (1...3).reduce(0) { $0 + height(of: $1) } }
-    private var rowsBottom: Double { min(bounds.height - 24, rowsTop + contentHeight - rowScroll) }
-    private var maximumRowScroll: Double { max(0, rowsTop + contentHeight - (bounds.height - 24)) }
+    private var rowsBottom: Double { min(bounds.height - 24, rowsTop + contentHeight - imageScroll) }
+    private var maximumRowScroll: Double {
+        let bottom = imageMode ? rowsTop + contentHeight : lyricBoundaryY + lyricScroll
+        return max(0, bottom - (bounds.height - 24))
+    }
+
+    private var rowBoundaries: [RowBoundary] {
+        guard imageMode else { return [RowBoundary(row: .lyrics, y: lyricBoundaryY)] }
+        return (1...3).flatMap { slot -> [RowBoundary] in
+            let image = RowBoundary(row: .image(slot), y: rowY(slot) + rowHeight(.image(slot)))
+            return [image] + automationParameters(in: slot).enumerated().map { index, parameter in
+                let row = TimelineHeights.Row.automation(slot, parameter)
+                return RowBoundary(row: row, y: graphY(slot: slot, index: index) - graphPadding + rowHeight(row))
+            }
+        }
+    }
+
+    private func boundaryHitRect(_ boundary: RowBoundary) -> NSRect {
+        let top = imageMode ? rowsTop : lyricViewport.minY
+        let bottom = bounds.height - 24
+        guard boundary.y >= top, boundary.y <= bottom else { return .zero }
+        return NSRect(x: 0, y: boundary.y - 3, width: bounds.width, height: 6)
+            .intersection(NSRect(x: 0, y: top, width: bounds.width, height: max(0, bottom - top)))
+    }
+
+    private func rowBoundary(at point: NSPoint) -> RowBoundary? {
+        rowBoundaries.first { boundaryHitRect($0).contains(point) }
+    }
+
+    private func drawRowBoundaries() {
+        let hovered = hoverPoint.flatMap { rowBoundary(at: $0)?.row }
+        for boundary in rowBoundaries where !boundaryHitRect(boundary).isEmpty {
+            let active = rowResize?.row == boundary.row || (rowResize == nil && hovered == boundary.row)
+            let color: NSColor = active ? .systemYellow : .white.withAlphaComponent(0.2)
+            color.setFill()
+            NSRect(x: 0, y: boundary.y - 0.5, width: bounds.width, height: 1).fill()
+            NSBezierPath(roundedRect: NSRect(x: 27, y: boundary.y - 1.5, width: 24, height: 3),
+                         xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    }
+
+    private func updateRowResize(with event: NSEvent) {
+        guard var resize = rowResize else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let range = resize.row.range
+        resize.height = min(range.upperBound, max(range.lowerBound, resize.initialHeight + point.y - resize.initialY))
+        rowResize = resize
+        rowScroll = resize.initialScroll
+        hoverPoint = point
+        updateRowLayout()
+    }
 
     func selectGraph(_ parameter: ImageParameter?, key: UUID? = nil, reveal: Bool = false) {
         selectedParameter = parameter
         selectedKeyID = key
         if reveal, let parameter, let slot = selectedImageID.flatMap({ images.slot(of: $0) }),
            let index = automationParameters(in: slot).firstIndex(of: parameter) {
-            revealRows(from: graphY(slot: slot, index: index), height: graphHeight - 4)
+            revealRows(from: graphY(slot: slot, index: index), height: rowHeight(.automation(slot, parameter)) - graphPadding)
         }
         onGraphSelection?()
         needsDisplay = true
@@ -385,7 +620,8 @@ final class TimelineView: NSView {
 
     func resetGraphDisclosure() {
         expandedLayerSlots.removeAll()
-        rowScroll = 0
+        imageScroll = 0
+        lyricScroll = 0
         updateGraphLayout()
     }
 
@@ -398,33 +634,39 @@ final class TimelineView: NSView {
         if expanded { expandedLayerSlots.insert(slot) }
         else { expandedLayerSlots.remove(slot) }
         updateGraphLayout()
-        revealRows(from: rowY(slot), height: height(of: slot) > rowHeight ? rowHeight + graphHeight : rowHeight)
+        let firstLaneHeight = automationParameters(in: slot).first.map { rowHeight(.automation(slot, $0)) } ?? 0
+        revealRows(from: rowY(slot), height: rowHeight(.image(slot)) + firstLaneHeight)
     }
 
     private func revealRows(from top: Double, height: Double) {
         if top + height > rowsBottom { rowScroll += top + height - rowsBottom }
         if top < rowsTop { rowScroll += top - rowsTop }
+        updateRowLayout()
+    }
+
+    private func updateRowLayout() {
         rowScroll = min(maximumRowScroll, max(0, rowScroll))
+        window?.invalidateCursorRects(for: self)
         needsDisplay = true
     }
 
     private func updateGraphLayout() {
-        rowScroll = min(maximumRowScroll, max(0, rowScroll))
+        updateRowLayout()
         if let parameter = selectedParameter,
            let curve = images.clip(selectedImageID)?.curve(parameter) {
             if let key = selectedKeyID, !curve.keys.contains(where: { $0.id == key }) { selectGraph(parameter) }
         } else if selectedParameter != nil {
             selectGraph(nil)
         }
-        needsDisplay = true
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        updateGraphLayout()
+        updateRowLayout()
     }
 
     override func scrollWheel(with event: NSEvent) {
+        guard rowResize == nil else { return }
         let modifiers = event.modifierFlags
         if !modifiers.intersection([.command, .shift, .option]).isEmpty {
             guard isEnabled, frozenGeometry == nil, event.momentumPhase.isEmpty else { return }
@@ -442,9 +684,9 @@ final class TimelineView: NSView {
             }
             return
         }
-        guard imageMode, maximumRowScroll > 0, keyDrag == nil, imageDrag == nil else { super.scrollWheel(with: event); return }
+        guard maximumRowScroll > 0, frozenGeometry == nil else { super.scrollWheel(with: event); return }
         rowScroll -= event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 10)
-        updateGraphLayout()
+        updateRowLayout()
     }
 
     private func seekByWheel(steps: Double) {
@@ -474,15 +716,19 @@ final class TimelineView: NSView {
     }
 
     private func rowY(_ slot: Int) -> Double {
-        rowsTop - rowScroll + (1...3).filter { $0 > slot }.reduce(0) { $0 + height(of: $1) }
+        rowsTop - imageScroll + (1...3).filter { $0 > slot }.reduce(0) { $0 + height(of: $1) }
     }
 
     private func disclosureRect(for slot: Int) -> NSRect {
-        NSRect(x: 55, y: rowY(slot) + 8, width: 22, height: 29)
+        let rowHeight = rowHeight(.image(slot))
+        let height = min(29, rowHeight - 6)
+        return NSRect(x: 55, y: rowY(slot) + (rowHeight - height) / 2, width: 22, height: height)
     }
 
     private func graphY(slot: Int, index: Int) -> Double {
-        rowY(slot) + rowHeight + Double(index) * graphHeight + 4
+        automationParameters(in: slot).prefix(index).reduce(rowY(slot) + rowHeight(.image(slot)) + graphPadding) {
+            $0 + rowHeight(.automation(slot, $1))
+        }
     }
 
     private func graphLanes(in displayed: ImageTrack) -> [GraphLane] {
@@ -494,14 +740,14 @@ final class TimelineView: NSView {
                     guard let curve = clip.curve(parameter) else { return nil }
                     let left = x(at: clip.start)
                     let rect = NSRect(x: left, y: graphY(slot: layer.slot, index: index),
-                                      width: x(at: clip.end) - left, height: graphHeight - 8)
+                                      width: x(at: clip.end) - left, height: rowHeight(.automation(layer.slot, parameter)) - 2 * graphPadding)
                     return GraphLane(clip: clip, curve: curve, rect: rect)
                 }
             }
         }
     }
     private func imageRect(_ clip: ImageClip, slot: Int) -> NSRect {
-        NSRect(x: x(at: clip.start), y: rowY(slot) + 3, width: x(at: clip.end) - x(at: clip.start), height: 39)
+        NSRect(x: x(at: clip.start), y: rowY(slot) + 3, width: x(at: clip.end) - x(at: clip.start), height: rowHeight(.image(slot)) - 7)
     }
     private var graphViewport: NSRect {
         NSRect(x: Self.gutter + TimelineGeometry.inset, y: rowsTop,
@@ -531,11 +777,13 @@ final class TimelineView: NSView {
                 NSColor.white.withAlphaComponent(0.04).setFill()
                 NSRect(x: 0, y: rowY(slot), width: bounds.width, height: height(of: slot)).fill()
             }
-            label("画像\(slot)" + (slot == 3 ? " 前" : slot == 1 ? " 後" : ""), rect: NSRect(x: 5, y: rowY(slot) + 14, width: 50, height: 18), color: .lightGray, size: 11)
+            let rowCenter = rowY(slot) + rowHeight(.image(slot)) / 2
+            label("画像\(slot)" + (slot == 3 ? " 前" : slot == 1 ? " 後" : ""),
+                  rect: NSRect(x: 5, y: rowCenter - 8, width: 50, height: 16), color: .lightGray, size: 11)
             if layerParameters[slot]?.isEmpty == false {
                 let button = disclosureRect(for: slot)
                 label(expandedLayerSlots.contains(slot) ? "v" : ">",
-                      rect: NSRect(x: button.minX + 6, y: button.minY + 6, width: 16, height: 18),
+                      rect: NSRect(x: button.minX + 6, y: button.midY - 7.5, width: 16, height: 15),
                       color: .white.withAlphaComponent(0.45), size: 12)
             }
             let clip = selectedLayer == slot ? selectedClip : nil
@@ -543,7 +791,7 @@ final class TimelineView: NSView {
                 let color: NSColor = clip != nil && parameter == selectedParameter ? .cyan : .lightGray
                 let y = graphY(slot: slot, index: index)
                 label(parameter.title, rect: NSRect(x: 5, y: y, width: 73, height: 16), color: color, size: 11)
-                if let curve = clip?.curve(parameter) {
+                if showsGraphRange(slot: slot, parameter: parameter), let curve = clip?.curve(parameter) {
                     label("最大 " + Self.graphNumber(curve.maximum), rect: NSRect(x: 5, y: y + 17, width: 73, height: 14), color: color, size: 9)
                     label("最小 " + Self.graphNumber(curve.minimum), rect: NSRect(x: 5, y: y + 32, width: 73, height: 14), color: color, size: 9)
                 }
@@ -569,20 +817,20 @@ final class TimelineView: NSView {
         }
         for layer in displayed.layers {
             for clip in layer.clips {
-                let rect = imageRect(clip, slot: layer.slot).intersection(clipBounds)
+                let clipRect = imageRect(clip, slot: layer.slot)
+                let rect = clipRect.intersection(clipBounds)
                 guard !rect.isEmpty else { continue }
                 let missing = missingAssets.contains(clip.assetID)
                 (missing ? NSColor.systemRed : NSColor(calibratedRed: 0.22, green: 0.42, blue: 0.57, alpha: 1)).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 0), xRadius: 4, yRadius: 4).fill()
                 if clip.id == selectedImageID { NSColor.cyan.setStroke(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).stroke() }
-                label( (missing ? "⚠ " : "") + (displayed.asset(clip.assetID)?.name ?? "不明"), rect: NSRect(x: rect.minX + 8, y: rect.minY + 3, width: max(0, rect.width - 16), height: 17), color: .white, size: 11)
-                label("\(TimelineGeometry.label(clip.start)) → \(TimelineGeometry.label(clip.end))", rect: NSRect(x: rect.minX + 8, y: rect.minY + 22, width: max(0, rect.width - 16), height: 13), color: .white, size: 9)
-                NSColor.white.withAlphaComponent(0.6).setFill()
-                for edge in [x(at: clip.start) + 3, x(at: clip.end) - 5] { NSRect(x: edge, y: rect.minY + 12, width: 2, height: 15).fill() }
+                let title = (missing ? "⚠ " : "") + (displayed.asset(clip.assetID)?.name ?? "不明")
+                drawClipLabels(title, timing: clipTiming(start: clip.start, end: clip.end), in: clipRect, visible: rect)
+                drawClipGrips(in: clipRect, visible: rect)
             }
         }
         let highlight = highlightedKey(in: lanes)
-        if highlight == nil, canHighlightTrim, let point = hoverPoint, let slot = slot(at: point) {
+        if highlight == nil, canEditClips, let point = hoverPoint, let slot = slot(at: point) {
             drawTrimHighlight(imageHit(at: point, slot: slot))
         }
         for lane in lanes { drawGraph(lane, clippedTo: clipBounds, excluding: highlight?.key.id) }
@@ -593,7 +841,8 @@ final class TimelineView: NSView {
         }
         if let candidate = dropCandidate {
             NSColor.cyan.withAlphaComponent(0.35).setFill()
-            NSRect(x: x(at: candidate.start), y: rowY(candidate.slot) + 3, width: x(at: candidate.end) - x(at: candidate.start), height: 39).fill()
+            NSRect(x: x(at: candidate.start), y: rowY(candidate.slot) + 3, width: x(at: candidate.end) - x(at: candidate.start),
+                   height: rowHeight(.image(candidate.slot)) - 7).fill()
         }
         NSColor.systemPink.setStroke()
         let head = NSBezierPath(); head.lineWidth = 2; head.move(to: NSPoint(x: x(at: currentTime), y: rowsTop)); head.line(to: NSPoint(x: x(at: currentTime), y: rowsBottom)); head.stroke()
@@ -607,7 +856,7 @@ final class TimelineView: NSView {
             let right = min(clipBounds.maxX, x(at: lyric.end))
             label(lyric.text.replacingOccurrences(of: "\n", with: " "), rect: NSRect(x: left + 3, y: 27, width: right - left - 6, height: 16), color: .systemYellow.withAlphaComponent(0.4), size: 10)
         }
-        let hint = contentHeight > rowHeight * 3 ? "グラフ：クリックで追加、ドラッグで調整、Deleteで削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
+        let hint = !expandedLayerSlots.isEmpty ? "グラフ：クリックで追加、ドラッグで調整、Deleteで削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
         label(imageDrag?.error ?? hint, rect: NSRect(x: 14, y: bounds.height - 19, width: bounds.width - 28, height: 16), color: .lightGray, size: 10)
     }
     private func imageMouseDown(_ event: NSEvent) {
@@ -621,7 +870,7 @@ final class TimelineView: NSView {
             }
             selectedSlot = slot
             if let hit = imageHit(at: point, slot: slot) {
-                selectedImageID = hit.id; onImageSelect?(hit.id, slot)
+                selectImageClip(hit.id, slot: slot)
                 onBeginEdit?()
                 imageDrag = ImageDrag(original: images, geometry: frozen, id: hit.id, part: hit.part, initialX: point.x, draft: images, targetSlot: slot, error: nil)
                 return
@@ -675,14 +924,14 @@ final class TimelineView: NSView {
         return url
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard imageMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil else { return [] }
+        guard imageMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil, rowResize == nil else { return [] }
         dropGeometry = geometry
         return draggingUpdated(sender)
     }
     func fileDrop(at point: NSPoint, pasteboard: NSPasteboard) throws -> (url: URL, slot: Int, start: Double, end: Double) {
-        guard imageMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil, let url = droppedURL(pasteboard),
+        guard imageMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil, rowResize == nil, let url = droppedURL(pasteboard),
               point.x >= Self.gutter + TimelineGeometry.inset, point.x <= bounds.width - TimelineGeometry.inset,
-              let slot = slot(at: point), point.y < rowY(slot) + rowHeight else { throw StudioError.message("画像を1枚ずつ、配置可能な画像行の空白にドロップしてください。") }
+              let slot = slot(at: point), point.y < rowY(slot) + rowHeight(.image(slot)) else { throw StudioError.message("画像を1枚ずつ、配置可能な画像行の空白にドロップしてください。") }
         let range = try images.placement(at: geometry.time(at: point.x - Self.gutter), slot: slot, duration: duration, grid: snapGrid)
         return (url, slot, range.start, range.end)
     }
@@ -759,8 +1008,8 @@ private extension TimelineView {
 
     private func drawKey(_ key: ImageKeyframe, in lane: GraphLane, at center: NSPoint, radius: Double, color: NSColor) {
         let marker = NSBezierPath()
-        let top = key.value < lane.curve.minimum ? 0 : radius
-        let bottom = key.value > lane.curve.maximum ? 0 : radius
+        let top = key.value < lane.curve.minimum ? 0 : min(radius, center.y - lane.rect.minY + graphPadding)
+        let bottom = key.value > lane.curve.maximum ? 0 : min(radius, lane.rect.maxY - center.y + graphPadding)
         marker.move(to: NSPoint(x: center.x, y: center.y - top))
         marker.line(to: NSPoint(x: center.x + radius, y: center.y))
         marker.line(to: NSPoint(x: center.x, y: center.y + bottom))
@@ -789,7 +1038,7 @@ private extension TimelineView {
         guard viewport.contains(point) else { return nil }
         let visibleCenters = viewport.insetBy(dx: -1, dy: -1)
         var hit: (lane: GraphLane, key: ImageKeyframe, distance: Double)?
-        for lane in lanes where lane.rect.insetBy(dx: -keyHitRadius, dy: -keyHitRadius).contains(point) {
+        for lane in lanes where lane.rect.insetBy(dx: -keyHitRadius, dy: -graphPadding).contains(point) {
             for key in lane.curve.keys where lane.clip.containsKey(key) {
                 let center = keyPosition(key, in: lane)
                 guard visibleCenters.contains(center) else { continue }
@@ -802,17 +1051,36 @@ private extension TimelineView {
         return hit.map { ($0.lane, $0.key) }
     }
 
+    private struct GraphTarget {
+        let clipID: UUID
+        let parameter: ImageParameter
+    }
+
+    private func graphLabel(at point: NSPoint) -> (target: GraphTarget, localY: Double)? {
+        guard point.x >= 0, point.x < Self.gutter,
+              let slot = slot(at: point), let clip = images.clip(selectedImageID),
+              images.slot(of: clip.id) == slot else { return nil }
+        for (index, parameter) in automationParameters(in: slot).enumerated() {
+            let localY = point.y - graphY(slot: slot, index: index)
+            if (0...(rowHeight(.automation(slot, parameter)) - 2 * graphPadding)).contains(localY), clip.curve(parameter) != nil {
+                return (GraphTarget(clipID: clip.id, parameter: parameter), localY)
+            }
+        }
+        return nil
+    }
+
+    private func showsGraphRange(slot: Int, parameter: ImageParameter) -> Bool {
+        rowHeight(.automation(slot, parameter)) >= 54
+    }
+
     private func graphMouseDown(at point: NSPoint, geometry: TimelineGeometry) -> Bool {
-        guard point.y >= rowsTop, point.y <= rowsBottom else { return false }
-        if point.x < Self.gutter, let slot = slot(at: point), slot == selectedSlot,
-           let clip = images.clip(selectedImageID),
-           let match = automationParameters(in: slot).enumerated().first(where: { index, parameter in
-               let y = graphY(slot: slot, index: index)
-               return clip.curve(parameter) != nil && (y...(y + graphHeight - 8)).contains(point.y)
-           }) {
-            selectGraph(match.element, key: selectedParameter == match.element ? selectedKeyID : nil)
-            let localY = point.y - graphY(slot: slot, index: match.offset)
-            if localY >= 17 { onGraphRangeEdit?(localY < 32) }
+        if let label = graphLabel(at: point) {
+            let parameter = label.target.parameter
+            selectGraph(parameter, key: selectedParameter == parameter ? selectedKeyID : nil)
+            if let slot = images.slot(of: label.target.clipID),
+               showsGraphRange(slot: slot, parameter: parameter), label.localY >= 17 {
+                onGraphRangeEdit?(label.localY < 32)
+            }
             return true
         }
         guard graphViewport.contains(point) else { return false }

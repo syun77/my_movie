@@ -92,6 +92,83 @@ final class TimelineTests: XCTestCase {
         XCTAssertEqual(view.currentTime, view.duration)
     }
 
+    @MainActor func testRowResizeCommitsOnlyTheDraggedRowWithoutSeeking() throws {
+        _ = NSApplication.shared
+        let timeline = TimelineView(frame: NSRect(x: 0, y: 0, width: 780, height: 440))
+        let window = NSWindow(contentRect: timeline.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = timeline
+        defer { window.close() }
+
+        var commits = 0
+        timeline.onHeightCommit = { commits += 1 }
+        timeline.onSeek = { _ in XCTFail("境界ドラッグでシークしない") }
+        timeline.isEnabled = true
+        timeline.duration = 10
+        func event(_ type: NSEvent.EventType, y: Double, x: Double = 36) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: timeline.convert(NSPoint(x: x, y: y), to: nil),
+                                            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        func resize(from start: Double, to end: Double, row: TimelineHeights.Row, cancel: Bool = false) throws {
+            let originalHeight = timeline.heights[row]
+            timeline.mouseDown(with: try event(.leftMouseDown, y: start))
+            timeline.mouseDragged(with: try event(.leftMouseDragged, y: end))
+            XCTAssertEqual(timeline.heights[row], originalHeight, "ドラッグ中は保存値を変更しない")
+            if cancel { timeline.cancelDrag() }
+            timeline.mouseUp(with: try event(.leftMouseUp, y: end))
+        }
+
+        try resize(from: 87, to: 141, row: .lyrics)
+        XCTAssertEqual(timeline.heights[.lyrics], 98)
+        try resize(from: 141, to: 100, row: .lyrics, cancel: true)
+        XCTAssertEqual(timeline.heights[.lyrics], 98)
+
+        timeline.imageMode = true
+        var images = ImageTrack()
+        let asset = images.register(url: URL(fileURLWithPath: "/tmp/a.png"), projectURL: URL(fileURLWithPath: "/tmp/a.mvproject"))
+        var clip = ImageClip(assetID: asset, start: 1, end: 4)
+        _ = clip.setKey(.scale, at: 1, value: 100)
+        _ = clip.setKey(.rotation, at: 1, value: 0)
+        images.layers[2].clips = [clip]
+        timeline.images = images
+        timeline.revealAutomation(in: 3)
+        try resize(from: 94, to: 130, row: .image(3))
+        XCTAssertEqual(timeline.heights[.image(3)], 82)
+        XCTAssertEqual(timeline.heights[.image(2)], 46)
+        try resize(from: 192, to: 220, row: .automation(3, .scale))
+        XCTAssertEqual(timeline.heights[.automation(3, .scale)], 90)
+        XCTAssertEqual(timeline.heights[.automation(3, .rotation)], 62)
+        XCTAssertEqual(timeline.heights[.automation(2, .scale)], 62)
+        XCTAssertEqual(commits, 3)
+        XCTAssertEqual(timeline.images, images)
+
+        timeline.onSeek = nil
+        let x = timeline.x(at: 2)
+        timeline.mouseDown(with: try event(.leftMouseDown, y: 250, x: x))
+        timeline.mouseUp(with: try event(.leftMouseUp, y: 250, x: x))
+        XCTAssertEqual(timeline.selectedParameter, .rotation, "手前の行を拡大しても後続レーンでキーを選択できる")
+        try resize(from: 220, to: 145, row: .automation(3, .scale))
+        XCTAssertEqual(timeline.heights[.automation(3, .scale)], 27)
+        try resize(from: 130, to: 0, row: .image(3))
+        XCTAssertEqual(timeline.heights[.image(3)], 21)
+
+        let compactScaleKey = try XCTUnwrap(clip.curve(.scale)?.keys.first)
+        let keyX = timeline.x(at: clip.start + compactScaleKey.time)
+        timeline.mouseDown(with: try event(.leftMouseDown, y: 82, x: keyX))
+        timeline.mouseUp(with: try event(.leftMouseUp, y: 82, x: keyX))
+        XCTAssertEqual(timeline.selectedKeyID, compactScaleKey.id)
+        timeline.mouseDown(with: try event(.leftMouseDown, y: 59, x: 65))
+        timeline.mouseUp(with: try event(.leftMouseUp, y: 59, x: 65))
+        XCTAssertFalse(timeline.expandedLayerSlots.contains(3))
+
+        timeline.imageMode = false
+        try resize(from: 141, to: 0, row: .lyrics)
+        XCTAssertEqual(timeline.heights[.lyrics], 20)
+        XCTAssertTrue(timeline.heights.isValid)
+        XCTAssertEqual(commits, 6)
+    }
+
     private func sample() throws -> LyricsTrack {
         let first = try LyricsTrack().adding(at: 1, duration: 20)
         let second = try first.track.adding(at: 2, duration: 20)

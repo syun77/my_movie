@@ -35,7 +35,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
     private let end = DragValueField(frame: .zero)
     private let slot = NSPopUpButton()
     private let automatic = NSPopUpButton()
-    private let keySnap = NSButton(checkboxWithTitle: "拍スナップ", target: nil, action: nil)
+    private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
     private let graphParameter = NSPopUpButton()
     private let minimum = DragValueField(frame: .zero)
     private let maximum = DragValueField(frame: .zero)
@@ -126,7 +126,7 @@ final class ImageEditor: NSViewController, NSTextFieldDelegate {
         keySnap.state = .on
         keySnap.identifier = NSUserInterfaceItemIdentifier("images.keySnap")
         keySnap.target = self; keySnap.action = #selector(changeKeySnap)
-        keySnap.toolTip = "制御点を16分音符またはクリップの端に揃えます"
+        keySnap.toolTip = "制御点をタイムラインで選んだ音符の位置またはクリップの端に揃えます"
         graphParameter.target = self; graphParameter.action = #selector(changeGraphParameter)
         for (field, id) in [(minimum, "minimum"), (maximum, "maximum")] {
             field.identifier = NSUserInterfaceItemIdentifier("images.graph." + id)

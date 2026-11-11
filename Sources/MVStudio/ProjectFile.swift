@@ -10,14 +10,16 @@ struct ProjectFile: Codable {
     var images: ImageTrack { ImageTrack(assets: imageAssets, layers: imageLayers) }
     let settings: SceneSettings
     let lyrics: LyricsTrack
+    let timelineHeights: TimelineHeights?
 
-    init(audioURL: URL, images: ImageTrack = ImageTrack(), settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), projectURL: URL) {
+    init(audioURL: URL, images: ImageTrack = ImageTrack(), settings: SceneSettings, lyrics: LyricsTrack = LyricsTrack(), timelineHeights: TimelineHeights? = nil, projectURL: URL) {
         version = Self.currentVersion
         audio = AssetReference(url: audioURL, projectURL: projectURL)
         imageAssets = images.assets
         imageLayers = images.layers
         self.settings = settings
         self.lyrics = lyrics
+        self.timelineHeights = timelineHeights
     }
 
     mutating func upgradeVersion() { version = Self.currentVersion }
@@ -31,7 +33,8 @@ struct ProjectFile: Codable {
         let ids = imageAssets.map(\.id) + imageLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
         guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
-              settings.beatOffset.isFinite, settings.beatOffset >= 0, settings.spectrumStyle.isValid else {
+              settings.beatOffset.isFinite, settings.beatOffset >= 0, settings.spectrumStyle.isValid,
+              timelineHeights?.isValid != false else {
             throw StudioError.message("プロジェクトの設定値が不正です。")
         }
     }

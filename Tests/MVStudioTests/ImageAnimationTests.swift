@@ -155,6 +155,9 @@ final class ImageAnimationTests: XCTestCase {
         let editor = ImageEditor()
         _ = editor.view
         editor.timeline = timeline
+        let grid = TimelineSnapGrid(division: .quarter)
+        editor.snapGrid = grid
+        timeline.snapGrid = grid
         let (track, clip) = try fixture()
         editor.duration = 10
         editor.load(track, projectURL: nil)
@@ -165,12 +168,13 @@ final class ImageAnimationTests: XCTestCase {
         editor.onSeek = timeline.onSeek
         defer { timeline.onSeek = nil; editor.onSeek = nil }
         timeline.onImageSelect?(clip.id, 3)
-        timeline.onSeek?(1.5)
+        timeline.onSeek?(1.52)
 
         let value = try XCTUnwrap(control("images.value.scale", in: editor.view) as NSTextField?)
         let button = try XCTUnwrap(control("images.key.scale", in: editor.view) as NSButton?)
         value.stringValue = "150"
         button.performClick(nil)
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.time, 0.5)
         XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
         XCTAssertEqual(timeline.selectedParameter, .scale)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.value, 150)
@@ -186,10 +190,11 @@ final class ImageAnimationTests: XCTestCase {
                                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
                                eventNumber: 0, clickCount: 1, pressure: 1)!
         }
-        timeline.mouseDown(with: event(.leftMouseDown, time: 2.52, y: 125))
-        timeline.mouseUp(with: event(.leftMouseUp, time: 2.52, y: 125))
-        XCTAssertEqual(timeline.currentTime, 1.5, "点を追加しても再生ヘッドを移動しない")
-        XCTAssertEqual(editor.currentTime, 1.5)
+        timeline.onSeek?(1.52)
+        timeline.mouseDown(with: event(.leftMouseDown, time: 2.62, y: 125))
+        timeline.mouseUp(with: event(.leftMouseUp, time: 2.62, y: 125))
+        XCTAssertEqual(timeline.currentTime, 1.52, "点を追加しても再生ヘッドを移動しない")
+        XCTAssertEqual(editor.currentTime, 1.52)
         let added = editor.track
         let key = try XCTUnwrap(added.clip(clip.id)?.curve(.scale)?.keys.last)
         XCTAssertEqual(key.time, 1.5)
@@ -213,14 +218,14 @@ final class ImageAnimationTests: XCTestCase {
         timeline.mouseDown(with: event(.leftMouseDown, time: 2.5, y: 134))
         XCTAssertEqual(timeline.selectedKeyID, key.id, "点の中心から9pt離れていても掴める")
         XCTAssertEqual(timeline.currentTime, 2.5, "既存の点を選ぶとその時刻に移動する")
-        timeline.mouseDragged(with: event(.leftMouseDragged, time: 2.75, y: 121))
+        timeline.mouseDragged(with: event(.leftMouseDragged, time: 2.85, y: 121))
         XCTAssertEqual(editor.track, added)
         timeline.cancelDrag()
         XCTAssertEqual(editor.track, added)
         timeline.mouseDown(with: event(.leftMouseDown, time: 2.5, y: 134))
-        timeline.mouseDragged(with: event(.leftMouseDragged, time: 2.75, y: 121))
-        timeline.mouseUp(with: event(.leftMouseUp, time: 2.75, y: 121))
-        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.time, 1.75)
+        timeline.mouseDragged(with: event(.leftMouseDragged, time: 2.85, y: 121))
+        timeline.mouseUp(with: event(.leftMouseUp, time: 2.85, y: 121))
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.time, 2)
         XCTAssertEqual(timeline.selectedKeyID, key.id)
         let delete = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                       windowNumber: window.windowNumber, context: nil, characters: "\u{7f}",
@@ -258,5 +263,28 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.id, freeKey.id)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.value, freeKey.value)
         XCTAssertEqual(Double(value.stringValue), 150)
+
+        func contextMenu(at point: NSPoint) -> NSMenu? {
+            let click = NSEvent.mouseEvent(with: .rightMouseDown, location: timeline.convert(point, to: nil),
+                                           modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                           context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            return timeline.menu(for: click)
+        }
+        let original = editor.track
+        XCTAssertNil(contextMenu(at: NSPoint(x: timeline.x(at: 2), y: 105)))
+        let menu = try XCTUnwrap(contextMenu(at: NSPoint(x: 20, y: 105)))
+        let removal = try XCTUnwrap(menu.item(withTitle: "レーンを削除"))
+        XCTAssertEqual(editor.track, original)
+        var commits = 0
+        editor.onChange = { _ in commits += 1 }
+        XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(removal.action), to: removal.target, from: removal))
+        XCTAssertEqual(commits, 1)
+        let updated = try XCTUnwrap(editor.track.clip(clip.id))
+        XCTAssertNil(updated.curve(.scale))
+        XCTAssertEqual(updated.manualValue(.scale, at: 2), 150)
+        XCTAssertNil(timeline.selectedParameter)
+        XCTAssertNil(timeline.selectedKeyID)
+        XCTAssertEqual(timeline.currentTime, 2.123)
+        XCTAssertNil(contextMenu(at: NSPoint(x: 20, y: 105)))
     }
 }

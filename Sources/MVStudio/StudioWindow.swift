@@ -1,6 +1,7 @@
 import AppKit
 
 final class StudioWindow: NSWindow {
+    weak var clipEditor: PlacementEditor?
     var onBeginInteraction: (() -> Void)?
     var onEndInteraction: (() -> Void)?
     var onHistoryAction: ((Bool) -> Void)?
@@ -10,7 +11,37 @@ final class StudioWindow: NSWindow {
         if event.charactersIgnoringModifiers?.lowercased() == "z", flags == .command || flags == [.command, .shift], onHistoryAction != nil {
             onHistoryAction?(flags.contains(.shift)); return true
         }
+        if flags == .command, let key = event.charactersIgnoringModifiers?.lowercased(),
+           let command = ClipEditCommand(rawValue: key), canEditClip(command) {
+            if !event.isARepeat { clipEditor?.editClip(command, pasteboard: .general) }
+            return true
+        }
         return super.performKeyEquivalent(with: event)
+    }
+
+    private func canEditClip(_ command: ClipEditCommand) -> Bool {
+        guard attachedSheet == nil, NSApp.modalWindow == nil, !(firstResponder is NSTextView) else { return false }
+        return clipEditor?.canEditClip(command, pasteboard: .general) == true
+    }
+
+    private func editClip(_ command: ClipEditCommand) {
+        guard canEditClip(command) else { return }
+        clipEditor?.editClip(command, pasteboard: .general)
+    }
+
+    @objc func cut(_ sender: Any?) { editClip(.cut) }
+    @objc func copy(_ sender: Any?) { editClip(.copy) }
+    @objc func paste(_ sender: Any?) { editClip(.paste) }
+    @objc func duplicateClip(_ sender: Any?) { editClip(.duplicate) }
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(cut(_:)): return canEditClip(.cut)
+        case #selector(copy(_:)): return canEditClip(.copy)
+        case #selector(paste(_:)): return canEditClip(.paste)
+        case #selector(duplicateClip(_:)): return canEditClip(.duplicate)
+        default: return super.validateMenuItem(item)
+        }
     }
 
     var onTogglePlayback: (() -> Void)?

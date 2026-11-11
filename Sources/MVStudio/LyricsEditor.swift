@@ -141,12 +141,15 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private func displaySelection() {
         timingIsValid = true
         timeline.selectedID = track.clips.indices.contains(table.selectedRow) ? track.clips[table.selectedRow].id : nil
-        guard track.clips.indices.contains(table.selectedRow) else { return }
+        guard track.clips.indices.contains(table.selectedRow) else {
+            body.string = ""; chain.state = .off
+            return
+        }
         let clip = track.clips[table.selectedRow]
         body.string = clip.text; start.stringValue = String(clip.start); end.stringValue = String(clip.end)
         chain.state = clip.predecessorID == nil ? .off : .on
     }
-    private func commit(_ value: LyricsTrack, selectedID: UUID?, refreshEditor: Bool = true) {
+    func commit(_ value: LyricsTrack, selectedID: UUID?, refreshEditor: Bool = true) {
         do {
             try value.validate(duration: duration)
             message.stringValue = "変更は自動で反映・保存されます。"
@@ -187,7 +190,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         guard available, track.clips.indices.contains(table.selectedRow) else { return }
         do {
             let value = try track.removing(id: track.clips[table.selectedRow].id, duration: duration)
-            commit(value, selectedID: nil); body.string = ""; chain.state = .off
+            commit(value, selectedID: nil)
         } catch { message.stringValue = error.localizedDescription }
     }
     @objc private func changeChain() {

@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         buildMenu()
         let studioWindow = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 1160, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window = studioWindow
+        studioWindow.clipEditor = placementEditor
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
         studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.images.cancelValueDrag() ?? false }
@@ -96,6 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let output = row([export, NSTextField(labelWithString: "\(VideoExporter.width) × \(VideoExporter.height) · \(VideoExporter.fps)fps · H.264 / AAC"), progress, cancel])
         let timeline = placementEditor.view
         placementEditor.visibleSpan = timelineDisplaySettings.visibleSpan
+        placementEditor.snapGrid.division = timelineDisplaySettings.snapDivision
+        placementEditor.onSnapDivisionChange = { [weak self] value in self?.timelineDisplaySettings.snapDivision = value }
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
         placementEditor.restoreTab(timelineDisplaySettings.imageMode ? .images : .lyrics)
@@ -176,11 +179,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             workspace.addSubview(child)
         }
 
+        let minimumPreviewHeight: CGFloat = 100
+        let divider = TimelineDivider()
+        divider.onDrag = { [weak self, weak content] height in
+            guard let self, !self.busy, let content else { return }
+            let timelineHeight = self.placementEditor.timeline.frame.height
+            let maximumHeight = timelineHeight + max(0, self.preview.frame.height - minimumPreviewHeight)
+            self.placementEditor.resizeTimeline(to: min(height, maximumHeight))
+            content.layoutSubtreeIfNeeded()
+        }
+        divider.onCommit = { [weak self] initialHeight in
+            guard let self, !self.busy else { return }
+            self.placementEditor.commitTimelineHeight(from: initialHeight)
+        }
+        placementEditor.onTimelineHeightsCommit = { [weak self] in _ = self?.saveProject() }
+        divider.timelineHeight = { [weak self] in
+            guard let self, !self.busy else { return nil }
+            return self.placementEditor.timeline.frame.height
+        }
+
         status.lineBreakMode = .byTruncatingTail
-        let root = NSStackView(views: [toolbar, workspace, transport, timeline, status])
+        let root = NSStackView(views: [toolbar, workspace, divider, transport, timeline, status])
         root.orientation = .vertical
         root.distribution = .fill
         root.spacing = 12
+        root.setCustomSpacing(4, after: workspace)
+        root.setCustomSpacing(4, after: divider)
         root.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(root)
         for child in root.arrangedSubviews {
@@ -191,6 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
             root.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
             root.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            divider.heightAnchor.constraint(equalToConstant: 9),
+            preview.heightAnchor.constraint(greaterThanOrEqualToConstant: minimumPreviewHeight),
             preview.leadingAnchor.constraint(equalTo: workspace.leadingAnchor),
             preview.topAnchor.constraint(equalTo: workspace.topAnchor),
             preview.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -20),
@@ -200,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             options.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
             inspector.topAnchor.constraint(equalTo: workspace.topAnchor),
             inspector.trailingAnchor.constraint(equalTo: workspace.trailingAnchor),
-            inspector.bottomAnchor.constraint(lessThanOrEqualTo: workspace.bottomAnchor),
+            inspector.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
             inspector.widthAnchor.constraint(equalToConstant: 450)
         ])
     }
@@ -217,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let redo = edit.addItem(withTitle: "やり直す", action: #selector(redoEdit), keyEquivalent: "z"); redo.target = self; redo.keyEquivalentModifierMask = [.command, .shift]
         edit.addItem(.separator())
         for (title, action, key) in [("カット", "cut:", "x"), ("コピー", "copy:", "c"), ("ペースト", "paste:", "v"), ("すべて選択", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key) }
+        edit.addItem(withTitle: "クリップを複製", action: #selector(StudioWindow.duplicateClip(_:)), keyEquivalent: "d")
         editItem.submenu = edit; NSApp.mainMenu = menu
     }
     private func choose(_ types: [UTType]) -> URL? {
@@ -266,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 lyricsEditor.clearPresetSelection()
                 placementEditor.spectrum.clearPresetSelection()
                 if let project { restoreSceneSettings(project.settings) }
+                placementEditor.restoreTimelineHeights(project?.timelineHeights ?? TimelineHeights())
                 preview.lyrics = project?.lyrics ?? LyricsTrack()
                 imageTrack = project?.images ?? ImageTrack(); previewTrack = imageTrack
                 placementEditor.images.load(imageTrack, projectURL: projectURL)
@@ -283,7 +311,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     @discardableResult private func saveProject() -> Bool {
         guard let audioURL, let projectURL else { return true }
         do {
-            try storage.save(ProjectFile(audioURL: audioURL, images: imageTrack, settings: preview.settings, lyrics: preview.lyrics, projectURL: projectURL), to: projectURL)
+            try storage.save(ProjectFile(audioURL: audioURL, images: imageTrack, settings: preview.settings, lyrics: preview.lyrics,
+                                         timelineHeights: placementEditor.timelineHeights, projectURL: projectURL), to: projectURL)
             status.stringValue = "自動保存済み: " + projectURL.lastPathComponent
             return true
         } catch {
@@ -305,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         settings.beatOffset = offsetValue.isFinite ? max(0, offsetValue) : 0
         recordEdit(settings: settings)
         preview.settings = settings
-        placementEditor.snapGrid = TimelineSnapGrid(bpm: settings.bpm, origin: settings.beatOffset)
+        updateSnapGrid(for: settings)
         bpm.stringValue = String(format: "%.1f", preview.settings.bpm)
         offset.stringValue = String(format: "%.2f", preview.settings.beatOffset)
         preview.invalidateFrame()
@@ -315,7 +344,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         bpm.doubleValue = settings.bpm
         offset.doubleValue = settings.beatOffset
         placementEditor.spectrum.load(settings)
-        placementEditor.snapGrid = TimelineSnapGrid(bpm: settings.bpm, origin: settings.beatOffset)
+        updateSnapGrid(for: settings)
+    }
+
+    private func updateSnapGrid(for settings: SceneSettings) {
+        var grid = placementEditor.snapGrid
+        grid.bpm = settings.bpm
+        grid.origin = settings.beatOffset
+        placementEditor.snapGrid = grid
     }
 
     private func endHistoryGroup() {

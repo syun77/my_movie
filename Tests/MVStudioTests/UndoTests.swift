@@ -71,6 +71,20 @@ final class UndoTests: XCTestCase {
         XCTAssertEqual(editor.timeline.selectedID, added.clips[0].id)
         XCTAssertEqual(try storage.read(from: projectURL).lyrics, added)
 
+        let clipboard = NSPasteboard.withUniqueName()
+        defer { clipboard.releaseGlobally() }
+        editor.editClip(.duplicate, pasteboard: clipboard)
+        let duplicated = editor.lyrics.track
+        XCTAssertEqual(duplicated.clips.count, 2)
+        XCTAssertEqual(duplicated.clips.last?.start, added.clips[0].end)
+        XCTAssertEqual(try storage.read(from: projectURL).lyrics, duplicated)
+        delegate.undoEdit()
+        XCTAssertEqual(editor.lyrics.track, added)
+        delegate.redoEdit()
+        XCTAssertEqual(try storage.read(from: projectURL).lyrics, duplicated)
+        delegate.undoEdit()
+        editor.timeline.onSelect?(added.clips[0].id)
+
         func find(_ view: NSView, _ id: String) -> NSView? {
             if view.identifier?.rawValue == id { return view }
             return view.subviews.lazy.compactMap { find($0, id) }.first

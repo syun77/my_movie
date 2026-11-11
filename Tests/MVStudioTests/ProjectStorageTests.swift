@@ -30,7 +30,12 @@ final class ProjectStorageTests: XCTestCase {
         clip.fixedValues[.x] = 120
         clip.setBaseValue(45, for: .rotation)
         images.layers[0].clips = [clip]
-        try storage.save(ProjectFile(audioURL: audio, images: images, settings: settings, projectURL: url), to: url)
+        var heights = TimelineHeights()
+        heights.viewport = 380
+        heights[.lyrics] = 20
+        heights[.image(1)] = 21
+        heights[.automation(1, .rotation)] = 27
+        try storage.save(ProjectFile(audioURL: audio, images: images, settings: settings, timelineHeights: heights, projectURL: url), to: url)
         let restarted = ProjectStorage(defaults: UserDefaults(suiteName: suite)!)
         XCTAssertEqual(restarted.lastProjectURL, url)
         let loaded = try restarted.read(from: url)
@@ -39,12 +44,17 @@ final class ProjectStorageTests: XCTestCase {
         XCTAssertEqual(loaded.images.clips, [clip])
         XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("\"automaticAnimation\""))
         XCTAssertEqual(loaded.settings, settings)
+        XCTAssertEqual(loaded.timelineHeights, heights)
         let moved = directory.appendingPathComponent("moved/曲.wav.mvproject")
         XCTAssertEqual(loaded.audio.resolve(projectURL: moved), moved.deletingLastPathComponent().appendingPathComponent("曲.wav"))
         let outside = URL(fileURLWithPath: "/tmp/external/image.png")
         XCTAssertEqual(AssetReference(url: outside, projectURL: url).resolve(projectURL: moved), outside)
         try storage.save(ProjectFile(audioURL: audio, settings: SceneSettings(), projectURL: url), to: url)
-        XCTAssertTrue(try storage.read(from: url).images.assets.isEmpty)
+        let defaultProject = try storage.read(from: url)
+        XCTAssertTrue(defaultProject.images.assets.isEmpty)
+        XCTAssertNil(defaultProject.timelineHeights)
+        heights[.automation(1, .rotation)] = 0
+        XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: settings, timelineHeights: heights, projectURL: url), to: url))
         let previous = try Data(contentsOf: url)
         var invalid = settings; invalid.bpm = .nan
         XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: invalid, projectURL: url), to: url))

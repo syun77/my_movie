@@ -15,10 +15,14 @@ extension LyricsTrack {
         let maximumEnd = min(limit, duration)
         let finish = try grid?.snap(min(begin + 2, maximumEnd), within: (begin + 1.0 / 30)...maximumEnd) ?? min(begin + 2, maximumEnd)
         let clip = LyricClip(start: begin, end: finish, text: "歌詞を入力", predecessorID: parent?.id)
+        return (try inserting(clip, duration: duration), clip)
+    }
+
+    func inserting(_ clip: LyricClip, duration: Double) throws -> LyricsTrack {
         var value = self
         value.clips.append(clip); value.clips.sort { $0.start < $1.start }
         try value.validate(duration: duration)
-        return (value, clip)
+        return value
     }
 
     func updating(id: UUID, start: Double, end: Double, text: String, duration: Double) throws -> LyricsTrack {
