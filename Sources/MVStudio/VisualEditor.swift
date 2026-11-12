@@ -116,13 +116,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         start.delegate = self; end.delegate = self; sourceIn.delegate = self
         sourceIn.identifier = NSUserInterfaceItemIdentifier("visual.sourceIn")
         sourceIn.stringValue = "0"
-        sourceIn.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        sourceIn.widthAnchor.constraint(equalToConstant: 100).isActive = true
         sourceRow.addArrangedSubview(NSTextField(labelWithString: "素材開始（秒）")); sourceRow.addArrangedSubview(sourceIn)
         sourceIn.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.sourceIn }, initial: { 0 }, normalize: { max(0, $0) }, commit: { [weak self] _ in self?.finishTimingEdit() })
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
-        for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 76).isActive = true }
+        for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 100).isActive = true }
         slot.addItems(withTitles: ["素材1（最背面）", "素材2", "素材3（最前面）"])
         slot.target = self; slot.action = #selector(changePlacement)
         automatic.addItems(withTitles: AutomaticAnimation.allCases.map(\.title))
@@ -138,16 +138,22 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         for (field, id) in [(minimum, "minimum"), (maximum, "maximum")] {
             field.identifier = NSUserInterfaceItemIdentifier("visuals.graph." + id)
             field.delegate = self; field.target = self; field.action = #selector(changeGraphRange)
-            field.toolTip = "ダブルクリックで入力、左右ドラッグで調整、ホイールクリックで初期値"
+            field.toolTip = DragValueField.numberEditingHint
             connectValueField(field) { [weak self, weak field] in
                 guard let self, let parameter = self.rangeParameter else { return nil }
                 return field === self.minimum ? .minimum(parameter) : .maximum(parameter)
             }
-            field.widthAnchor.constraint(equalToConstant: 58).isActive = true
+            field.widthAnchor.constraint(equalToConstant: 82).isActive = true
         }
         let toolbar = row([add, remove, manage])
         let selection = row([name, replace])
-        let timing = row([NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end, NSTextField(labelWithString: "レイヤー"), slot])
+        let timing = NSStackView(views: [
+            row([NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end]),
+            row([NSTextField(labelWithString: "レイヤー"), slot])
+        ])
+        timing.orientation = .vertical
+        timing.alignment = .leading
+        timing.spacing = 4
         let effect = row([NSTextField(labelWithString: "自動アニメ"), automatic, amount, amountLabel, keySnap])
         let horizontal = row([parameterControls(.x), parameterControls(.y)])
         let vertical = row([parameterControls(.scale), parameterControls(.rotation)])
@@ -486,21 +492,19 @@ private extension VisualEditor {
         label.widthAnchor.constraint(equalToConstant: 52).isActive = true
         let field = DragValueField(frame: .zero)
         field.stringValue = String(parameter.defaultValue)
+        field.knobInitialValue = parameter.defaultValue
         connectValueField(field) { .base(parameter) }
         field.identifier = NSUserInterfaceItemIdentifier("visuals.value." + parameter.rawValue)
         field.delegate = self; field.target = self; field.action = #selector(confirmBaseValue(_:))
-        field.toolTip = "固定値・基準値。ダブルクリックで入力、左右ドラッグで調整、ホイールクリックで初期値"
-        field.widthAnchor.constraint(equalToConstant: 66).isActive = true
+        field.toolTip = "固定値・基準値。\(DragValueField.numberEditingHint)"
+        field.widthAnchor.constraint(equalToConstant: 90).isActive = true
         let unit = NSTextField(labelWithString: parameter.unit)
         unit.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        let button = NSButton(title: "◇", target: self, action: #selector(addKey(_:)))
-        button.tag = ImageParameter.allCases.firstIndex(of: parameter)!
-        button.identifier = NSUserInterfaceItemIdentifier("visuals.key." + parameter.rawValue)
-        button.toolTip = parameter.title + "のキーを打つ"
-        button.setAccessibilityLabel(button.toolTip)
+        field.onCreateAutomation = { [weak self] in self?.createAutomation(parameter) }
+        field.onRemoveAutomation = { [weak self] in self?.removeAutomation(parameter) }
         valueFields[parameter] = field
-        clipControls += [field, button]
-        let group = row([label, field, unit, button])
+        clipControls.append(field)
+        let group = row([label, field, unit])
         group.spacing = 5
         return group
     }
@@ -516,9 +520,10 @@ private extension VisualEditor {
     private func refreshAnimationValues() {
         let clip = track.clip(selectedID)
         for (parameter, field) in valueFields {
-            let title = clip?.curve(parameter) == nil ? "固定値" : "基準値"
+            field.hasAutomation = clip?.curve(parameter) != nil
+            let title = field.hasAutomation ? "基準値" : "固定値"
             field.setAccessibilityLabel(parameter.title + "の" + title)
-            field.toolTip = title + "。ダブルクリックで入力、左右ドラッグで調整、ホイールクリックで初期値"
+            field.toolTip = title + "。\(DragValueField.numberEditingHint)。ノブまたは数値を右クリックでオートメーションを作成・削除"
             guard field.currentEditor() == nil, drafts[parameter] == nil else { continue }
             let value = clip?.baseValue(parameter) ?? parameter.defaultValue
             let text = String(value)
@@ -560,33 +565,39 @@ private extension VisualEditor {
         }
     }
 
-    @objc private func addKey(_ button: NSButton) {
-        guard button.isEnabled, var clip = track.clip(selectedID) else { return }
-        let parameter = ImageParameter.allCases[button.tag]
-        guard let field = valueFields[parameter],
+    private func createAutomation(_ parameter: ImageParameter) {
+        guard var clip = track.clip(selectedID), clip.curve(parameter) == nil,
+              let field = valueFields[parameter], field.isEnabled,
               (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
-        let curve = clip.curve(parameter)
-        if curve == nil {
-            let input = field.currentEditor()?.string ?? drafts[parameter] ?? field.stringValue
-            guard let value = Double(input), parameter.accepts(value) else {
-                report(StudioError.message("キーの値を数値で入力してください。拡大率には正の値が必要です。")); return
-            }
-            clip.setBaseValue(value, for: parameter)
+        let input = field.currentEditor()?.string ?? drafts[parameter] ?? field.stringValue
+        guard let value = Double(input), parameter.accepts(value) else {
+            report(StudioError.message("キーの値を数値で入力してください。拡大率には正の値が必要です。")); return
         }
+        clip.setBaseValue(value, for: parameter)
         onBeginEdit?()
         guard currentTime >= clip.start, currentTime <= clip.end else {
             report(StudioError.message("選択した画像クリップ内に再生位置を合わせてください。")); return
         }
-        let existing = curve?.key(near: currentTime - clip.start)
-        let time = existing.map { clip.start + $0.time }
-            ?? clip.keyTime(at: currentTime, grid: keySnap.state == .on ? snapGrid : nil)
+        let time = clip.keyTime(at: currentTime, grid: keySnap.state == .on ? snapGrid : nil)
         let id = clip.setKey(parameter, at: time, value: clip.manualValue(parameter, at: time))
         if commitAnimation(clip) {
             drafts[parameter] = nil
-            if curve == nil { timeline?.revealAutomation(in: selectedSlot) }
+            timeline?.revealAutomation(in: selectedSlot)
             timeline?.selectGraph(parameter, key: id, reveal: true)
             let keyTime = clip.curve(parameter)?.keys.first { $0.id == id }.map { clip.start + $0.time }
             onSeek?(keyTime ?? time)
+            refreshAnimationValues()
+        }
+    }
+
+    private func removeAutomation(_ parameter: ImageParameter) {
+        guard valueFields[parameter]?.isEnabled == true else { return }
+        cancelValueDrag()
+        guard var clip = track.clip(selectedID), clip.curve(parameter) != nil else { return }
+        clip.curves.removeAll { $0.parameter == parameter }
+        onBeginEdit?()
+        if commitAnimation(clip) {
+            drafts[parameter] = nil
             refreshAnimationValues()
         }
     }

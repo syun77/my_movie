@@ -61,11 +61,22 @@ final class StudioWindow: NSWindow {
         return field.resetValue()
     }
 
+    func editingAutomationField(for event: NSEvent) -> DragValueField? {
+        guard event.type == .rightMouseDown, let contentView else { return nil }
+        return DragValueField.fields(in: contentView).first {
+            !$0.isHiddenOrHasHiddenAncestor && $0.currentEditor() != nil && $0.menu(for: event) != nil
+        }
+    }
+
     override func sendEvent(_ event: NSEvent) {
         if event.type == .leftMouseDown { onBeginInteraction?() }
         defer { if event.type == .leftMouseDown || event.type == .leftMouseUp { onEndInteraction?() } }
         guard attachedSheet == nil, NSApp.modalWindow == nil else {
             super.sendEvent(event)
+            return
+        }
+        if let field = editingAutomationField(for: event) {
+            field.rightMouseDown(with: event)
             return
         }
         if event.type == .otherMouseDown, event.buttonNumber == 2,

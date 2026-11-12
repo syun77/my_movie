@@ -72,9 +72,10 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
         field.setAccessibilityLabel(title)
         field.alignment = .right
         field.delegate = self
-        field.widthAnchor.constraint(equalToConstant: 62).isActive = true
+        field.widthAnchor.constraint(equalToConstant: 86).isActive = true
         let keyPath = parameter.keyPath
         let range = parameter.range
+        field.knobRange = Double(range.lowerBound)...Double(range.upperBound)
         field.bindNumber(current: { [weak self] in self.map { Double($0.layout[keyPath: keyPath]) } },
                          initial: { Double(SpectrumLayout()[keyPath: keyPath]) },
                          normalize: { min(Double(range.upperBound), max(Double(range.lowerBound), $0)) },

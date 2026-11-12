@@ -203,8 +203,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                         read: @escaping (ImageEffects) -> Double?,
                         update: @escaping (ImageEffects, Double) -> ImageEffects) -> [NSView] {
         let field = DragValueField(frame: .zero)
-        field.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        field.widthAnchor.constraint(equalToConstant: 76).isActive = true
         field.alignment = .right
+        field.knobRange = range
         field.setAccessibilityLabel(accessibilityLabel ?? title)
         field.delegate = self
         let write: (ImageEffects, Double) -> ImageEffects = { effects, value in
@@ -220,7 +221,11 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             self.onCommit?(write(self.effects, value))
         })
         numbers.append(NumberInput(field: field, read: read, write: write))
-        return [NSTextField(labelWithString: title), field]
+        let group = NSStackView(views: [NSTextField(labelWithString: title), field])
+        group.orientation = .vertical
+        group.alignment = .leading
+        group.spacing = 2
+        return [group]
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {

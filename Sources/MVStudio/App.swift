@@ -82,8 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let files = row([audioButton, audioName])
         audioName.lineBreakMode = .byTruncatingMiddle
         audioName.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        bpm.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        offset.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        bpm.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        offset.widthAnchor.constraint(equalToConstant: 88).isActive = true
         bpm.identifier = NSUserInterfaceItemIdentifier("scene.bpm"); offset.identifier = NSUserInterfaceItemIdentifier("scene.offset")
         bpm.delegate = self; offset.delegate = self
         bpm.stringValue = "120"; offset.stringValue = "0"

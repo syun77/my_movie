@@ -79,11 +79,16 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         let textScroll = NSScrollView(); textScroll.documentView = body; textScroll.hasVerticalScroller = true
         body.isVerticallyResizable = true; body.isHorizontallyResizable = false
         body.autoresizingMask = [.width]; body.textContainer?.widthTracksTextView = true
-        start.widthAnchor.constraint(equalToConstant: 65).isActive = true
-        end.widthAnchor.constraint(equalToConstant: 65).isActive = true
+        start.widthAnchor.constraint(equalToConstant: 89).isActive = true
+        end.widthAnchor.constraint(equalToConstant: 89).isActive = true
         chain.target = self; chain.action = #selector(changeChain)
         chain.identifier = NSUserInterfaceItemIdentifier("lyrics.chain")
-        let timing = NSStackView(views: [NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end])
+        let timing = NSStackView(views: [
+            NSStackView(views: [NSTextField(labelWithString: "開始"), start]),
+            NSStackView(views: [NSTextField(labelWithString: "終了"), end])
+        ])
+        timing.orientation = .vertical
+        timing.alignment = .leading
         timing.spacing = 8
         let detail = NSStackView(views: [textScroll, timing, chain]); detail.orientation = .vertical; detail.spacing = 6
         textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor).isActive = true
@@ -306,9 +311,10 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         field.setAccessibilityLabel(title)
         field.delegate = self
         field.alignment = .right
-        field.widthAnchor.constraint(equalToConstant: 54).isActive = true
+        field.widthAnchor.constraint(equalToConstant: 78).isActive = true
         let keyPath = parameter.keyPath
         let range = parameter.range
+        field.knobRange = Double(range.lowerBound)...Double(range.upperBound)
         field.bindNumber(current: { [weak self] in self.map { Double($0.track.typography[keyPath: keyPath]) } },
                          initial: { Double(LyricsTypography()[keyPath: keyPath]) },
                          normalize: { min(Double(range.upperBound), max(Double(range.lowerBound), $0)) },

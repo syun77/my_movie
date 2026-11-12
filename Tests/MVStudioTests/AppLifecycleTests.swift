@@ -58,6 +58,16 @@ final class AppLifecycleTests: XCTestCase {
                                 (.visuals, editor.visuals.view), (.spectrum, editor.spectrum.view)] {
             editor.restoreTab(tab)
             content.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(settings.bitmapImageRepForCachingDisplay(in: settings.bounds))
+            settings.cacheDisplay(in: settings.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(
+                to: URL(fileURLWithPath: "/tmp/my_movie-knob-\(tab).png"))
+            for field in DragValueField.fields(in: settings) where !field.isHiddenOrHasHiddenAncestor {
+                let rect = settings.convert(field.bounds, from: field)
+                XCTAssertGreaterThanOrEqual(rect.minX, -1)
+                XCTAssertLessThanOrEqual(rect.maxX, settings.bounds.width + 1)
+                XCTAssertGreaterThanOrEqual(field.bounds.width, 70)
+            }
             let previewFrame = content.convert(preview.bounds, from: preview)
             let inspectorFrame = content.convert(editor.inspector.bounds, from: editor.inspector)
             let timelineFrame = content.convert(editor.timeline.bounds, from: editor.timeline)

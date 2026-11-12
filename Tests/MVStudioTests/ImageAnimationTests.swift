@@ -3,6 +3,22 @@ import XCTest
 @testable import MVStudio
 
 final class ImageAnimationTests: XCTestCase {
+    @MainActor private func automationMenu(_ field: DragValueField) -> NSMenu? {
+        if field.bounds.isEmpty { field.setFrameSize(NSSize(width: 90, height: 24)) }
+        let event = NSEvent.mouseEvent(with: .rightMouseDown,
+            location: field.convert(NSPoint(x: 11, y: field.bounds.midY), to: nil), modifierFlags: [],
+            timestamp: 0, windowNumber: field.window?.windowNumber ?? 0, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1)!
+        return field.menu(for: event)
+    }
+
+    @MainActor private func performAutomationMenu(_ field: DragValueField, title: String) throws {
+        let menu = try XCTUnwrap(automationMenu(field))
+        XCTAssertEqual(menu.items.map(\.title), [title])
+        let item = try XCTUnwrap(menu.items.first)
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+    }
+
     private func fixture(slot: Int = 3) throws -> (VisualTrack, VisualClip) {
         var track = VisualTrack()
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/animation.png"), projectURL: URL(fileURLWithPath: "/tmp/animation.mvproject"))
@@ -94,8 +110,14 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(editor.track.clip(clip.id)?.fixedValues[.scale], 120)
         XCTAssertEqual(commits, 1)
 
-        let key = try XCTUnwrap(control("visuals.key.scale", in: editor.view) as NSButton?)
-        key.performClick(nil)
+        XCTAssertNil(control("visuals.key.scale", in: editor.view) as NSButton?)
+        XCTAssertFalse(field.hasAutomation)
+        try performAutomationMenu(field, title: "オートメーションを作成")
+        XCTAssertTrue(field.hasAutomation)
+        let bitmap = try XCTUnwrap(field.bitmapImageRepForCachingDisplay(in: field.bounds))
+        field.cacheDisplay(in: field.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(
+            to: URL(fileURLWithPath: "/tmp/my_movie-automation-badge.png"))
         let keyed = editor.track
         field.mouseDown(with: event(.leftMouseDown))
         field.mouseDragged(with: event(.leftMouseDragged, x: 110))
@@ -143,6 +165,18 @@ final class ImageAnimationTests: XCTestCase {
         minimum.mouseUp(with: event(.leftMouseUp, x: 105))
         minimum.otherMouseDown(with: reset)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 10)
+        let automated = editor.track
+        let commitsBeforeDelete = commits
+        try performAutomationMenu(field, title: "オートメーションを削除")
+        XCTAssertFalse(field.hasAutomation)
+        XCTAssertNil(editor.track.clip(clip.id)?.curve(.scale))
+        XCTAssertEqual(editor.track.clip(clip.id)?.baseValue(.scale), 100)
+        XCTAssertEqual(commits, commitsBeforeDelete + 1)
+        editor.load(automated, projectURL: nil)
+        timeline.onImageSelect?(clip.id, 3)
+        XCTAssertTrue(field.hasAutomation, "復元時に青い丸も復元する")
+        editor.setAvailable(false)
+        XCTAssertNil(automationMenu(field))
     }
 
     @MainActor func testInspectorAndGraphAddMoveCancelAndDelete() throws {
@@ -171,9 +205,9 @@ final class ImageAnimationTests: XCTestCase {
         timeline.onSeek?(1.52)
 
         let value = try XCTUnwrap(control("visuals.value.scale", in: editor.view) as NSTextField?)
-        let button = try XCTUnwrap(control("visuals.key.scale", in: editor.view) as NSButton?)
+        let knob = try XCTUnwrap(value as? DragValueField)
         value.stringValue = "150"
-        button.performClick(nil)
+        try performAutomationMenu(knob, title: "オートメーションを作成")
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.time, 0.5)
         XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
         XCTAssertEqual(timeline.selectedParameter, .scale)
@@ -252,13 +286,11 @@ final class ImageAnimationTests: XCTestCase {
         let snap = try XCTUnwrap(control("visuals.keySnap", in: editor.view) as NSButton?)
         snap.performClick(nil)
         timeline.onSeek?(2.123)
-        value.stringValue = "90"
-        button.performClick(nil)
+        click(NSPoint(x: timeline.x(at: 2.123), y: 125))
         let freeKey = try XCTUnwrap(editor.track.clip(clip.id)?.curve(.scale)?.keys.last)
         XCTAssertEqual(freeKey.time, 1.123, accuracy: 1e-9)
         snap.performClick(nil)
-        value.stringValue = "80"
-        button.performClick(nil)
+        click(NSPoint(x: timeline.x(at: 2.123), y: 125))
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.count, 2)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.id, freeKey.id)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.last?.value, freeKey.value)
@@ -281,6 +313,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(commits, 1)
         let updated = try XCTUnwrap(editor.track.clip(clip.id))
         XCTAssertNil(updated.curve(.scale))
+        XCTAssertFalse(knob.hasAutomation, "レーンから削除してもノブの表示を更新する")
         XCTAssertEqual(updated.manualValue(.scale, at: 2), 150)
         XCTAssertNil(timeline.selectedParameter)
         XCTAssertNil(timeline.selectedKeyID)
