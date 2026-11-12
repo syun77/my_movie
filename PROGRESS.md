@@ -1,8 +1,18 @@
-# オートメーション表示の丸を拡大（作業中）
+# ノブの方向線を明るくする（完了）
+
+- 最終更新: 2026-11-12 JST。要件: ノブの向きを示す線を明るくする。
+- 方針: 方向線を明るい水色（sRGB 0.65 / 0.90 / 1.00）へ変更する。
+- 変更: DragValueField.swiftの方向線の色とAGENTS.mdの知見を更新。整理確認で共通描画1箇所の変更に集約できていることを確認。
+- 検証: ImageAnimationTests 3件成功（/tmp/my_movie-bright-indicator-test.log）、生成PNGで方向線の色を確認。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-bright-indicator-build.log）。最新dist/MV Studio.app生成済み。署名検証とgit diff --check成功。実行中処理・障害なし。次: 最新アプリを再起動する。
+
+# オートメーション表示の丸を拡大（完了）
 
 - 最終更新: 2026-11-12 JST。要件: オートメーションの丸のサイズを2倍にする。
 - 方針: 中心位置を保って直径4ptから8ptに拡大。24ptのノブ領域内に収める。
-- 次: 描画・整理確認、既存テスト、アプリ生成。実行中処理なし。
+- 変更: DragValueField.swiftの直径と原点を更新し、AGENTS.mdの表示仕様を同期。整理フェーズで共通描画1箇所の修正だけで全項目へ反映されることを確認。
+- 検証: ImageAnimationTests 3件成功（/tmp/my_movie-large-badge-test.log）。生成PNGで拡大した丸とノブ領域内の収まりを確認。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-large-badge-build.log）。最新dist/MV Studio.app生成済み。署名検証とgit diff --check成功。実行中処理・障害なし。次: 最新アプリを再起動する。
 
 # オートメーション表示の明度調整（完了）
 

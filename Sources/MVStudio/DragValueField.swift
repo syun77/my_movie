@@ -86,7 +86,7 @@ final class DragValueField: NSTextField {
         track.lineWidth = 2; track.stroke()
         let indicator = NSBezierPath()
         indicator.move(to: center); indicator.line(to: point(fraction(value), radius: 6))
-        NSColor.controlAccentColor.withAlphaComponent(opacity).setStroke()
+        NSColor(srgbRed: 0.65, green: 0.90, blue: 1.00, alpha: opacity).setStroke()
         indicator.lineWidth = 2; indicator.lineCapStyle = .round; indicator.stroke()
         if hasAutomation {
             NSColor(srgbRed: 0.30, green: 0.80, blue: 1.00, alpha: opacity).setFill()
