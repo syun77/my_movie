@@ -41,6 +41,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     }
     private var previewFrameTask: Task<Void, Never>?
     private var previewRevision = 0
+    private var transientPreparation: Task<Void, Never>?
+    private var transientRevision = UUID()
     private var visualTrack = VisualTrack()
     private var previewTrack = VisualTrack()
 
@@ -165,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.visuals.onSeek = { [weak self] time in self?.lyricsEditor.onSeek?(time) }
         placementEditor.visuals.onChange = { [weak self] value in
             guard let self else { return }
-            self.recordEdit(visuals: value); self.stopPlayback(); self.visualTrack = value; self.previewTrack = value; self.refreshPreviewFrames(); self.refreshControls(); _ = self.saveProject()
+            self.recordEdit(visuals: value); self.stopPlayback(); self.visualTrack = value; self.previewTrack = value; self.prepareTransients(); self.refreshPreviewFrames(); self.refreshControls(); _ = self.saveProject()
         }
         placementEditor.visuals.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewFrames() }
         installLayout(toolbar: row([files, output]), options: options, transport: transport, timeline: timeline)
@@ -314,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 audioName.stringValue = "音声: " + url.lastPathComponent
                 previewRevision += 1; lastPreviewKey = nil; preview.visuals = []
                 editHistory.reset(EditSnapshot(lyrics: preview.lyrics, visuals: visualTrack, settings: preview.settings)); endHistoryGroup()
+                prepareTransients()
                 _ = saveProject(); refreshPreviewFrames()
             } catch is CancellationError { status.stringValue = "解析をキャンセルしました。" }
             catch { showError(error) }
@@ -364,6 +367,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         grid.bpm = settings.bpm
         grid.origin = settings.beatOffset
         placementEditor.snapGrid = grid
+        placementEditor.timeline.sceneSettings = settings
+        placementEditor.visuals.musicEditor.settings = settings
     }
 
     private func endHistoryGroup() {
@@ -408,6 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         restoreSceneSettings(value.settings); preview.lyrics = value.lyrics
         visualTrack = value.visuals; previewTrack = value.visuals
         lyricsEditor.restore(value.lyrics); placementEditor.visuals.restore(value.visuals)
+        prepareTransients()
         lastPreviewKey = nil; refreshPreviewFrames(); refreshControls(); preview.invalidateFrame()
         _ = saveProject()
     }
@@ -525,6 +531,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             }
         }
     }
+    private func prepareTransients() {
+        transientPreparation?.cancel()
+        let revision = UUID(); transientRevision = revision
+        guard let features = preview.features, let url = audioURL else { return }
+        placementEditor.timeline.audioFeatures = features
+        placementEditor.visuals.musicEditor.features = features
+        placementEditor.visuals.musicEditor.analysisError = nil
+        let bands = visualTrack.requiredTransientBands
+        guard bands.contains(where: { features.transientEvents[$0] == nil }) else { return }
+        transientPreparation = Task { [weak self] in
+            do {
+                let prepared = try await TransientAnalysisService.shared.prepare(features, url: url, bands: bands)
+                guard let self, !Task.isCancelled, self.transientRevision == revision, self.audioURL == url else { return }
+                self.preview.features = prepared
+                self.placementEditor.timeline.audioFeatures = prepared
+                self.placementEditor.visuals.musicEditor.features = prepared
+                self.preview.invalidateFrame()
+            } catch is CancellationError { }
+            catch {
+                guard let self, self.transientRevision == revision else { return }
+                self.placementEditor.visuals.musicEditor.analysisError = "解析失敗: " + error.localizedDescription
+                self.status.stringValue = "帯域解析失敗: " + error.localizedDescription
+            }
+        }
+    }
+
     @objc private func exportVideo() {
         guard placementEditor.finishEditing() else { status.stringValue = "入力を確定してください。"; return }; updateSettings()
         guard let features = preview.features, let audioURL, let projectURL else { return }
@@ -585,6 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         prepareToClose() ? .terminateNow : .terminateCancel
     }
     func applicationWillTerminate(_ notification: Notification) {
+        transientPreparation?.cancel()
         playbackPreparation?.cancel(); previewFrameTask?.cancel(); pendingFrame = nil
         Task { await previewFrames.invalidate() }
         timer?.invalidate(); timer = nil

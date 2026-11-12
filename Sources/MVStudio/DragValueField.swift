@@ -8,6 +8,9 @@ final class DragValueField: NSTextField {
     var onReset: (() -> Void)?
     var onCreateAutomation: (() -> Void)?
     var onRemoveAutomation: (() -> Void)?
+    var onEditMusic: (() -> Void)?
+    var onRemoveMusic: (() -> Void)?
+    var hasMusic = false { didSet { needsDisplay = true } }
     var hasAutomation = false { didSet { needsDisplay = true } }
 
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -18,6 +21,14 @@ final class DragValueField: NSTextField {
         let item = menu.addItem(withTitle: hasAutomation ? "オートメーションを削除" : "オートメーションを作成",
                                action: #selector(changeAutomation), keyEquivalent: "")
         item.target = self
+        if onEditMusic != nil {
+            let music = menu.addItem(withTitle: hasMusic ? "音楽同期を編集…" : "音楽同期を追加…", action: #selector(editMusic), keyEquivalent: "")
+            music.target = self
+            if hasMusic {
+                let remove = menu.addItem(withTitle: "音楽同期を削除", action: #selector(removeMusic), keyEquivalent: "")
+                remove.target = self
+            }
+        }
         return menu
     }
 
@@ -33,6 +44,9 @@ final class DragValueField: NSTextField {
         guard isEnabled else { return }
         if hasAutomation { onRemoveAutomation?() } else { onCreateAutomation?() }
     }
+
+    @objc private func editMusic() { if isEnabled { onEditMusic?() } }
+    @objc private func removeMusic() { if isEnabled { onRemoveMusic?() } }
 
     private var mouseStart: NSPoint?
     private var previousMouse: NSPoint?
@@ -92,6 +106,13 @@ final class DragValueField: NSTextField {
             NSColor(srgbRed: 0.30, green: 0.80, blue: 1.00, alpha: opacity).setFill()
             let y = isFlipped ? center.y - 12 : center.y + 4
             NSBezierPath(ovalIn: NSRect(x: 15, y: y, width: 8, height: 8)).fill()
+        }
+        if hasMusic {
+            let path = NSBezierPath()
+            let y = isFlipped ? center.y + 9 : center.y - 9
+            path.move(to: NSPoint(x: 3, y: y)); path.line(to: NSPoint(x: 6, y: y - 3))
+            path.line(to: NSPoint(x: 9, y: y + 3)); path.line(to: NSPoint(x: 12, y: y))
+            NSColor.systemOrange.withAlphaComponent(opacity).setStroke(); path.lineWidth = 1.5; path.stroke()
         }
         let initial = point(fraction(initialValue), radius: 10)
         NSColor.secondaryLabelColor.withAlphaComponent(opacity).setFill()

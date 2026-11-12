@@ -8,6 +8,48 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var embers: Embers?
     var snow: Snow?
     var orbs: Orbs?
+    var shake: Shake?
+    var colorCorrection: ColorCorrection?
+
+    struct ColorCorrection: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var hue = 0.0
+        var brightness = 0.0
+        var saturation = 100.0
+        static let hueRange = -180.0...180
+        static let brightnessRange = -100.0...100
+        static let saturationRange = 0.0...200
+
+        var isValid: Bool {
+            Self.hueRange.contains(hue) && Self.brightnessRange.contains(brightness)
+                && Self.saturationRange.contains(saturation)
+        }
+    }
+
+
+    struct Shake: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var x = 20.0
+        var y = 20.0
+        var strength = 100.0
+        var phaseOffset = 0.0
+        static let amplitudeRange = 0.0...500
+        static let strengthRange = 0.0...200
+
+        var isValid: Bool {
+            Self.amplitudeRange.contains(x) && Self.amplitudeRange.contains(y)
+                && Self.strengthRange.contains(strength) && phaseOffset.isFinite
+                && abs(phaseOffset) <= Double.greatestFiniteMagnitude / 1024
+        }
+
+        func displacement(at time: Double) -> SIMD2<Double> {
+            guard isEnabled else { return .zero }
+            let t = time + phaseOffset
+            let horizontal = (sin(t * 71) + sin(t * 113 + 1.7)) / 2
+            let vertical = (sin(t * 89 + 0.8) + sin(t * 137 + 2.4)) / 2
+            return SIMD2(horizontal * x, vertical * y) * (strength / 100)
+        }
+    }
 
     struct Blur: Codable, Equatable, Sendable {
         var isEnabled = true
@@ -352,7 +394,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+        return colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
     }
 }
 

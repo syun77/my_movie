@@ -1,3 +1,132 @@
+# 音楽同期オートメーション（完了）
+
+- 最終更新: 2026-11-13 JST。要件: docs/AUDIO_AUTOMATION.mdの項目別同期・帯域指定・音符分母1〜16を実装。
+- 実装: VisualClipの項目別AudioModulation、加算/相対合成と戻り時間、曲時刻基準の拍評価、全/低/中/高/カスタムHzの独立トランジェント検出を追加。拡大率専用の旧モデル/UIは削除し、version 7へ更新。
+- UI: 数値欄右クリックで同期の追加/編集/削除。DragValueFieldによる数値編集・取消・中ボタン初期化。同期だけのレーン・手動線/合成線/発火目盛り、保存/Undo/Redo/複製/演出削除/発生源番号変更へ接続。
+- 解析: TransientAnalysisService actorによる要求共有、実効帯域の正規化、16範囲/32MiB LRU、待機取消と非使用解析停止、世代照合。出力前に必要な帯域を解析し結果を固定する。
+- 整理: ParameterEvaluatorへ変形/演出/合成グラフを集約。帯域時刻列は二分探索。表示範囲は手動キーの有無に応じ一意に保持。合成線クリックはキー生成と区別し、グラフ選択でキー選択を消さない。
+- 変更: 新規AudioModulation.swift、AudioModulationEditor.swift、AudioModulationTests.swift。App.swift、AudioAnalyzer.swift、Scene.swift、TransientDetector.swift、VisualTrack.swift、ImageAnimation.swift、EffectAutomation.swift、VisualEditor.swift、ImageEffectsEditor.swift、DragValueField.swift、TimelineView.swift、MetalSceneRenderer.swift、VideoExporter.swift、ProjectFile.swiftと関連テスト/README/設計/AGENTSを更新。作業開始前の未コミット変更は保持。
+- 最終検証: 全82テスト成功（/tmp/my_movie-audio-complete-tests.log）。拍/帯域/数値UI/取消/非同期解析/保存/履歴/配置/Metal描画/主音声のみのMP4を検証。音楽同期入りの出力フレームと共通プレビューの比較も成功。最小ウィンドウのレイアウト検証成功。実曲を使った手動操作は未実施。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-audio-release.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strictとgit diff --check成功。
+- 実行中処理・未解決障害なし。次: 最新アプリを再起動し、各項目の右クリックから音楽同期を編集する。旧version 6以前はバックアップして新規作成するUIを利用する。
+
+# 拍同期の1〜16指定（提案作成済み）
+
+- 最終更新: 2026-11-13 JST。要件: 4分音符を基準に1〜16分音符を指定可能にする仕様の検討。
+- 解釈: 分母Nを1〜16の全整数から選択する案。4分音符=1拍、発火間隔240/(BPM×N)秒。実装は対象外。
+- 完了: docs/AUDIO_AUTOMATION.mdの5択を1〜16整数指定へ更新。整数数値欄・5択ショートカット・表示例、beatNoteDenominator保存、共通原点、戻り時間超過、フレーム間ピーク、検証計画を記録。
+- 整理: 非標準分母の意味を全音符長の1/Nと明示し、1拍3分割との混同を回避。スナップ選択と音符換算の責務を分離。
+- 変更: docs/AUDIO_AUTOMATION.md、AGENTS.md、PROGRESS.md。既存変更は保持。
+- 検証: 周期表と計算式・既存案の整合性、git diff --checkを確認。文書のみでアプリ再生成・コードテストは不要。
+- 実行中処理・障害なし。次: ユーザーの設計レビュー後、実装依頼があれば具体化する。
+
+# トランジェントの帯域指定（提案作成済み）
+
+- 最終更新: 2026-11-13 JST。要件: トランジェントによる自動アニメで帯域を指定できる仕様・設計。実装は対象外。
+- 調査: 現行は180/2400Hzを境にした3帯域の発火を1本の時刻列へ統合し、全帯域共通65msの抑制を適用している。事後に帯域を選別できない。
+- 完了: docs/AUDIO_AUTOMATION.mdに全帯域/低域/中域/高域/カスタムHz、項目別設定、独立検出、非同期共有解析、低サンプルレート、保存/Undo、出力前解析と検証計画を追記。帯域指定を将来拡張から初期仕様案へ移した。
+- 設計整理: 全帯域の和集合と共通65ms抑制を区別し、解析中に古い帯域を代用しないこと、ドラッグ確定時だけ新規解析することを明示。
+- 変更: docs/AUDIO_AUTOMATION.md、AGENTS.md、PROGRESS.md。既存変更は保持。
+- 検証: 現行検出処理との照合、設計内の参照・整合性とgit diff --checkを確認。文書のみでテスト・アプリ再生成は不要。
+- 実行中処理・障害なし。次: 設計レビュー後、実装依頼に応じて検出精度・性能を実測する。
+
+# 拍・トランジェントのオートメーション設計（提案作成済み）
+
+- 最終更新: 2026-11-13 JST。要件: オートメーションに拍・トランジェントによる自動アニメを追加する設計。実装は依頼されていない。
+- 完了: 既存実装を調査し、docs/AUDIO_AUTOMATION.mdへ項目単位の同期・加算/相対合成・イベント評価・UI・保存・実装順・検証計画を記録。設計整理で手動キーと同期の削除、同期だけのレーン、表示範囲と物理範囲の分離を明示。
+- 変更: docs/AUDIO_AUTOMATION.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。既存の未コミット変更は保持。
+- 検証: 文書の参照と既存モデル・評価処理との整合性を確認。文書のみのためテスト・アプリ再生成は対象外。実行中処理なし。
+- 次: ユーザーの設計レビュー後、実装依頼があれば具体化する。提案仕様は未実装。
+
+# 色調補正演出（完了）
+
+- 最終更新: 2026-11-13 JST。要件: 色相・明度・彩度を追加。
+- 方針: 色相−180〜180°、明度−100〜100%、彩度0〜200%（初期0°/0%/100%）。画像・動画の素材にブラー/ブルーム前に適用し、共通数値UI・オートメーション・保存・Undoへ統合。
+- 状態: モデル・共通演出UI・3項目の自動化・描画キャッシュ/フィルターを実装。整理フェーズで既存の保存/Undo/カーブ削除経路を再利用し、キャッシュと一時テクスチャの共有を確認。保存/範囲/補間・GPUピクセル比較テストを追加。
+- 検証: GPU描画を含む関連24テスト成功（/tmp/my_movie-color-test-final.log）。制限環境のGPU不可・dsymutil拒否は権限のある環境で解消。./scripts/build-app.sh成功（/tmp/my_movie-color-build-final.log）、最新dist/MV Studio.app生成。署名検証・git diff --check成功。
+- 変更: ImageEffects.swift、ImageAnimation.swift、EffectAutomation.swift、ImageEffectsEditor.swift、MetalSceneRenderer.swift、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、README.md、AGENTS.md、PROGRESS.md。既存・別作業の変更を保持。
+- 実行中処理・障害なし。実素材の手動操作とMP4通し出力は未検証。次: 最新アプリを再起動し追加演出から色調補正を追加する。
+
+# 画像の基本不透明度（完了）
+
+- 最終更新: 2026-11-13 JST。要件: 画像パラメーターの基本値へ不透明度を追加。
+- 方針: 0〜100%（初期100%）、共通DragValueFieldとオートメーション/保存/Undoへ統合。共通Metal合成で画像・ブルーム・粒子へ適用し、プレビューと出力で共有する。
+- 実装・整理: ImageParameter.opacityとvalueRangeを追加。演出と基本不透明度の範囲制限を共通化し、UI行/ノブ/オートメーション、Metalのpremultiplied画像/粒子合成へ接続。README/設計/AGENTS更新。
+- 検証: UI/補間/保存/範囲と半透明合成・0%時の画像/粒子非表示のテストを追加。関連26件で色管理後の赤を固定RGBと比べたテストだけ失敗したため、下段だけの実描画結果との比較へ修正。最終コードを再検証する。
+- 最終検証: 関連26テスト成功（/tmp/my_movie-opacity-final-test.log）。0%/半透明/自動化/保存/Undo/最小ウィンドウ配置を確認。./scripts/build-app.sh成功（/tmp/my_movie-opacity-build.log）、最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 変更: ImageAnimation.swift、VisualEditor.swift、MetalSceneRenderer.swift、Shaders/Scene.metal、ImageAnimationTests.swift、ImageEffectsTests.swift、README.md、docs/IMAGE_ANIMATION.md、docs/IMAGE_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 実行中処理・障害なし。実素材の手動操作とMP4通し出力は未検証。次: 最新アプリを再起動し、基本パラメーターの不透明度を編集する。
+
+# 均一なパルス波（完了）
+
+- 最終更新: 2026-11-13 JST。要件: 添付のように周期と幅が均一なパルスにする。
+- 方針: 高低の幅を50%ずつに固定し、区間に整数周期を配置する。中央○は周期数1〜20を変更し、最初/最後の区間も同じ幅とする。波形と描画と保存を揃える。
+- 実装・整理: pulseCyclesへ保存を統一し、50%デューティと整数周期の共通評価・切替描画へ整理。幅/周期を秒で表示。不要な終端ジャンプ処理と可変デューティの旧フィールドを削除。README/設計/AGENTSを更新。
+- 検証: ImageAnimationTests 12件成功（/tmp/my_movie-uniform-pulse-test.log）。1〜20周期すべてで高低の幅・端の幅・値・描画切替を検証し、保存/ハンドル/取消も確認。/tmp/my_movie-pulse-repeat.pngで均一な反復波形を目視確認。
+- 最終検証: 関連23テスト成功（/tmp/my_movie-uniform-pulse-final-test.log）。./scripts/build-app.sh成功（/tmp/my_movie-uniform-pulse-build.log）。最新dist/MV Studio.app生成済み、署名検証・git diff --check成功。
+- 変更: ImageAnimation.swift、ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。別作業のシェイクなど既存変更は保持。
+- 実行中処理・障害なし。実素材での手動操作とMP4通し出力は未検証。次: 最新アプリを再起動し、パルスの中央○で均一な波の数を調整する。
+
+# シェイク演出（完了）
+
+- 最終更新: 2026-11-13 JST。要件: X/Yの揺れ強度と両方に乗算する総合強度を追加。
+- 実装: X/Yは1080p基準0〜500px（初期20px）、総合は0〜200%（初期100%）。共通演出UI、DragValueField、3項目のオートメーション、保存/Undo経路、画像・動画の共通Metal変形へ統合。左トリムで位相を維持する。
+- 整理: 演出評価をフレームごとに1回へ集約し、既存の数値編集・カーブ削除・保存経路を再利用。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、ImageAnimation.swift、EffectAutomation.swift、MetalSceneRenderer.swift、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。既存の未コミット変更は保持。
+- 検証: 関連20テスト成功（/tmp/my_movie-shake-test-final.log）。乗算、0/無効、保存復元、トリム位相、オートメーション、範囲検証と既存Metal描画を確認。制限環境のGPU不可・dsymutil失敗は権限のある環境で再実行して解消。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-shake-build-final.log）。最新dist/MV Studio.app生成済み。
+- 実行中処理・障害なし。実素材での手動操作とシェイクを含むMP4通し出力は未検証。次: 最新アプリを再起動し「追加演出」からシェイクを追加する。
+
+# パルス幅・周期の連動（完了）
+
+- 最終更新: 2026-11-13 JST。要件: パルスで幅と周期の両方が変わるようにする。
+- 方針: 中央○の上下で幅と周期を連動させる。上で広く/長く、下で狭く/短くする。幅50%時は区間内1周期とし、短い周期では矩形波を繰り返す。波形評価/描画/表示/保存を同じ幅設定から評価する。
+- 実装・整理: 幅から周期を評価し矩形波を反復する共通処理、全周期の切替サンプル、幅と周期の同時表示を追加。切替一覧を評価・描画で使い、ラベル幅を文字列から計測する構造へ整理。Swiftの型推論が時間制限となった式は明示的なループへ整理して解消。
+- 検証: ImageAnimationTests 12件成功（/tmp/my_movie-pulse-period-test.log）。幅/周期の上下変化、複数パルス、切替境界、保存、仮変更/確定/取消を確認。/tmp/my_movie-pulse-repeat.pngで反復波形と幅/周期ラベルを目視確認。
+- 最終検証: 関連22テスト成功（/tmp/my_movie-pulse-period-final-test.log）。./scripts/build-app.sh成功（/tmp/my_movie-pulse-period-build.log）。最新dist/MV Studio.app生成済み、署名検証・git diff --check成功。
+- 変更: ImageAnimation.swift、TimelineView.swift、ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 実行中処理・障害なし。実素材の手動操作とMP4通し出力は未検証。次: 最新アプリを再起動し、パルスの中央○を上下ドラッグして幅/周期の連動を確認する。
+
+# パルス・ウェーブ補間（完了）
+
+- 最終更新: 2026-11-12 JST。要件: パルス波/サイン波を追加し、中央○の上下でパルス幅/周期を調整する。流入区間への適用を維持する。
+- 方針: 波形とハンドルの値変換・描画サンプルを共通ImageCurveへ集約。端点の値の間を往復し、パルスは区間中央の矩形波（幅既定50%）、ウェーブは区間長に対する周期（既定1周期）を調整。制御点時刻では指定値を優先する。
+- 実装・整理: ImageInterpolationへpulse/wave、キーへ幅・周期の保存値を追加。波形評価/ハンドル変換/ラベル/矩形波の段差とサイン波の描画サンプルをImageCurveへ集約。ハンドル編集メソッド名をadjustMidpointへ整理。範囲検証を追加し、表示ラベルと○の重なりを解消。
+- 検証: ImageAnimationTests 12件成功（/tmp/my_movie-wave-test.log）。波形値、幅/周期変更、保存、範囲、段差の描画、仮変更/取消/1回確定/端点と再生位置維持を確認。PNG /tmp/my_movie-pulse.png、wave.pngで波形を目視確認。最終整理後も関連22テスト成功（/tmp/my_movie-wave-final-test.log）。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-wave-build.log）。最新dist/MV Studio.app生成済み、署名検証・git diff --check成功。
+- 変更: ImageAnimation.swift、TimelineView.swift、ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 実行中処理・障害なし。実素材での手動操作と新波形を含むMP4通し出力は未検証。次: 最新アプリを再起動し、制御点の右クリックからパルス/ウェーブを選び、中央○を上下へ動かす。
+
+# 制御点の補間メニュー（完了）
+
+- 最終更新: 2026-11-12 JST。要件: 制御点の右クリックから削除/シングル曲線（既定）/スムーズ（easeInOut）/ホールドを選択し、直前の点から対象点までに適用する。
+- 方針: 各キーが流入区間の補間種別を所有。共通補間と描画（ホールドの垂直接続）、メニュー・保存・Undoを揃える。中央○の調整量はシングル/スムーズで保持し、ホールドでは○を非表示。
+- 実装・整理: ImageInterpolationとキーの流入補間種別、共通評価/plotSamples、右クリックの選択・チェック・確定を追加。制御点のメニュー削除とDeleteを同じ編集経路へ統合。描画サンプルの生成をモデルへ集約。README/設計/AGENTS更新。
+- 検証: ImageAnimationTests 10件成功（/tmp/my_movie-interpolation-test.log）。補間式、区間の向き、端点の傾き、ホールド境界/描画サンプル、保存、トリム、メニュー各項目/チェック/削除/シーク維持を確認。/tmp/my_movie-interpolation-smooth.png、hold.pngでS字と段差の描画を目視確認。
+- 最終検証: 関連20テスト成功（/tmp/my_movie-interpolation-final-test.log）。./scripts/build-app.sh成功（/tmp/my_movie-interpolation-build.log）。最新dist/MV Studio.app生成済み、署名検証・git diff --check成功。
+- 変更ファイル: ImageAnimation.swift、TimelineView.swift、ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、AGENTS.md、PROGRESS.md。
+- 未解決の障害・実行中処理なし。実素材での手動右クリックと各補間を含むMP4の通し出力は未検証。次: 最新アプリを再起動し、制御点の右クリックから補間を選ぶ。
+
+# カーブの中央ハンドル（完了）
+
+- 最終更新: 2026-11-12 JST。要件: 制御点の中間に○を配置し、上下ドラッグで区間のカーブを曲げる。
+- 方針: 隣接キーの区間ごとに中央ハンドルと曲がり量を持たせ、共通評価・保存・描画・取消・Undoへ接続。既存キーの時刻/値は保持する。
+- 実装・整理: ImageKeyframe.midpointOffsetと共通ImageCurve評価を追加。○の描画/最近傍判定/上下ドラッグを既存の仮反映・確定・取消へ統合し、ハイライトはレーン描画の前に1回判定する構造へ整理。README/設計/AGENTS更新。
+- 検証: ImageAnimationTests 8件成功（/tmp/my_movie-curve-handles-test.log）。上下の補間、端点保持、保存、左トリム、基準値移動、実AppKitイベントの上下ドラッグ/最終mouseUp/1回確定/取消/再生位置維持を確認。PNG /tmp/my_movie-curve-handles-preview.pngで中央の○と上向きカーブを目視確認。
+- 最終検証: 補間・演出・Undoの関連18テスト成功（/tmp/my_movie-curve-handles-final-test.log）。./scripts/build-app.sh成功（/tmp/my_movie-curve-handles-build.log）、最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 変更ファイル: ImageAnimation.swift、TimelineView.swift、ImageAnimationTests.swift、README.md、docs/IMAGE_ANIMATION.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 未解決の障害・実行中処理なし。実素材での手動操作と曲がりを含むMP4の通し出力は未検証。次: 最新アプリを再起動し、オートメーションの隣接点の中央○を上下ドラッグする。
+
+# 演出のオートメーション（完了）
+
+- 最終更新: 2026-11-12 JST。要件: 演出にもオートメーションを指定可能にする。
+- 実装: 全演出の数値と各発生源X/Yを共通ImageParameter/ImageCurveへ統合。右クリック作成/削除、青丸、レーン編集、保存・Undo・トリム、プレビュー/出力へ接続。演出削除はカーブ削除、発生源削除は残るレーンの番号変更。基準値移動は有効範囲で制限し、個数の固定値復元は整数化。
+- 整理: EffectAutomation.swiftへ演出の名称・範囲・既定値・読書き・時刻評価を集約し、共通の編集/描画経路を再利用。
+- 変更: ImageAnimation、EffectAutomation（新規）、ImageEffectsEditor、VisualEditor、MetalSceneRenderer、ImageAnimationTests、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 関連16テスト成功（/tmp/my_movie-effect-automation-test-final.log）。補間/保存/トリム/範囲/個数復元/メニュー/復元/既存UndoとMetal描画を確認。制限環境のMetal不可はGPU利用可能な環境で解消。
+- アプリ生成: ./scripts/build-app.sh成功（/tmp/my_movie-effect-automation-build.log）。最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 未解決の障害・実行中処理なし。実素材での手動操作とオートメーションを含むMP4の通し出力は未検証。次: 最新アプリを再起動し、クリップ内に再生位置を合わせ、演出の数値欄を右クリックして利用する。
+
 # ノブの方向線を明るくする（完了）
 
 - 最終更新: 2026-11-12 JST。要件: ノブの向きを示す線を明るくする。

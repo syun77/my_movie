@@ -6,15 +6,15 @@ import ImageIO
 
 final class StudioTests: XCTestCase {
     func testTransientZoomAndSpectrumInterpolation() {
-        let features = AudioFeatures(duration: 1, step: 0.5, frames: [[0, 1], [1, 0]], transientTimes: [0.12, 0.28])
-        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, pulseAmount: 0.1)
-        XCTAssertEqual(clip.scale(at: 0.119, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.119)), 1)
-        XCTAssertEqual(clip.scale(at: 0.28, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.28)), 1.1, accuracy: 0.0001)
-        XCTAssertEqual(clip.scale(at: 0.43, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.43)), 1.0125, accuracy: 0.0001)
-        XCTAssertEqual(clip.scale(at: 0.6, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.6)), 1)
-        XCTAssertEqual(features.transientPulse(at: 0.12), 1, "シーク順によらず評価する")
-        clip.automaticAnimation = .off
-        XCTAssertEqual(clip.scale(at: 0.28, settings: SceneSettings(), transientPulse: features.transientPulse(at: 0.28)), 1)
+        let features = AudioFeatures(duration: 1, step: 0.5, frames: [[0, 1], [1, 0]], transientEvents: [TransientBand(): [0.12, 0.28]])
+        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, audioModulations: [.scale: AudioModulation(blend: .relative, amount: 10)])
+        XCTAssertEqual((ParameterEvaluator.value(.scale, clip: clip, at: 0.119, settings: SceneSettings(), features: features) / 100), 1)
+        XCTAssertEqual((ParameterEvaluator.value(.scale, clip: clip, at: 0.28, settings: SceneSettings(), features: features) / 100), 1.1, accuracy: 0.0001)
+        XCTAssertEqual((ParameterEvaluator.value(.scale, clip: clip, at: 0.43, settings: SceneSettings(), features: features) / 100), 1.0125, accuracy: 0.0001)
+        XCTAssertEqual((ParameterEvaluator.value(.scale, clip: clip, at: 0.6, settings: SceneSettings(), features: features) / 100), 1)
+        XCTAssertEqual(AudioModulation().signal(at: 0.12, settings: SceneSettings(), features: features), 1, "シーク順によらず評価する")
+        clip.audioModulations = [:]
+        XCTAssertEqual((ParameterEvaluator.value(.scale, clip: clip, at: 0.28, settings: SceneSettings(), features: features) / 100), 1)
         XCTAssertEqual(features.bands(at: 0.25, count: 2), [0.5, 0.5])
         XCTAssertEqual(features.bands(at: 1, count: 32), Array(repeating: 0, count: 32))
         XCTAssertEqual(features.bandEdges(at: 0, count: 2), [0, 0.5, 1])
@@ -107,7 +107,7 @@ final class StudioTests: XCTestCase {
 
     private func renderSpectrum(settings: SceneSettings, bands: [Float]) throws -> CGImage {
         let size = CGSize(width: 640, height: 360)
-        let features = AudioFeatures(duration: 1, step: 1, frames: [bands], transientTimes: [])
+        let features = AudioFeatures(duration: 1, step: 1, frames: [bands], transientEvents: [TransientBand(): []])
         let context = try XCTUnwrap(CGContext(data: nil, width: Int(size.width), height: Int(size.height),
                                              bitsPerComponent: 8, bytesPerRow: Int(size.width) * 4,
                                              space: CGColorSpaceCreateDeviceRGB(),
@@ -149,8 +149,8 @@ final class StudioTests: XCTestCase {
         do { let file = try AVAudioFile(forWriting: url, settings: format.settings); try file.write(from: buffer) }
         let features = try AudioAnalyzer.analyze(url: url)
         XCTAssertEqual(features.duration, 1, accuracy: 0.001)
-        XCTAssertEqual(features.transientTimes.count, 3, "持続音は開始時だけ反応し、逆相でも打音を検出: \(features.transientTimes)")
-        for (actual, expected) in zip(features.transientTimes, [0.0, 0.316, 0.747]) {
+        XCTAssertEqual(features.events(for: TransientBand()).count, 3, "持続音は開始時だけ反応し、逆相でも打音を検出: \(features.events(for: TransientBand()))")
+        for (actual, expected) in zip(features.events(for: TransientBand()), [0.0, 0.316, 0.747]) {
             XCTAssertEqual(actual, expected, accuracy: 0.006)
         }
         XCTAssertTrue(features.frames.flatMap { $0 }.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 })
@@ -169,13 +169,13 @@ final class StudioTests: XCTestCase {
         let projectURL = ProjectStorage.projectURL(for: url)
         var visuals = VisualTrack()
         let assetID = visuals.register(url: imageURL, projectURL: projectURL)
-        visuals.layers[0].clips = [VisualClip(assetID: assetID, start: 0, end: 1, pulseAmount: 0.25)]
+        visuals.layers[0].clips = [VisualClip(assetID: assetID, start: 0, end: 1, audioModulations: [.scale: AudioModulation(blend: .relative, amount: 25)])]
         let overlayURL = directory.appendingPathComponent("overlay.png")
         context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         let overlayDestination = CGImageDestinationCreateWithURL(overlayURL as CFURL, "public.png" as CFString, 1, nil)!
         CGImageDestinationAddImage(overlayDestination, context.makeImage()!, nil); XCTAssertTrue(CGImageDestinationFinalize(overlayDestination))
         let overlayID = visuals.register(url: overlayURL, projectURL: projectURL)
-        var animated = VisualClip(assetID: overlayID, start: 0.5, end: 0.8, automaticAnimation: .off)
+        var animated = VisualClip(assetID: overlayID, start: 0.5, end: 0.8, audioModulations: [:])
         _ = animated.setKey(.x, at: 0.6, value: 0)
         _ = animated.setKey(.x, at: 0.7, value: 600)
         animated.effects = ImageEffects(blur: .init(radius: 3), bloom: .init(threshold: 10), particles: .init(color: RGBColor(red: 0, green: 1, blue: 0), seed: 1),
@@ -270,7 +270,7 @@ final class StudioTests: XCTestCase {
         do { let file = try AVAudioFile(forWriting: url, settings: format.settings); try file.write(from: buffer) }
         let features = try AudioAnalyzer.analyze(url: url)
         XCTAssertTrue(features.frames.flatMap { $0 }.allSatisfy { $0 == 0 })
-        XCTAssertTrue(features.transientTimes.isEmpty)
-        XCTAssertEqual(features.transientPulse(at: 0.05), 0)
+        XCTAssertTrue(features.events(for: TransientBand()).isEmpty)
+        XCTAssertEqual(AudioModulation().signal(at: 0.05, settings: SceneSettings(), features: features), 0)
     }
 }

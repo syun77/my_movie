@@ -12,7 +12,8 @@ enum AudioAnalyzer {
         let rate = file.processingFormat.sampleRate
         let duration = Double(file.length) / rate
         guard duration > 0, duration.isFinite else { throw StudioError.message("音声が空です。") }
-        let transientTimes = try TransientDetector.detect(in: file)
+        var transientEvents = try TransientDetector.detect(in: file)
+        transientEvents[TransientBand()] = Array(Set(transientEvents.values.flatMap { $0 })).sorted()
         let count = 2048
         let step = 1.0 / 30.0
         guard let fft = vDSP_DFT_zop_CreateSetup(nil, vDSP_Length(count), .FORWARD),
@@ -62,6 +63,6 @@ enum AudioAnalyzer {
             }
             frames.append(smooth)
         }
-        return AudioFeatures(duration: duration, step: step, frames: frames, transientTimes: transientTimes)
+        return AudioFeatures(duration: duration, step: step, frames: frames, transientEvents: transientEvents, sampleRate: rate)
     }
 }

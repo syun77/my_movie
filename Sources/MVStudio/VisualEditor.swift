@@ -36,7 +36,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let sourceIn = DragValueField(frame: .zero)
     private let sourceRow = NSStackView()
     private let slot = NSPopUpButton()
-    private let automatic = NSPopUpButton()
+    let musicEditor = AudioModulationEditor(frame: .zero)
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
     private let graphParameter = NSPopUpButton()
     private let minimum = DragValueField(frame: .zero)
@@ -66,8 +66,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         func value(in clip: VisualClip) -> Double? {
             switch self {
             case .base: return clip.baseValue(parameter)
-            case .minimum: return clip.curve(parameter)?.minimum
-            case .maximum: return clip.curve(parameter)?.maximum
+            case .minimum: return clip.displayCurve(parameter)?.minimum
+            case .maximum: return clip.displayCurve(parameter)?.maximum
             }
         }
 
@@ -76,7 +76,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             case .base:
                 clip.setBaseValue(value, for: parameter, resetting: resetting)
             case .minimum, .maximum:
-                guard var curve = clip.curve(parameter) else { return }
+                guard var curve = clip.displayCurve(parameter) else { return }
                 if case .minimum = self {
                     curve.minimum = value
                     if resetting, curve.maximum <= value { curve.maximum = parameter.defaultRange.upperBound }
@@ -84,7 +84,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                     curve.maximum = value
                     if resetting, curve.minimum >= value { curve.minimum = parameter.defaultRange.lowerBound }
                 }
-                clip.setCurve(curve)
+                clip.setDisplayCurve(curve)
             }
         }
     }
@@ -99,8 +99,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var drafts: [ImageParameter: String] = [:]
     private var graphParameters: [ImageParameter] = []
     private var rangeParameter: ImageParameter?
-    private let amount = NSSlider(value: 8, minValue: 0, maxValue: 25, target: nil, action: nil)
-    private let amountLabel = NSTextField(labelWithString: "8%")
     private let message = NSTextField(labelWithString: "画像・動画を空白へドロップするか、ボタンで配置できます")
     private var controls: [NSControl] = []
     private var clipControls: [NSControl] = []
@@ -125,11 +123,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 100).isActive = true }
         slot.addItems(withTitles: ["素材1（最背面）", "素材2", "素材3（最前面）"])
         slot.target = self; slot.action = #selector(changePlacement)
-        automatic.addItems(withTitles: AutomaticAnimation.allCases.map(\.title))
-        automatic.identifier = NSUserInterfaceItemIdentifier("visuals.automatic")
-        automatic.target = self; automatic.action = #selector(changeAutomatic)
-        amount.target = self; amount.action = #selector(changeAutomatic); amount.isContinuous = true
-        amount.widthAnchor.constraint(equalToConstant: 88).isActive = true
         keySnap.state = .on
         keySnap.identifier = NSUserInterfaceItemIdentifier("visuals.keySnap")
         keySnap.target = self; keySnap.action = #selector(changeKeySnap)
@@ -154,9 +147,10 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         timing.orientation = .vertical
         timing.alignment = .leading
         timing.spacing = 4
-        let effect = row([NSTextField(labelWithString: "自動アニメ"), automatic, amount, amountLabel, keySnap])
+        let effect = row([keySnap])
         let horizontal = row([parameterControls(.x), parameterControls(.y)])
         let vertical = row([parameterControls(.scale), parameterControls(.rotation)])
+        let opacity = row([parameterControls(.opacity)])
         let graphs = row([NSTextField(labelWithString: "グラフ"), graphParameter, NSTextField(labelWithString: "最小"), minimum,
                           NSTextField(labelWithString: "最大"), maximum])
         graphParameter.widthAnchor.constraint(equalToConstant: 94).isActive = true
@@ -164,14 +158,29 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, effect, horizontal, vertical, graphs, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        musicEditor.onCommit = { [weak self] parameter, modulation in self?.setMusic(parameter, modulation: modulation, preview: false) }
+        musicEditor.onPreview = { [weak self] parameter, modulation in
+            guard let self else { return }
+            if let modulation { self.setMusic(parameter, modulation: modulation, preview: true) }
+            else { self.timeline?.automationPreview = nil; self.onPreview?(self.track) }
+        }
+        musicEditor.onSelect = { [weak self] parameter in
+            guard let self, self.track.clip(self.selectedID)?.displayCurve(parameter) != nil else { return }
+            self.timeline?.selectGraph(parameter, reveal: true)
+        }
+        effectsEditor.onEditMusic = { [weak self] parameter in self?.editMusic(parameter) }
+        effectsEditor.onRemoveMusic = { [weak self] parameter in self?.setMusic(parameter, modulation: nil, preview: false) }
+        effectsEditor.onDeleteEmitter = { [weak self] effects, index in self?.applyEffects(effects, preview: false, deletedEmitter: index) }
+        effectsEditor.onCreateAutomation = { [weak self] in self?.createAutomation($0) }
+        effectsEditor.onRemoveAutomation = { [weak self] in self?.removeAutomation($0) }
         effectsEditor.onCommit = { [weak self] effects in self?.applyEffects(effects, preview: false) }
         effectsEditor.onPreview = { [weak self] effects in
             guard let self else { return }
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, slot, automatic, amount, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, slot, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
@@ -180,7 +189,11 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         timeline?.onImageSelect = { [weak self] id, slot in self?.select(id, slot: slot) }
         timeline?.onImagePreview = { [weak self] value in self?.onPreview?(value) }
         timeline?.onImageCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
-        timeline?.onGraphSelection = { [weak self] in self?.refreshGraphControls() }
+        timeline?.onGraphSelection = { [weak self] in
+            guard let self else { return }
+            self.refreshGraphControls()
+            if let parameter = self.timeline?.selectedParameter, self.musicEditor.parameter != parameter { self.musicEditor.select(parameter, notify: false) }
+        }
         timeline?.onGraphRangeEdit = { [weak self] editingMaximum in
             guard let self else { return }
             let field = editingMaximum ? self.maximum : self.minimum
@@ -210,7 +223,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         replaceTrack(value, projectURL: projectURL)
         selectedID = value.clip(selection)?.id; selectedSlot = selectedID.flatMap { value.slot(of: $0) } ?? slot
         refreshSelection(); manager?.reload()
-        if let parameter, let curve = value.clip(selectedID)?.curve(parameter) {
+        if let parameter, let curve = value.clip(selectedID)?.displayCurve(parameter) {
             timeline?.selectGraph(parameter, key: curve.keys.first { $0.id == key }?.id, reveal: true)
         }
     }
@@ -227,18 +240,35 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
         sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
         sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
-        amount.isEnabled = automatic.isEnabled && track.clip(selectedID)?.automaticAnimation != AutomaticAnimation.off
+        musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
     }
-    private func applyEffects(_ effects: ImageEffects, preview: Bool) {
+    private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
         guard available, !processing, manager == nil, var clip = track.clip(selectedID),
               let slot = track.slot(of: clip.id) else { return }
+        if let deletedEmitter {
+            clip.removeEmitterAutomation(at: deletedEmitter)
+        }
+        let original = clip
         clip.effects = effects == ImageEffects() ? nil : effects
+        for parameter in ImageParameter.allCases {
+            guard let effect = parameter.effect else { continue }
+            guard let value = effect.read(effects) else {
+                clip.removeAudioAndKeys(parameter)
+                continue
+            }
+            if !(deletedEmitter != nil && parameter.rawValue.hasPrefix("emitter")),
+               value != effect.read(original.effects ?? ImageEffects()) {
+                clip.effects = effect.write(clip.effects ?? ImageEffects(), original.baseValue(parameter))
+                clip.setBaseValue(value, for: parameter)
+            }
+        }
         do {
             let value = try track.updating(clip, slot: slot, duration: duration)
             if preview { onPreview?(value) }
             else {
                 commit(value, selectedID: clip.id, refreshEditor: false)
                 effectsEditor.load(clip, editable: true)
+                refreshGraphControls(resetRange: true)
             }
         } catch { report(error) }
     }
@@ -257,9 +287,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
             sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
             slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
-            automatic.selectItem(withTitle: clip.automaticAnimation.title); amount.doubleValue = clip.pulseAmount * 100
         } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画を配置してください" }
-        amountLabel.stringValue = String(format: "%.1f%%", amount.doubleValue)
         refreshAnimationValues()
         refreshControls()
     }
@@ -327,7 +355,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
 
     @discardableResult
     func cancelValueDrag() -> Bool {
-        guard let drag = valueDrag else { return effectsEditor.cancelDrag() }
+        let musicCancelled = musicEditor.cancelDrag()
+        guard let drag = valueDrag else { return effectsEditor.cancelDrag() || musicCancelled }
         valueDrag = nil
         drag.field.cancelTracking()
         timeline?.automationPreview = nil
@@ -493,6 +522,7 @@ private extension VisualEditor {
         let field = DragValueField(frame: .zero)
         field.stringValue = String(parameter.defaultValue)
         field.knobInitialValue = parameter.defaultValue
+        field.knobRange = parameter.valueRange
         connectValueField(field) { .base(parameter) }
         field.identifier = NSUserInterfaceItemIdentifier("visuals.value." + parameter.rawValue)
         field.delegate = self; field.target = self; field.action = #selector(confirmBaseValue(_:))
@@ -502,25 +532,42 @@ private extension VisualEditor {
         unit.widthAnchor.constraint(equalToConstant: 16).isActive = true
         field.onCreateAutomation = { [weak self] in self?.createAutomation(parameter) }
         field.onRemoveAutomation = { [weak self] in self?.removeAutomation(parameter) }
+        field.onEditMusic = { [weak self] in self?.editMusic(parameter) }
+        field.onRemoveMusic = { [weak self] in self?.setMusic(parameter, modulation: nil, preview: false) }
         valueFields[parameter] = field
         clipControls.append(field)
         let group = row([label, field, unit])
         group.spacing = 5
         return group
     }
-    @objc private func changeAutomatic() {
-        guard automatic.isEnabled, var clip = track.clip(selectedID) else { return }
-        clip.automaticAnimation = AutomaticAnimation.allCases[automatic.indexOfSelectedItem]
-        clip.pulseAmount = amount.doubleValue / 100
-        commitAnimation(clip, refreshEditor: false)
-        amountLabel.stringValue = String(format: "%.1f%%", amount.doubleValue)
-        amount.isEnabled = clip.automaticAnimation != .off
+    private func editMusic(_ parameter: ImageParameter) {
+        guard available, !processing, manager == nil, let clip = track.clip(selectedID) else { return }
+        if clip.audioModulations[parameter] == nil { setMusic(parameter, modulation: .initial(for: parameter), preview: false) }
+        musicEditor.select(parameter)
+        view.window?.makeFirstResponder(nil)
+        musicEditor.scrollToVisible(musicEditor.bounds)
+    }
+
+    private func setMusic(_ parameter: ImageParameter, modulation: AudioModulation?, preview: Bool) {
+        guard available, !processing, manager == nil, var clip = track.clip(selectedID), let slot = track.slot(of: clip.id) else { return }
+        clip.audioModulations[parameter] = modulation
+        if modulation == nil { clip.automationRanges[parameter] = nil }
+        do {
+            let updated = try track.updating(clip, slot: slot, duration: duration)
+            if preview { timeline?.automationPreview = updated; onPreview?(updated) }
+            else {
+                onBeginEdit?()
+                commit(updated, selectedID: clip.id)
+                if modulation != nil { timeline?.revealAutomation(in: slot); timeline?.selectGraph(parameter, reveal: true) }
+            }
+        } catch { report(error) }
     }
 
     private func refreshAnimationValues() {
         let clip = track.clip(selectedID)
         for (parameter, field) in valueFields {
             field.hasAutomation = clip?.curve(parameter) != nil
+            field.hasMusic = clip?.audioModulations[parameter] != nil
             let title = field.hasAutomation ? "基準値" : "固定値"
             field.setAccessibilityLabel(parameter.title + "の" + title)
             field.toolTip = title + "。\(DragValueField.numberEditingHint)。ノブまたは数値を右クリックでオートメーションを作成・削除"
@@ -533,16 +580,16 @@ private extension VisualEditor {
 
     private func refreshGraphControls(resetRange: Bool = false) {
         let clip = (valueDrag?.preview ?? track).clip(selectedID)
-        let parameters = ImageParameter.allCases.filter { clip?.curve($0) != nil }
+        let parameters = ImageParameter.allCases.filter { clip?.displayCurve($0) != nil }
         if parameters != graphParameters {
             graphParameters = parameters
             graphParameter.removeAllItems()
             graphParameter.addItems(withTitles: parameters.map(\.title))
         }
         let active = timeline?.selectedParameter ?? parameters.first
-        let curve = active.flatMap { clip?.curve($0) }
+        let curve = active.flatMap { clip?.displayCurve($0) }
         if let active { graphParameter.selectItem(withTitle: active.title) }
-        let enabled = automatic.isEnabled
+        let enabled = available && !processing && manager == nil && clip != nil
         graphParameter.isEnabled = enabled && !parameters.isEmpty
         for field in [minimum, maximum] { field.isEnabled = enabled && curve != nil }
         let minimumText = curve.map { String($0.minimum) } ?? ""
@@ -567,9 +614,11 @@ private extension VisualEditor {
 
     private func createAutomation(_ parameter: ImageParameter) {
         guard var clip = track.clip(selectedID), clip.curve(parameter) == nil,
-              let field = valueFields[parameter], field.isEnabled,
-              (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
-        let input = field.currentEditor()?.string ?? drafts[parameter] ?? field.stringValue
+              available, !processing, manager == nil else { return }
+        let field = valueFields[parameter]
+        guard field?.isEnabled != false,
+              (field?.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+        let input = field?.currentEditor()?.string ?? drafts[parameter] ?? field?.stringValue ?? String(clip.baseValue(parameter))
         guard let value = Double(input), parameter.accepts(value) else {
             report(StudioError.message("キーの値を数値で入力してください。拡大率には正の値が必要です。")); return
         }
@@ -591,9 +640,10 @@ private extension VisualEditor {
     }
 
     private func removeAutomation(_ parameter: ImageParameter) {
-        guard valueFields[parameter]?.isEnabled == true else { return }
+        guard available, !processing, manager == nil, valueFields[parameter]?.isEnabled != false else { return }
         cancelValueDrag()
         guard var clip = track.clip(selectedID), clip.curve(parameter) != nil else { return }
+        if let curve = clip.curve(parameter), clip.audioModulations[parameter] != nil { clip.automationRanges[parameter] = VisualClip.DisplayRange(lower: curve.minimum, upper: curve.maximum) }
         clip.curves.removeAll { $0.parameter == parameter }
         onBeginEdit?()
         if commitAnimation(clip) {
@@ -636,7 +686,7 @@ private extension VisualEditor {
         drag.preview = preview
         valueDrag = drag
         drag.field.stringValue = String(value)
-        if rangeParameter == parameter, let curve = clip.curve(parameter) {
+        if rangeParameter == parameter, let curve = clip.displayCurve(parameter) {
             minimum.stringValue = String(curve.minimum)
             maximum.stringValue = String(curve.maximum)
         }
@@ -666,7 +716,7 @@ private extension VisualEditor {
 
     @objc private func changeGraphRange() {
         guard minimum.isEnabled, let parameter = rangeParameter, var clip = track.clip(selectedID),
-              var curve = clip.curve(parameter) else { return }
+              var curve = clip.displayCurve(parameter) else { return }
         guard let minValue = Double(minimum.stringValue), let maxValue = Double(maximum.stringValue),
               parameter.accepts(minValue), parameter.accepts(maxValue), minValue < maxValue,
               (maxValue - minValue).isFinite else {
@@ -674,7 +724,7 @@ private extension VisualEditor {
         }
         curve.minimum = minValue
         curve.maximum = maxValue
-        clip.setCurve(curve)
+        clip.setDisplayCurve(curve)
         commitAnimation(clip)
     }
 

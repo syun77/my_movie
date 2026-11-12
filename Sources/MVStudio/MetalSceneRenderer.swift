@@ -30,13 +30,14 @@ final class MetalSceneRenderer {
     private struct ImageKey: Equatable {
         let source: VisualFrame
         let transform: CGAffineTransform
+        let correction: ImageEffects.ColorCorrection?
         let blur: Double
         let threshold: Double
         let glowRadius: Double
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
-                && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
+                && lhs.correction == rhs.correction && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
         }
     }
 
@@ -126,17 +127,18 @@ final class MetalSceneRenderer {
         }
         framesSinceCleanup += 1
         guard let commands = queue.makeCommandBuffer() else { throw Self.renderError }
-        let pulse = features?.transientPulse(at: time) ?? 0
         var prepared: [(VisualClip, ProcessedImage, Float)] = []
         var nextSources: [UUID: SourceImage] = [:]
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
         for layer in visuals where layer.clip.start <= time && time < layer.clip.end {
-            let clip = layer.clip
+            var clip = layer.clip
+            clip.effects = clip.evaluatedEffects(at: time, settings: settings, features: features)
             let blur = clip.effects?.blur
             let bloom = clip.effects?.bloom
             let glows = bloom.map { $0.isEnabled && $0.intensity > 0 && $0.threshold < 100 } ?? false
-            let key = ImageKey(source: layer.frame, transform: transform(layer, at: time, settings: settings, pulse: pulse),
+            let key = ImageKey(source: layer.frame, transform: transform(layer, at: time, settings: settings, features: features, shake: clip.effects?.shake),
+                               correction: clip.effects?.colorCorrection.flatMap { $0.isEnabled ? $0 : nil },
                                blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
                                threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
                                glowRadius: glows ? bloom?.radius ?? 0 : 0)
@@ -157,10 +159,12 @@ final class MetalSceneRenderer {
         let spriteSize = SIMD2<Double>(Self.videoSize.width, Self.videoSize.height)
         let composition = try encoder(commands, target: scene, clear: clear)
         for (clip, layer, intensity) in prepared {
+            let opacity = Float(min(100, max(0, ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features))) / 100)
+            if opacity == 0 { continue }
             composition.setRenderPipelineState(imagePipeline)
             composition.setFragmentTexture(layer.image, index: 0)
             composition.setFragmentTexture(layer.glow ?? layer.image, index: 1)
-            var values = SIMD4(Float(scene.width) / Float(layer.image.width), Float(scene.height) / Float(layer.image.height), intensity, 0)
+            var values = SIMD4(Float(scene.width) / Float(layer.image.width), Float(scene.height) / Float(layer.image.height), intensity, opacity)
             composition.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
             quad(composition)
             let localTime = time - clip.start
@@ -171,14 +175,14 @@ final class MetalSceneRenderer {
                 composition.setFragmentBytes(&palette, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
                 for emitter in particles.emitters {
                     drawSprites(particles.instances(at: localTime, size: spriteSize, emitter: emitter),
-                                with: particlePipeline, encoder: composition)
+                                with: particlePipeline, encoder: composition, opacity: opacity)
                 }
             }
             if let embers = clip.effects?.embers, embers.isEnabled, embers.brightness > 0 {
-                drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: composition)
+                drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: composition, opacity: opacity)
             }
             if let snow = clip.effects?.snow, snow.isEnabled, snow.opacity > 0 {
-                drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: composition)
+                drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: composition, opacity: opacity)
             }
             if let orbs = clip.effects?.orbs, orbs.isEnabled, orbs.opacity > 0 {
                 ImageEffects.Orbs.colors.withUnsafeBytes { bytes in
@@ -186,7 +190,7 @@ final class MetalSceneRenderer {
                 }
                 var saturation = Float(orbs.saturation / 100)
                 composition.setFragmentBytes(&saturation, length: MemoryLayout<Float>.size, index: 1)
-                drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: composition)
+                drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: composition, opacity: opacity)
             }
         }
         composition.setRenderPipelineState(overlayPipeline)
@@ -225,14 +229,15 @@ final class MetalSceneRenderer {
         transformScratch = nil
     }
 
-    private func transform(_ layer: VisualRenderLayer, at time: Double, settings: SceneSettings, pulse: Double) -> CGAffineTransform {
+    private func transform(_ layer: VisualRenderLayer, at time: Double, settings: SceneSettings, features: AudioFeatures?, shake: ImageEffects.Shake?) -> CGAffineTransform {
         let image = layer.frame
         let clip = layer.clip
         let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
-        let imageScale = fit * clip.scale(at: time, settings: settings, transientPulse: pulse)
-        let angle = clip.manualValue(.rotation, at: time).truncatingRemainder(dividingBy: 360) * (-.pi / 180)
-        return CGAffineTransform(translationX: size.width / 2 + clip.manualValue(.x, at: time) * scale,
-                                 y: size.height / 2 + clip.manualValue(.y, at: time) * scale)
+        let imageScale = fit * (ParameterEvaluator.value(.scale, clip: clip, at: time, settings: settings, features: features) / 100)
+        let displacement = shake?.displacement(at: time - clip.start) ?? .zero
+        let angle = ParameterEvaluator.value(.rotation, clip: clip, at: time, settings: settings, features: features).truncatingRemainder(dividingBy: 360) * (-.pi / 180)
+        return CGAffineTransform(translationX: size.width / 2 + (ParameterEvaluator.value(.x, clip: clip, at: time, settings: settings, features: features) + displacement.x) * scale,
+                                 y: size.height / 2 + (ParameterEvaluator.value(.y, clip: clip, at: time, settings: settings, features: features) + displacement.y) * scale)
             .rotated(by: angle).scaledBy(x: imageScale, y: imageScale)
             .translatedBy(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2)
     }
@@ -247,7 +252,7 @@ final class MetalSceneRenderer {
     private func process(_ key: ImageKey, source: MTLTexture, reusing previous: ProcessedImage?, commands: MTLCommandBuffer) throws -> ProcessedImage {
         let padding = key.blur + key.glowRadius > 0 ? ceil(3 * (key.blur + key.glowRadius) * scale) + 2 : 0
         let bounds = CGRect(origin: .zero, size: canvas.insetBy(dx: -padding, dy: -padding).size)
-        let positioned = try filterTexture(bounds: bounds, reusing: key.blur > 0 ? transformScratch : previous?.image)
+        let positioned = try filterTexture(bounds: bounds, reusing: key.blur > 0 || key.correction != nil ? transformScratch : previous?.image)
         var placement = placement(for: key, padding: padding, bounds: bounds)
         let pass = try encoder(commands, target: positioned, clear: MTLClearColorMake(0, 0, 0, 0))
         pass.setRenderPipelineState(placementPipeline)
@@ -257,10 +262,17 @@ final class MetalSceneRenderer {
         pass.endEncoding()
 
         var rendered = positioned
-        if key.blur > 0 {
+        if key.blur > 0 || key.correction != nil {
             transformScratch = positioned
             guard let input = CIImage(mtlTexture: positioned, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
-            rendered = try render(input.applyingGaussianBlur(sigma: key.blur * scale), bounds: bounds,
+            var filtered = input
+            if let correction = key.correction {
+                filtered = filtered.applyingFilter("CIHueAdjust", parameters: ["inputAngle": correction.hue * .pi / 180])
+                    .applyingFilter("CIColorControls", parameters: ["inputBrightness": correction.brightness / 100,
+                                                                   "inputSaturation": correction.saturation / 100])
+            }
+            if key.blur > 0 { filtered = filtered.applyingGaussianBlur(sigma: key.blur * scale) }
+            rendered = try render(filtered, bounds: bounds,
                                   reusing: previous?.image, commands: commands)
         }
         let glow = key.glowRadius > 0 ? try bloom(rendered, key: key, bounds: bounds, reusing: previous?.glow, commands: commands) : nil
@@ -310,7 +322,8 @@ final class MetalSceneRenderer {
         return texture
     }
 
-    private func drawSprites(_ instances: [SIMD4<Float>], with pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder) {
+    private func drawSprites(_ instances: [SIMD4<Float>], with pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder, opacity: Float) {
+        let instances = opacity == 1 ? instances : instances.map { SIMD4($0.x, $0.y, $0.z, $0.w * opacity) }
         var size = SIMD2(Float(Self.videoSize.width), Float(Self.videoSize.height))
         encoder.setRenderPipelineState(pipeline)
         instances.withUnsafeBytes { bytes in

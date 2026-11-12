@@ -26,22 +26,29 @@ struct AudioFeatures: Sendable {
     let duration: Double
     let step: Double
     let frames: [[Float]]
-    let transientTimes: [Double]
+    var transientEvents: [TransientBand: [Double]] = [:]
+    var sampleRate = 48000.0
 
-    func transientPulse(at time: Double) -> Double {
-        guard time >= 0, time < duration else { return 0 }
-        var lower = 0
-        var upper = transientTimes.count
+    func events(for band: TransientBand) -> [Double] { transientEvents[band.key] ?? [] }
+    private func insertionIndex(_ time: Double, in times: [Double], afterEqual: Bool) -> Int {
+        var lower = 0, upper = times.count
         while lower < upper {
             let middle = lower + (upper - lower) / 2
-            if transientTimes[middle] <= time {
-                lower = middle + 1
-            } else {
-                upper = middle
-            }
+            if times[middle] < time || (afterEqual && times[middle] == time) { lower = middle + 1 } else { upper = middle }
         }
-        guard lower > 0 else { return 0 }
-        return zoomPulse(elapsed: time - transientTimes[lower - 1])
+        return lower
+    }
+    func transientEvents(for band: TransientBand, from first: Double, through last: Double) -> [Double] {
+        let times = events(for: band)
+        let start = insertionIndex(first, in: times, afterEqual: false)
+        let end = insertionIndex(last, in: times, afterEqual: true)
+        return start <= end ? Array(times[start..<end]) : []
+    }
+    func latestTransient(at time: Double, band: TransientBand) -> Double? {
+        guard time >= 0, time < duration else { return nil }
+        let times = events(for: band)
+        let index = insertionIndex(time, in: times, afterEqual: true)
+        return index > 0 ? times[index - 1] : nil
     }
 
     func bands(at time: Double, count: Int) -> [Float] {

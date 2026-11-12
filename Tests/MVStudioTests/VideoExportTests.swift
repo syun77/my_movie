@@ -25,17 +25,22 @@ final class VideoExportTests: XCTestCase {
         var visuals = VisualTrack()
         let still = visuals.register(url: background, projectURL: project)
         let video = visuals.register(url: movie, projectURL: project, kind: .video(duration: 2.5))
-        visuals.layers[0].clips = [VisualClip(assetID: still, start: 0, end: duration, automaticAnimation: .off)]
-        var trimmed = VisualClip(assetID: video, start: 0.2, end: 1.2, content: .video(sourceIn: 0.3), automaticAnimation: .off)
+        visuals.layers[0].clips = [VisualClip(assetID: still, start: 0, end: duration, audioModulations: [:])]
+        var trimmed = VisualClip(assetID: video, start: 0.2, end: 1.2, content: .video(sourceIn: 0.3), audioModulations: [:])
         trimmed.fixedValues[.x] = 240
+        trimmed.audioModulations[.x] = AudioModulation(source: .beat, amount: 120, beatNoteDenominator: 7)
+        trimmed.audioModulations[.opacity] = AudioModulation(amount: -30, releaseSeconds: 1,
+            transientBand: TransientBand(kind: .custom, lowerHz: 300, upperHz: 500))
         visuals.layers[1].clips = [trimmed,
-            VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6), automaticAnimation: .off)]
-        var upper = VisualClip(assetID: video, start: 0.7, end: 1, content: .video(sourceIn: 1.1), automaticAnimation: .off)
+            VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6), audioModulations: [:])]
+        var upper = VisualClip(assetID: video, start: 0.7, end: 1, content: .video(sourceIn: 1.1), audioModulations: [:])
         upper.effects = ImageEffects(blur: .init(radius: 2))
+        upper.audioModulations[.blurRadius] = AudioModulation(source: .beat, amount: 5, beatNoteDenominator: 12)
         visuals.layers[2].clips = [upper]
         // Unused missing media must not prevent export.
         _ = visuals.register(url: directory.appendingPathComponent("missing.mov"), projectURL: project, kind: .video(duration: 1))
-        let features = AudioFeatures(duration: duration, step: 0.1, frames: Array(repeating: Array(repeating: 0.6, count: 64), count: 21), transientTimes: [])
+        let features = AudioFeatures(duration: duration, step: 0.1, frames: Array(repeating: Array(repeating: 0.6, count: 64), count: 21), transientEvents: [TransientBand(): []])
+        let preparedFeatures = try await TransientAnalysisService.shared.prepare(features, url: audio, bands: visuals.requiredTransientBands)
         let lyrics = LyricsTrack(clips: [LyricClip(start: 0.4, end: 1.5, text: "動画と歌詞")])
         let output = directory.appendingPathComponent("result.mp4")
         try Data("previous result".utf8).write(to: output)
@@ -69,7 +74,7 @@ final class VideoExportTests: XCTestCase {
             if sampleIndices.contains(index) {
                 let time = Double(index) / 30
                 let layers = try await expectedFrames.layers(track: visuals, projectURL: project, time: time, allowMissingImages: false)
-                let commands = try renderer.encode(visuals: layers, features: features, settings: SceneSettings(), lyrics: lyrics,
+                let commands = try renderer.encode(visuals: layers, features: preparedFeatures, settings: SceneSettings(), lyrics: lyrics,
                     time: time, target: target, video: true)
                 await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                     commands.addCompletedHandler { _ in continuation.resume() }; commands.commit()
@@ -103,10 +108,10 @@ final class VideoExportTests: XCTestCase {
         let project = ProjectStorage.projectURL(for: audio)
         var visuals = VisualTrack()
         let id = visuals.register(url: movie, projectURL: project, kind: .video(duration: 1.5))
-        visuals.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1, content: .video(sourceIn: 0), automaticAnimation: .off)]
+        visuals.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1, content: .video(sourceIn: 0), audioModulations: [:])]
         let output = directory.appendingPathComponent("existing.mp4")
         let sentinel = Data("existing result".utf8)
-        let features = AudioFeatures(duration: 1, step: 1, frames: [], transientTimes: [])
+        let features = AudioFeatures(duration: 1, step: 1, frames: [], transientEvents: [TransientBand(): []])
         try sentinel.write(to: output)
         let cancellation = ExportCancellation()
         do {

@@ -2,10 +2,15 @@ import AppKit
 
 @MainActor
 final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
+    var onDeleteEmitter: ((ImageEffects, Int) -> Void)?
+    var onCreateAutomation: ((ImageParameter) -> Void)?
+    var onEditMusic: ((ImageParameter) -> Void)?
+    var onRemoveMusic: ((ImageParameter) -> Void)?
+    var onRemoveAutomation: ((ImageParameter) -> Void)?
     var onCommit: ((ImageEffects) -> Void)?
     var onPreview: ((ImageEffects?) -> Void)?
     private enum Kind: Int, CaseIterable {
-        case blur, bloom, particles, embers, snow, orbs
+        case blur, bloom, particles, embers, snow, orbs, shake, colorCorrection
 
         var title: String {
             switch self {
@@ -15,6 +20,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .embers: return "舞い上がる火の粉"
             case .snow: return "雪"
             case .orbs: return "光の粒子2"
+            case .shake: return "シェイク"
+            case .colorCorrection: return "色調補正"
             }
         }
 
@@ -26,12 +33,15 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .embers: return effects.embers != nil
             case .snow: return effects.snow != nil
             case .orbs: return effects.orbs != nil
+            case .shake: return effects.shake != nil
+            case .colorCorrection: return effects.colorCorrection != nil
             }
         }
     }
 
     private struct NumberInput {
         let field: DragValueField
+        let parameter: () -> ImageParameter?
         let read: (ImageEffects) -> Double?
         let write: (ImageEffects, Double) -> ImageEffects
     }
@@ -93,21 +103,29 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         removeEmitter.setAccessibilityLabel("発生源を削除")
         removeEmitter.target = self; removeEmitter.action = #selector(deleteEmitter)
 
+        typealias Correction = ImageEffects.ColorCorrection
+        contents[.colorCorrection] = row(number("色相 °", .colorHue, \.colorCorrection, \.hue, Correction().hue, Correction.hueRange)
+            + number("明度 %", .colorBrightness, \.colorCorrection, \.brightness, Correction().brightness, Correction.brightnessRange)
+            + number("彩度 %", .colorSaturation, \.colorCorrection, \.saturation, Correction().saturation, Correction.saturationRange))
+        typealias Shake = ImageEffects.Shake
+        contents[.shake] = row(number("X強さ px", .shakeX, \.shake, \.x, Shake().x, Shake.amplitudeRange)
+            + number("Y強さ px", .shakeY, \.shake, \.y, Shake().y, Shake.amplitudeRange)
+            + number("総合強さ %", .shakeStrength, \.shake, \.strength, Shake().strength, Shake.strengthRange))
         typealias Blur = ImageEffects.Blur
         typealias Bloom = ImageEffects.Bloom
         typealias Particles = ImageEffects.Particles
         typealias Embers = ImageEffects.Embers
-        contents[.blur] = row(number("半径 px", \.blur, \.radius, Blur().radius, Blur.radiusRange))
-        contents[.bloom] = row(number("しきい値 %", \.bloom, \.threshold, Bloom().threshold, Bloom.thresholdRange)
-            + number("半径 px", \.bloom, \.radius, Bloom().radius, Bloom.radiusRange)
-            + number("強さ %", \.bloom, \.intensity, Bloom().intensity, Bloom.intensityRange))
+        contents[.blur] = row(number("半径 px", .blurRadius, \.blur, \.radius, Blur().radius, Blur.radiusRange))
+        contents[.bloom] = row(number("しきい値 %", .bloomThreshold, \.bloom, \.threshold, Bloom().threshold, Bloom.thresholdRange)
+            + number("半径 px", .bloomRadius, \.bloom, \.radius, Bloom().radius, Bloom.radiusRange)
+            + number("強さ %", .bloomIntensity, \.bloom, \.intensity, Bloom().intensity, Bloom.intensityRange))
         let particleDefaults = Particles(seed: 0)
         contents[.particles] = NSStackView(views: [
-            row(number("個数", \.particles, \.count, particleDefaults.count, Particles.countRange)
-                + number("基準直径 px", \.particles, \.diameter, particleDefaults.diameter, Particles.diameterRange)
-                + number("基準速度 px/秒", \.particles, \.speed, particleDefaults.speed, Particles.speedRange)),
-            row(number("曲線の強さ %", \.particles, \.curveStrength, particleDefaults.curveStrength, Particles.curveStrengthRange)
-                + number("不透明度 %", \.particles, \.opacity, particleDefaults.opacity, Particles.opacityRange)
+            row(number("個数", .particlesCount, \.particles, \.count, particleDefaults.count, Particles.countRange)
+                + number("基準直径 px", .particlesDiameter, \.particles, \.diameter, particleDefaults.diameter, Particles.diameterRange)
+                + number("基準速度 px/秒", .particlesSpeed, \.particles, \.speed, particleDefaults.speed, Particles.speedRange)),
+            row(number("曲線の強さ %", .particlesCurveStrength, \.particles, \.curveStrength, particleDefaults.curveStrength, Particles.curveStrengthRange)
+                + number("不透明度 %", .particlesOpacity, \.particles, \.opacity, particleDefaults.opacity, Particles.opacityRange)
                 + [NSTextField(labelWithString: "色"), color]),
             row([NSTextField(labelWithString: "発生源"), emitterPicker, addEmitter, removeEmitter]
                 + emitterCoordinate("X", \.x, Particles.Emitter.xRange)
@@ -115,29 +133,29 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         ])
         let emberDefaults = Embers(seed: 0)
         contents[.embers] = NSStackView(views: [
-            row(number("個数", \.embers, \.count, emberDefaults.count, Embers.countRange)
-                + number("大きさ px", \.embers, \.diameter, emberDefaults.diameter, Embers.diameterRange)
-                + number("上昇速度 px/秒", \.embers, \.riseSpeed, emberDefaults.riseSpeed, Embers.riseSpeedRange)),
-            row(number("横風 px/秒", \.embers, \.wind, emberDefaults.wind, Embers.windRange)
-                + number("揺れの速さ %", \.embers, \.swaySpeed, emberDefaults.swaySpeed, Embers.swaySpeedRange)
-                + number("明るさ %", \.embers, \.brightness, emberDefaults.brightness, Embers.brightnessRange))
+            row(number("個数", .embersCount, \.embers, \.count, emberDefaults.count, Embers.countRange)
+                + number("大きさ px", .embersDiameter, \.embers, \.diameter, emberDefaults.diameter, Embers.diameterRange)
+                + number("上昇速度 px/秒", .embersRiseSpeed, \.embers, \.riseSpeed, emberDefaults.riseSpeed, Embers.riseSpeedRange)),
+            row(number("横風 px/秒", .embersWind, \.embers, \.wind, emberDefaults.wind, Embers.windRange)
+                + number("揺れの速さ %", .embersSwaySpeed, \.embers, \.swaySpeed, emberDefaults.swaySpeed, Embers.swaySpeedRange)
+                + number("明るさ %", .embersBrightness, \.embers, \.brightness, emberDefaults.brightness, Embers.brightnessRange))
         ])
         typealias Snow = ImageEffects.Snow
         let snowDefaults = Snow(seed: 0)
         contents[.snow] = NSStackView(views: [
-            row(number("個数", \.snow, \.count, snowDefaults.count, Snow.countRange)
-                + number("大きさ px", \.snow, \.diameter, snowDefaults.diameter, Snow.diameterRange)
-                + number("落下速度 px/秒", \.snow, \.fallSpeed, snowDefaults.fallSpeed, Snow.fallSpeedRange)),
-            row(number("横風 %", \.snow, \.wind, snowDefaults.wind, Snow.windRange)
-                + number("不透明度 %", \.snow, \.opacity, snowDefaults.opacity, Snow.opacityRange))
+            row(number("個数", .snowCount, \.snow, \.count, snowDefaults.count, Snow.countRange)
+                + number("大きさ px", .snowDiameter, \.snow, \.diameter, snowDefaults.diameter, Snow.diameterRange)
+                + number("落下速度 px/秒", .snowFallSpeed, \.snow, \.fallSpeed, snowDefaults.fallSpeed, Snow.fallSpeedRange)),
+            row(number("横風 %", .snowWind, \.snow, \.wind, snowDefaults.wind, Snow.windRange)
+                + number("不透明度 %", .snowOpacity, \.snow, \.opacity, snowDefaults.opacity, Snow.opacityRange))
         ])
         typealias Orbs = ImageEffects.Orbs
         let orbDefaults = Orbs()
         contents[.orbs] = NSStackView(views: [
-            row(number("発生数", \.orbs, \.count, orbDefaults.count, Orbs.countRange)
-                + number("彩度 %", \.orbs, \.saturation, orbDefaults.saturation, Orbs.saturationRange)),
-            row(number("速度 %", \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
-                + number("不透明度 %", \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
+            row(number("発生数", .orbsCount, \.orbs, \.count, orbDefaults.count, Orbs.countRange)
+                + number("彩度 %", .orbsSaturation, \.orbs, \.saturation, orbDefaults.saturation, Orbs.saturationRange)),
+            row(number("速度 %", .orbsSpeed, \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
+                + number("不透明度 %", .orbsOpacity, \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
         ])
         for kind in [Kind.particles, .embers, .snow, .orbs] {
             contents[kind]?.orientation = .vertical
@@ -175,10 +193,10 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         return stack
     }
 
-    private func number<T>(_ title: String, _ effect: WritableKeyPath<ImageEffects, T?>,
+    private func number<T>(_ title: String, _ parameter: ImageParameter, _ effect: WritableKeyPath<ImageEffects, T?>,
                            _ value: WritableKeyPath<T, Double>, _ initial: Double,
                            _ range: ClosedRange<Double>) -> [NSView] {
-        number(title, initial: initial, range: range, read: { $0[keyPath: effect]?[keyPath: value] }) { effects, number in
+        number(title, initial: initial, range: range, parameter: { parameter }, read: { $0[keyPath: effect]?[keyPath: value] }) { effects, number in
             var result = effects
             result[keyPath: effect]?[keyPath: value] = number
             return result
@@ -188,7 +206,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private func emitterCoordinate(_ title: String, _ coordinate: WritableKeyPath<ImageEffects.Particles.Emitter, Double>,
                                    _ range: ClosedRange<Double>) -> [NSView] {
         number(title, initial: ImageEffects.Particles.Emitter()[keyPath: coordinate], range: range,
-               accessibilityLabel: "発生源の" + title, read: { [weak self] effects in
+               accessibilityLabel: "発生源の" + title, parameter: { [weak self] in
+            self.flatMap { ImageParameter(rawValue: "emitter\($0.selectedEmitter)" + title) }
+        }, read: { [weak self] effects in
             guard let self, let emitters = effects.particles?.emitters, emitters.indices.contains(self.selectedEmitter) else { return nil }
             return emitters[self.selectedEmitter][keyPath: coordinate]
         }) { [weak self] effects, number in
@@ -200,6 +220,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     }
 
     private func number(_ title: String, initial: Double, range: ClosedRange<Double>, accessibilityLabel: String? = nil,
+                        parameter: @escaping () -> ImageParameter?,
                         read: @escaping (ImageEffects) -> Double?,
                         update: @escaping (ImageEffects, Double) -> ImageEffects) -> [NSView] {
         let field = DragValueField(frame: .zero)
@@ -220,7 +241,11 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             guard let self else { return }
             self.onCommit?(write(self.effects, value))
         })
-        numbers.append(NumberInput(field: field, read: read, write: write))
+        field.onCreateAutomation = { [weak self] in if let parameter = parameter() { self?.onCreateAutomation?(parameter) } }
+        field.onRemoveAutomation = { [weak self] in if let parameter = parameter() { self?.onRemoveAutomation?(parameter) } }
+        field.onEditMusic = { [weak self] in if let parameter = parameter() { self?.onEditMusic?(parameter) } }
+        field.onRemoveMusic = { [weak self] in if let parameter = parameter() { self?.onRemoveMusic?(parameter) } }
+        numbers.append(NumberInput(field: field, parameter: parameter, read: read, write: write))
         let group = NSStackView(views: [NSTextField(labelWithString: title), field])
         group.orientation = .vertical
         group.alignment = .leading
@@ -270,6 +295,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .particles: enabled.state = effects.particles?.isEnabled == true ? .on : .off
         case .embers: enabled.state = effects.embers?.isEnabled == true ? .on : .off
         case .snow: enabled.state = effects.snow?.isEnabled == true ? .on : .off
+        case .shake: enabled.state = effects.shake?.isEnabled == true ? .on : .off
+        case .colorCorrection: enabled.state = effects.colorCorrection?.isEnabled == true ? .on : .off
         case .orbs: enabled.state = effects.orbs?.isEnabled == true ? .on : .off
         case nil: enabled.state = .off
         }
@@ -279,6 +306,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         for input in numbers {
             let value = input.read(effects)
             input.field.isEnabled = editable && value != nil
+            input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }
+            input.field.hasMusic = input.parameter().flatMap { shownClip?.audioModulations[$0] } != nil
+            input.field.hasAutomation = input.parameter().flatMap { shownClip?.curve($0) } != nil
             if input.field.currentEditor() == nil, let value { input.field.doubleValue = value }
         }
         updateOutside()
@@ -318,11 +348,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     @objc private func deleteEmitter() {
         guard removeEmitter.isEnabled, window?.makeFirstResponder(nil) != false, var particles = effects.particles else { return }
         cancelDrag()
-        particles.emitters.remove(at: selectedEmitter)
+        let deletedIndex = selectedEmitter
+        particles.emitters.remove(at: deletedIndex)
         selectedEmitter = min(selectedEmitter, particles.emitters.count - 1)
         var result = effects
         result.particles = particles
-        onCommit?(result)
+        onDeleteEmitter?(result, deletedIndex)
     }
 
     @objc private func toggleDisclosure() {
@@ -352,6 +383,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .particles: result.particles = .init()
         case .embers: result.embers = .init()
         case .snow: result.snow = .init()
+        case .shake: result.shake = .init()
+        case .colorCorrection: result.colorCorrection = .init()
         case .orbs: result.orbs = .init()
         }
         selected = kind
@@ -368,6 +401,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .particles: result.particles?.isEnabled = isEnabled
         case .embers: result.embers?.isEnabled = isEnabled
         case .snow: result.snow?.isEnabled = isEnabled
+        case .shake: result.shake?.isEnabled = isEnabled
+        case .colorCorrection: result.colorCorrection?.isEnabled = isEnabled
         case .orbs: result.orbs?.isEnabled = isEnabled
         case nil: return
         }
@@ -384,6 +419,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .particles: result.particles = nil
         case .embers: result.embers = nil
         case .snow: result.snow = nil
+        case .shake: result.shake = nil
+        case .colorCorrection: result.colorCorrection = nil
         case .orbs: result.orbs = nil
         case nil: return
         }

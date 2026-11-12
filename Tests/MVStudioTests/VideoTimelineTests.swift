@@ -14,7 +14,7 @@ final class VideoTimelineTests: XCTestCase {
         let result = try track.adding(assetID: id, at: 10, slot: 1, duration: 30, grid: TimelineSnapGrid())
         track = result.track
         XCTAssertEqual(result.clip.end, 18)
-        XCTAssertEqual(result.clip.automaticAnimation, .off)
+        XCTAssertTrue(result.clip.audioModulations.isEmpty)
         let trimmed = try track.dragging(id: result.clip.id, part: .start, delta: 3, duration: 30, grid: TimelineSnapGrid())
         let clip = try XCTUnwrap(trimmed.clip(result.clip.id))
         XCTAssertEqual(clip.content.sourceIn, 3)
@@ -33,7 +33,7 @@ final class VideoTimelineTests: XCTestCase {
         let file = ProjectFile(audioURL: project.deletingPathExtension(), visuals: moved, settings: SceneSettings(), projectURL: project)
         let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(file))
         try decoded.validate()
-        XCTAssertEqual(decoded.version, 6); XCTAssertEqual(decoded.visuals, moved)
+        XCTAssertEqual(decoded.version, 7); XCTAssertEqual(decoded.visuals, moved)
         let history = EditHistory()
         history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: track, settings: SceneSettings()))
         history.record(EditSnapshot(lyrics: LyricsTrack(), visuals: moved, settings: SceneSettings()))
@@ -52,8 +52,8 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(kind.videoDuration), 1.5, accuracy: 0.001)
         var track = VisualTrack()
         let id = track.register(url: url, projectURL: project, kind: kind)
-        var first = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0), automaticAnimation: .off)
-        let second = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0.4), automaticAnimation: .off)
+        var first = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0), audioModulations: [:])
+        let second = VisualClip(assetID: id, start: 10, end: 11, content: .video(sourceIn: 0.4), audioModulations: [:])
         track.layers[0].clips = [first]; track.layers[1].clips = [second]
         let renderer = try MetalSceneRenderer(scale: 0.1)
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: 192, height: 108, mipmapped: false)
@@ -140,7 +140,7 @@ final class VideoTimelineTests: XCTestCase {
         let storage = ProjectStorage(defaults: defaults), projectURL = ProjectStorage.projectURL(for: audio)
         var track = VisualTrack()
         let id = track.register(url: movie, projectURL: projectURL, kind: .video(duration: 1.5))
-        track.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: 0), automaticAnimation: .off)]
+        track.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: 0), audioModulations: [:])]
         try storage.save(ProjectFile(audioURL: audio, visuals: track, settings: SceneSettings(spectrum: false), projectURL: projectURL), to: projectURL)
         let referenceProvider = VideoFrameProvider()
         let referenceEnd = try await referenceProvider.layers(track: track, projectURL: projectURL, time: 0.85)
@@ -211,7 +211,7 @@ final class VideoTimelineTests: XCTestCase {
         var track = VisualTrack()
         let id = track.register(url: url, projectURL: project, kind: .video(duration: 2))
         for index in 0..<3 {
-            track.layers[index].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: Double(index) / 10), automaticAnimation: .off)]
+            track.layers[index].clips = [VisualClip(assetID: id, start: 0, end: 1.5, content: .video(sourceIn: Double(index) / 10), audioModulations: [:])]
         }
         var samples: [Double] = []
         for frame in 0..<40 {

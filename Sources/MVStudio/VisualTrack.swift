@@ -27,8 +27,8 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     var start: Double
     var end: Double
     var content: VisualContent = .still
-    var automaticAnimation = AutomaticAnimation.transient
-    var pulseAmount = 0.08
+    var audioModulations: [ImageParameter: AudioModulation] = [.scale: .initial(for: .scale)]
+    var automationRanges: [ImageParameter: DisplayRange] = [:]
     var fixedValues: [ImageParameter: Double] = [:]
     var curves: [ImageCurve] = []
     var effects: ImageEffects?
@@ -145,7 +145,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
             content = .video(sourceIn: 0)
         }
         var clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
-        if content.sourceIn != nil { clip.automaticAnimation = .off }
+        if content.sourceIn != nil { clip.audioModulations = [:] }
         return (try inserting(clip, slot: slot, duration: duration), clip)
     }
 

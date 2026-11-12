@@ -23,6 +23,7 @@ enum VideoExporter {
         guard features.duration.isFinite, features.duration > 0,
               features.duration < Double(Int.max) / Double(fps) else { throw StudioError.message("音声の長さが不正です。") }
         try visuals.validate(duration: features.duration)
+        let features = try await TransientAnalysisService.shared.prepare(features, url: audioURL, bands: visuals.requiredTransientBands, cancellation: cancellation)
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }

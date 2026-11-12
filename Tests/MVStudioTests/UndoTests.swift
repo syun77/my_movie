@@ -141,7 +141,7 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit(); XCTAssertEqual(editor.visuals.track, result.track)
         delegate.redoEdit(); XCTAssertEqual(editor.visuals.track, replaced)
         var movedClip = replaced.clips[0]; movedClip.start = 2; movedClip.end = 4
-        movedClip.automaticAnimation = .off; movedClip.pulseAmount = 0.2
+        movedClip.audioModulations = [.scale: AudioModulation(blend: .relative, amount: 20)]
         _ = movedClip.setKey(.x, at: 2.5, value: 240)
         let moved = try replaced.updating(movedClip, slot: 3, duration: 10)
         editor.visuals.commit(moved, selectedID: movedClip.id)

@@ -1,7 +1,7 @@
 import Foundation
 
 struct ProjectFile: Codable {
-    static let currentVersion = 6
+    static let currentVersion = 7
 
     private(set) var version: Int
     let audio: AssetReference

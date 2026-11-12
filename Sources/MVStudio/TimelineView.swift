@@ -6,12 +6,14 @@ final class TimelineView: NSView {
     var visuals = VisualTrack() {
         didSet {
             layerParameters = Dictionary(uniqueKeysWithValues: visuals.layers.map { layer in
-                let used = Set(layer.clips.flatMap { $0.curves.map(\.parameter) })
+                let used = Set(layer.clips.flatMap { $0.automationParameters })
                 return (layer.slot, ImageParameter.allCases.filter { used.contains($0) })
             })
             updateGraphLayout()
         }
     }
+    var audioFeatures: AudioFeatures? { didSet { needsDisplay = true } }
+    var sceneSettings = SceneSettings() { didSet { needsDisplay = true } }
     var automationPreview: VisualTrack? { didSet { needsDisplay = true } }
     var missingAssets = Set<UUID>() { didSet { needsDisplay = true } }
     var selectedImageID: UUID? {
@@ -66,6 +68,7 @@ final class TimelineView: NSView {
         let geometry: TimelineGeometry
         let lane: GraphLane
         let key: ImageKeyframe?
+        let bendKeyID: UUID?
         let initial: NSPoint
         let previousTime: Double
         var draft: VisualTrack?
@@ -427,9 +430,32 @@ final class TimelineView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard canEditClips else { return super.menu(for: event) }
         let point = convert(event.locationInWindow, from: nil)
+        if visualMode, onImageCommit != nil,
+           let hit = graphKey(at: point, in: graphLanes(in: visuals)),
+           window?.makeFirstResponder(self) != false {
+            if selectedImageID != hit.lane.clip.id {
+                selectedSlot = visuals.slot(of: hit.lane.clip.id) ?? selectedSlot
+                selectedImageID = hit.lane.clip.id
+                onImageSelect?(hit.lane.clip.id, selectedSlot)
+            }
+            selectGraph(hit.lane.curve.parameter, key: hit.key.id)
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            let target = KeyMenuTarget(clipID: hit.lane.clip.id, parameter: hit.lane.curve.parameter, keyID: hit.key.id)
+            let delete = menu.addItem(withTitle: "削除", action: #selector(deleteGraphKey(_:)), keyEquivalent: "")
+            delete.target = self; delete.representedObject = target
+            menu.addItem(.separator())
+            for interpolation in ImageInterpolation.allCases {
+                let item = menu.addItem(withTitle: interpolation.title, action: #selector(changeInterpolation(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = KeyInterpolationTarget(key: target, interpolation: interpolation)
+                item.state = hit.key.incomingInterpolation == interpolation ? .on : .off
+            }
+            return menu
+        }
         if canRemoveAutomation, let label = graphLabel(at: point) {
             let menu = NSMenu()
-            let item = menu.addItem(withTitle: "レーンを削除", action: #selector(removeAutomationLane(_:)), keyEquivalent: "")
+            let item = menu.addItem(withTitle: "レーンを削除（キーと音楽同期）", action: #selector(removeAutomationLane(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = label.target
             return menu
@@ -446,6 +472,45 @@ final class TimelineView: NSView {
             item.isEnabled = canPerformClipCommand?(command) == true
         }
         return menu
+    }
+
+    private struct KeyMenuTarget {
+        let clipID: UUID
+        let parameter: ImageParameter
+        let keyID: UUID
+    }
+
+    private struct KeyInterpolationTarget {
+        let key: KeyMenuTarget
+        let interpolation: ImageInterpolation
+    }
+
+    private func editGraphKey(_ target: KeyMenuTarget, delete: Bool = false, interpolation: ImageInterpolation = .single) {
+        guard visualMode, canEditClips, let slot = visuals.slot(of: target.clipID),
+              var clip = visuals.clip(target.clipID), var curve = clip.curve(target.parameter),
+              let index = curve.keys.firstIndex(where: { $0.id == target.keyID }) else { return }
+        if delete { clip.removeKey(target.keyID, parameter: target.parameter) }
+        else {
+            guard curve.keys[index].incomingInterpolation != interpolation else { return }
+            curve.keys[index].interpolation = interpolation == .single ? nil : interpolation
+            clip.setCurve(curve)
+        }
+        do {
+            let updated = try visuals.updating(clip, slot: slot, duration: duration)
+            onBeginEdit?()
+            onImageCommit?(updated, clip.id)
+            selectGraph(clip.displayCurve(target.parameter) == nil ? nil : target.parameter, key: delete ? nil : target.keyID)
+        } catch { onError?(error) }
+    }
+
+    @objc private func deleteGraphKey(_ item: NSMenuItem) {
+        if let target = item.representedObject as? KeyMenuTarget { editGraphKey(target, delete: true) }
+    }
+
+    @objc private func changeInterpolation(_ item: NSMenuItem) {
+        if let target = item.representedObject as? KeyInterpolationTarget {
+            editGraphKey(target.key, interpolation: target.interpolation)
+        }
     }
 
     private func selectClipForMenu(at point: NSPoint) -> Bool {
@@ -484,9 +549,9 @@ final class TimelineView: NSView {
 
     @objc private func removeAutomationLane(_ item: NSMenuItem) {
         guard canRemoveAutomation, let target = item.representedObject as? GraphTarget,
-              var clip = visuals.clip(target.clipID), clip.curve(target.parameter) != nil,
+              var clip = visuals.clip(target.clipID), clip.displayCurve(target.parameter) != nil,
               let slot = visuals.slot(of: clip.id) else { return }
-        clip.curves.removeAll { $0.parameter == target.parameter }
+        clip.removeAudioAndKeys(target.parameter)
         do {
             let updated = try visuals.updating(clip, slot: slot, duration: duration)
             onBeginEdit?()
@@ -509,15 +574,8 @@ final class TimelineView: NSView {
 
     private func removeSelectedKey() -> Bool {
         guard visualMode, expandedLayerSlots.contains(selectedSlot), let parameter = selectedParameter,
-              let id = selectedKeyID, var clip = visuals.clip(selectedImageID),
-              let slot = visuals.slot(of: clip.id) else { return false }
-        do {
-            clip.removeKey(id, parameter: parameter)
-            let updated = try visuals.updating(clip, slot: slot, duration: duration)
-            onBeginEdit?()
-            onImageCommit?(updated, clip.id)
-            selectGraph(clip.curve(parameter) == nil ? nil : parameter)
-        } catch { onError?(error) }
+              let id = selectedKeyID, let clip = visuals.clip(selectedImageID) else { return false }
+        editGraphKey(KeyMenuTarget(clipID: clip.id, parameter: parameter, keyID: id), delete: true)
         return true
     }
 
@@ -653,7 +711,7 @@ final class TimelineView: NSView {
     private func updateGraphLayout() {
         updateRowLayout()
         if let parameter = selectedParameter,
-           let curve = visuals.clip(selectedImageID)?.curve(parameter) {
+           let curve = visuals.clip(selectedImageID)?.displayCurve(parameter) {
             if let key = selectedKeyID, !curve.keys.contains(where: { $0.id == key }) { selectGraph(parameter) }
         } else if selectedParameter != nil {
             selectGraph(nil)
@@ -737,7 +795,7 @@ final class TimelineView: NSView {
             guard !parameters.isEmpty else { return [GraphLane]() }
             return layer.clips.filter { $0.end >= geometry.origin && $0.start <= geometry.origin + geometry.span }.flatMap { clip in
                 parameters.enumerated().compactMap { index, parameter in
-                    guard let curve = clip.curve(parameter) else { return nil }
+                    guard let curve = clip.displayCurve(parameter) else { return nil }
                     let left = x(at: clip.start)
                     let rect = NSRect(x: left, y: graphY(slot: layer.slot, index: index),
                                       width: x(at: clip.end) - left, height: rowHeight(.automation(layer.slot, parameter)) - 2 * graphPadding)
@@ -791,7 +849,7 @@ final class TimelineView: NSView {
                 let color: NSColor = clip != nil && parameter == selectedParameter ? .cyan : .lightGray
                 let y = graphY(slot: slot, index: index)
                 label(parameter.title, rect: NSRect(x: 5, y: y, width: 73, height: 16), color: color, size: 11)
-                if showsGraphRange(slot: slot, parameter: parameter), let curve = clip?.curve(parameter) {
+                if showsGraphRange(slot: slot, parameter: parameter), let curve = clip?.displayCurve(parameter) {
                     label("最大 " + Self.graphNumber(curve.maximum), rect: NSRect(x: 5, y: y + 17, width: 73, height: 14), color: color, size: 9)
                     label("最小 " + Self.graphNumber(curve.minimum), rect: NSRect(x: 5, y: y + 32, width: 73, height: 14), color: color, size: 9)
                 }
@@ -833,7 +891,13 @@ final class TimelineView: NSView {
         if highlight == nil, canEditClips, let point = hoverPoint, let slot = slot(at: point) {
             drawTrimHighlight(imageHit(at: point, slot: slot))
         }
-        for lane in lanes { drawGraph(lane, clippedTo: clipBounds, excluding: highlight?.key.id) }
+        let bendHighlight = highlightedBend(in: lanes)
+        for lane in lanes {
+            let bendID = bendHighlight.flatMap {
+                $0.lane.clip.id == lane.clip.id && $0.lane.curve.parameter == lane.curve.parameter ? $0.key.id : nil
+            }
+            drawGraph(lane, clippedTo: clipBounds, excluding: highlight?.key.id, highlightedBend: bendID)
+        }
         if let drag = imageDrag, drag.error != nil, let slot = drag.targetSlot, let clip = drag.original.clip(drag.id) {
             NSColor.systemRed.setStroke()
             let outline = NSBezierPath(roundedRect: imageRect(clip, slot: slot).insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
@@ -856,7 +920,7 @@ final class TimelineView: NSView {
             let right = min(clipBounds.maxX, x(at: lyric.end))
             label(lyric.text.replacingOccurrences(of: "\n", with: " "), rect: NSRect(x: left + 3, y: 27, width: right - left - 6, height: 16), color: .systemYellow.withAlphaComponent(0.4), size: 10)
         }
-        let hint = !expandedLayerSlots.isEmpty ? "グラフ：クリックで追加、ドラッグで調整、Deleteで削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
+        let hint = !expandedLayerSlots.isEmpty ? "グラフ：クリックで点を追加、○を上下でカーブ・幅・周期を調整、Deleteで点を削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
         label(imageDrag?.error ?? hint, rect: NSRect(x: 14, y: bounds.height - 19, width: bounds.width - 28, height: 16), color: .lightGray, size: 10)
     }
     private func imageMouseDown(_ event: NSEvent) {
@@ -960,7 +1024,7 @@ final class TimelineView: NSView {
 private extension TimelineView {
     private static func graphNumber(_ value: Double) -> String { String(format: "%.5g", value) }
 
-    private func drawGraph(_ lane: GraphLane, clippedTo clipBounds: NSRect, excluding highlightedID: UUID?) {
+    private func drawGraph(_ lane: GraphLane, clippedTo clipBounds: NSRect, excluding highlightedID: UUID?, highlightedBend: UUID?) {
         let visible = lane.rect.intersection(clipBounds)
         guard !visible.isEmpty else { return }
         let active = lane.clip.id == selectedImageID && lane.curve.parameter == selectedParameter
@@ -970,12 +1034,10 @@ private extension TimelineView {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: visible.insetBy(dx: -keyMarkerRadius, dy: -keyMarkerRadius)).addClip()
 
-        // Split segments at range crossings before drawing their visible, clamped portions.
+        // Sample the shared evaluator and split at display-range crossings.
         let first = max(0, geometry.time(at: visible.minX - Self.gutter) - lane.clip.start)
         let last = min(lane.clip.end - lane.clip.start, geometry.time(at: visible.maxX - Self.gutter) - lane.clip.start)
-        let samples = [(first, lane.curve.value(at: first))] +
-            lane.curve.keys.filter { first < $0.time && $0.time < last }.map { ($0.time, $0.value) } +
-            [(last, lane.curve.value(at: last))]
+        let samples = lane.curve.keys.isEmpty ? [(first, lane.clip.baseValue(lane.curve.parameter)), (last, lane.clip.baseValue(lane.curve.parameter))] : lane.curve.plotSamples(from: first, through: last, steps: Int(ceil(visible.width / 2)))
         let path = NSBezierPath()
         func plot(_ time: Double, _ value: Double) {
             path.line(to: NSPoint(x: x(at: lane.clip.start + time), y: lane.y(at: value)))
@@ -992,6 +1054,24 @@ private extension TimelineView {
         color.setStroke()
         path.lineWidth = 1.5
         path.stroke()
+        if let modulation = lane.clip.audioModulations[lane.curve.parameter], modulation.enabled {
+            let start = lane.clip.start + first, end = lane.clip.start + last
+            let events = modulation.events(from: start, through: end, settings: sceneSettings, features: audioFeatures)
+            let combined = ParameterEvaluator.plotSamples(lane.curve.parameter, clip: lane.clip, from: start, through: end,
+                                                         steps: max(1, Int(ceil(visible.width))), settings: sceneSettings, features: audioFeatures)
+            let result = NSBezierPath()
+            for (index, sample) in combined.enumerated() {
+                let point = NSPoint(x: x(at: sample.0), y: lane.y(at: sample.1))
+                if index == 0 { result.move(to: point) } else { result.line(to: point) }
+            }
+            NSColor.systemPink.setStroke(); result.lineWidth = 1; result.stroke()
+            let ticks = NSBezierPath()
+            for event in events {
+                ticks.move(to: NSPoint(x: x(at: event), y: visible.maxY - 5))
+                ticks.line(to: NSPoint(x: x(at: event), y: visible.maxY))
+            }
+            ticks.stroke()
+        }
         let markerBounds = visible.insetBy(dx: -keyMarkerRadius, dy: -keyMarkerRadius)
         for key in lane.curve.keys where key.id != highlightedID && lane.clip.containsKey(key) {
             let center = keyPosition(key, in: lane)
@@ -999,7 +1079,58 @@ private extension TimelineView {
             let selected = active && key.id == selectedKeyID
             drawKey(key, in: lane, at: center, radius: keyMarkerRadius, color: selected ? .white : color)
         }
+        for key in lane.curve.keys {
+            guard let center = bendPosition(after: key.id, in: lane), markerBounds.contains(center) else { continue }
+            let hot = highlightedBend == key.id
+            let radius = hot ? highlightedKeyRadius : keyMarkerRadius
+            (hot ? NSColor.systemYellow : color).setStroke()
+            let circle = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
+                                                    width: 2 * radius, height: 2 * radius))
+            NSColor.windowBackgroundColor.setFill()
+            circle.fill()
+            circle.lineWidth = 1.5
+            circle.stroke()
+            if hot, let text = lane.curve.midpointLabel(after: key.id) {
+                let textY = center.y - visible.minY >= 22 ? center.y - 22 : center.y + 8
+                let textWidth = text.size(withAttributes: [.font: NSFont.systemFont(ofSize: 10)]).width + 4
+                label(text, rect: NSRect(x: max(visible.minX, min(visible.maxX - textWidth, center.x + 9)),
+                                        y: min(visible.maxY - 14, max(visible.minY, textY)), width: textWidth, height: 14),
+                      color: .systemYellow, size: 10)
+            }
+        }
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func bendPosition(after id: UUID, in lane: GraphLane) -> NSPoint? {
+        guard let midpoint = lane.curve.midpoint(after: id),
+              midpoint.time >= 0, midpoint.time <= lane.clip.end - lane.clip.start else { return nil }
+        return NSPoint(x: x(at: lane.clip.start + midpoint.time), y: lane.y(at: midpoint.value))
+    }
+
+    private func graphBend(at point: NSPoint, in lanes: [GraphLane]) -> (lane: GraphLane, key: ImageKeyframe)? {
+        guard graphViewport.contains(point), graphKey(at: point, in: lanes) == nil else { return nil }
+        var hit: (lane: GraphLane, key: ImageKeyframe, distance: Double)?
+        for lane in lanes where lane.rect.insetBy(dx: -keyHitRadius, dy: -graphPadding).contains(point) {
+            for key in lane.curve.keys {
+                guard let center = bendPosition(after: key.id, in: lane), graphViewport.contains(center) else { continue }
+                let distance = hypot(center.x - point.x, center.y - point.y)
+                guard distance <= keyHitRadius else { continue }
+                if let hit, hit.distance < distance || (hit.distance == distance && hit.lane.clip.id == selectedImageID) { continue }
+                hit = (lane, key, distance)
+            }
+        }
+        return hit.map { ($0.lane, $0.key) }
+    }
+
+    private func highlightedBend(in lanes: [GraphLane]) -> (lane: GraphLane, key: ImageKeyframe)? {
+        guard isEnabled, imageDrag == nil, scrubGeometry == nil, dropGeometry == nil, automationPreview == nil else { return nil }
+        if let drag = keyDrag {
+            guard let id = drag.bendKeyID,
+                  let lane = lanes.first(where: { $0.clip.id == drag.lane.clip.id && $0.curve.parameter == drag.lane.curve.parameter }),
+                  let key = lane.curve.keys.first(where: { $0.id == id }) else { return nil }
+            return (lane, key)
+        }
+        return hoverPoint.flatMap { graphBend(at: $0, in: lanes) }
     }
 
     private func keyPosition(_ key: ImageKeyframe, in lane: GraphLane) -> NSPoint {
@@ -1062,7 +1193,7 @@ private extension TimelineView {
               visuals.slot(of: clip.id) == slot else { return nil }
         for (index, parameter) in automationParameters(in: slot).enumerated() {
             let localY = point.y - graphY(slot: slot, index: index)
-            if (0...(rowHeight(.automation(slot, parameter)) - 2 * graphPadding)).contains(localY), clip.curve(parameter) != nil {
+            if (0...(rowHeight(.automation(slot, parameter)) - 2 * graphPadding)).contains(localY), clip.displayCurve(parameter) != nil {
                 return (GraphTarget(clipID: clip.id, parameter: parameter), localY)
             }
         }
@@ -1086,7 +1217,8 @@ private extension TimelineView {
         guard graphViewport.contains(point) else { return false }
         let lanes = graphLanes(in: visuals)
         let hit = graphKey(at: point, in: lanes)
-        guard let lane = hit?.lane ?? lanes.first(where: { $0.rect.contains(point) }),
+        let bend = hit == nil ? graphBend(at: point, in: lanes) : nil
+        guard let lane = hit?.lane ?? bend?.lane ?? lanes.first(where: { $0.rect.contains(point) }),
               let slot = visuals.slot(of: lane.clip.id) else { return false }
         let key = hit?.key
         if selectedImageID != lane.clip.id {
@@ -1094,14 +1226,27 @@ private extension TimelineView {
             selectedImageID = lane.clip.id
             onImageSelect?(lane.clip.id, slot)
         }
+        if hit == nil, bend == nil, let modulation = lane.clip.audioModulations[lane.curve.parameter], modulation.enabled {
+            let time = geometry.time(at: point.x - Self.gutter)
+            let combined = ParameterEvaluator.value(lane.curve.parameter, clip: lane.clip, at: time, settings: sceneSettings, features: audioFeatures)
+            let manual = lane.clip.manualValue(lane.curve.parameter, at: time)
+            if abs(point.y - lane.y(at: combined)) <= 4, abs(point.y - lane.y(at: manual)) > 4 {
+                selectGraph(lane.curve.parameter)
+                return true
+            }
+        }
         onBeginEdit?()
-        keyDrag = KeyDrag(original: visuals, geometry: geometry, lane: lane, key: key, initial: point, previousTime: currentTime)
+        keyDrag = KeyDrag(original: visuals, geometry: geometry, lane: lane, key: key, bendKeyID: bend?.key.id, initial: point, previousTime: currentTime)
         selectGraph(lane.curve.parameter, key: key?.id)
         if let key { onSeek?(lane.clip.start + key.time) }
         return true
     }
 
     private func updateKeyDrag(to point: NSPoint) {
+        if let drag = keyDrag, drag.bendKeyID != nil {
+            updateBendDrag(to: point)
+            return
+        }
         guard var drag = keyDrag, let key = drag.key,
               let slot = drag.original.slot(of: drag.lane.clip.id) else { return }
         var clip = drag.lane.clip
@@ -1125,6 +1270,23 @@ private extension TimelineView {
         needsDisplay = true
     }
 
+    private func updateBendDrag(to point: NSPoint) {
+        guard var drag = keyDrag, let id = drag.bendKeyID,
+              let midpoint = drag.lane.curve.midpoint(after: id),
+              let slot = drag.original.slot(of: drag.lane.clip.id) else { return }
+        var clip = drag.lane.clip
+        var curve = drag.lane.curve
+        let value = drag.lane.value(at: drag.lane.y(at: midpoint.value) + point.y - drag.initial.y)
+        if point.y != drag.initial.y { curve.adjustMidpoint(after: id, handleValue: value) }
+        clip.setCurve(curve)
+        drag.changed = true
+        do { drag.draft = try drag.original.updating(clip, slot: slot, duration: duration) }
+        catch { drag.draft = nil; onError?(error) }
+        keyDrag = drag
+        onImagePreview?(drag.draft ?? drag.original)
+        needsDisplay = true
+    }
+
     private func restoreKeyPreview(_ drag: KeyDrag) {
         onImagePreview?(drag.original)
         onSeek?(drag.previousTime)
@@ -1132,11 +1294,15 @@ private extension TimelineView {
 
     private func finishKeyDrag(at point: NSPoint) {
         guard let original = keyDrag else { return }
-        if original.key != nil, original.changed { updateKeyDrag(to: point) }
+        if original.changed { updateKeyDrag(to: point) }
         guard let drag = keyDrag else { return }
         keyDrag = nil
         let parameter = drag.lane.curve.parameter
-        if let key = drag.key {
+        if drag.bendKeyID != nil {
+            if let draft = drag.draft, draft != drag.original { onImageCommit?(draft, drag.lane.clip.id) }
+            else if drag.changed { restoreKeyPreview(drag) }
+            selectGraph(parameter)
+        } else if let key = drag.key {
             if let draft = drag.draft, draft != drag.original {
                 onImageCommit?(draft, drag.lane.clip.id)
             } else if drag.changed {

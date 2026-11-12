@@ -5,6 +5,57 @@ import XCTest
 @testable import MVStudio
 
 final class ImageEffectsTests: XCTestCase {
+    func testColorCorrectionPersistenceAutomationAndValidation() throws {
+        var clip = VisualClip(assetID: UUID(), start: 1, end: 5)
+        clip.effects = ImageEffects(colorCorrection: .init(hue: 45, brightness: -20, saturation: 150))
+        for parameter in [ImageParameter.colorHue, .colorBrightness, .colorSaturation] {
+            var curve = ImageCurve(parameter: parameter)
+            curve.keys = [ImageKeyframe(time: 0, value: parameter.defaultRange.lowerBound),
+                          ImageKeyframe(time: 2, value: parameter.defaultRange.upperBound)]
+            clip.curves = [curve]
+            let evaluated = try XCTUnwrap(clip.evaluatedEffects(at: 2))
+            XCTAssertEqual(parameter.effect?.read(evaluated),
+                           (parameter.defaultRange.lowerBound + parameter.defaultRange.upperBound) / 2)
+        }
+        XCTAssertEqual(try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip)), clip)
+        XCTAssertTrue(try XCTUnwrap(clip.effects).isValid)
+        clip.effects?.colorCorrection?.brightness = 101
+        XCTAssertFalse(try XCTUnwrap(clip.effects).isValid)
+        clip.effects?.colorCorrection?.brightness = 0
+        clip.effects?.colorCorrection?.hue = .nan
+        XCTAssertFalse(try XCTUnwrap(clip.effects).isValid)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).colorCorrection)
+    }
+
+    func testShakeMultiplicationPersistenceAndTrim() throws {
+        var shake = ImageEffects.Shake(x: 30, y: 60)
+        let original = shake.displacement(at: 0.37)
+        XCTAssertNotEqual(original, .zero)
+        shake.strength = 50
+        XCTAssertEqual(shake.displacement(at: 0.37), original * 0.5)
+        shake.x = 0
+        XCTAssertEqual(shake.displacement(at: 0.37).x, 0)
+        shake.strength = 0
+        XCTAssertEqual(shake.displacement(at: 0.37), .zero)
+        shake.isEnabled = false
+        shake.strength = 100
+        XCTAssertEqual(shake.displacement(at: 0.37), .zero)
+        shake.isEnabled = true
+        var clip = VisualClip(assetID: UUID(), start: 1, end: 5)
+        clip.effects = ImageEffects(shake: shake)
+        let before = shake.displacement(at: 1.5)
+        clip.trimStart(to: 2)
+        XCTAssertEqual(clip.effects?.shake?.displacement(at: 0.5), before)
+        let restored = try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip))
+        XCTAssertEqual(restored, clip)
+        var curve = ImageCurve(parameter: .shakeStrength)
+        curve.keys = [ImageKeyframe(time: 0, value: 0), ImageKeyframe(time: 2, value: 100)]
+        clip.curves = [curve]
+        XCTAssertEqual(clip.evaluatedEffects(at: 3)?.shake?.strength, 50)
+        clip.effects?.shake?.x = .nan
+        XCTAssertEqual(clip.effects?.isValid, false)
+    }
+
     func testProjectRoundTripAndTrimPreserveParticlePhase() throws {
         let size = SIMD2(1920.0, 1080.0)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -277,11 +328,37 @@ final class ImageEffectsTests: XCTestCase {
             return bgra
         }
 
+        let colored = try image { context in
+            context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        }
+        var corrected = VisualClip(assetID: UUID(), start: 0, end: 1, audioModulations: [:])
+        func correctionLayer() -> VisualRenderLayer { VisualRenderLayer(clip: corrected, image: colored) }
+        try render([correctionLayer()])
+        let originalColor = pixel(960, 540)
+        corrected.effects = ImageEffects(colorCorrection: .init(saturation: 0))
+        try render([correctionLayer()])
+        let desaturated = pixel(960, 540)
+        XCTAssertEqual(Double(desaturated[0]), Double(desaturated[1]), accuracy: 3)
+        XCTAssertEqual(Double(desaturated[1]), Double(desaturated[2]), accuracy: 3)
+        corrected.effects?.colorCorrection = .init(hue: 120)
+        try render([correctionLayer()])
+        XCTAssertNotEqual(pixel(960, 540), originalColor)
+        corrected.effects?.colorCorrection = .init(brightness: -100)
+        try render([correctionLayer()])
+        XCTAssertLessThan(pixel(960, 540).prefix(3).max() ?? 255, 3)
+        corrected.effects?.colorCorrection = .init(brightness: 100)
+        try render([correctionLayer()])
+        XCTAssertGreaterThan(pixel(960, 540).prefix(3).min() ?? 0, 250)
+        corrected.effects?.colorCorrection?.isEnabled = false
+        try render([correctionLayer()])
+        XCTAssertEqual(pixel(960, 540), originalColor)
+
         let spot = try image { context in
             context.setFillColor(.white)
             context.fill(CGRect(x: 4, y: 10, width: 8, height: 4))
         }
-        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
+        var clip = VisualClip(assetID: UUID(), start: 0, end: 1, audioModulations: [:])
         func layer() -> VisualRenderLayer { VisualRenderLayer(clip: clip, image: spot) }
         try render([layer()])
         XCTAssertGreaterThan(pixel(960, 270)[0], 245)
@@ -322,6 +399,21 @@ final class ImageEffectsTests: XCTestCase {
         try render([VisualRenderLayer(clip: lower, image: red), VisualRenderLayer(clip: upper, image: halfBlue)])
         XCTAssertEqual(Double(pixel(960, 540)[0]), 188, accuracy: 3)
         XCTAssertEqual(Double(pixel(960, 540)[2]), 188, accuracy: 3)
+        upper.fixedValues[.opacity] = 50
+        try render([VisualRenderLayer(clip: lower, image: red), VisualRenderLayer(clip: upper, image: halfBlue)])
+        XCTAssertEqual(Double(pixel(960, 540)[0]), 137, accuracy: 3)
+        XCTAssertEqual(Double(pixel(960, 540)[2]), 225, accuracy: 3)
+        upper.fixedValues[.opacity] = 0
+        try render([VisualRenderLayer(clip: lower, image: red), VisualRenderLayer(clip: upper, image: halfBlue)])
+        let transparentUpper = pixel(960, 540)
+        try render([VisualRenderLayer(clip: lower, image: red)])
+        XCTAssertEqual(pixel(960, 540), transparentUpper)
+        _ = upper.setKey(.opacity, at: 0, value: 0)
+        _ = upper.setKey(.opacity, at: 1, value: 100)
+        try render([VisualRenderLayer(clip: lower, image: red), VisualRenderLayer(clip: upper, image: halfBlue)])
+        XCTAssertEqual(Double(pixel(960, 540)[0]), 137, accuracy: 3)
+        XCTAssertEqual(Double(pixel(960, 540)[2]), 225, accuracy: 3)
+
 
         let particles = ImageEffects.Particles(count: 1, diameter: 32, opacity: 100, seed: 10)
         clip.effects = ImageEffects(particles: particles)
@@ -334,8 +426,15 @@ final class ImageEffectsTests: XCTestCase {
         XCTAssertNotEqual(lit, pixel(x, y))
         try render([layer()])
         XCTAssertEqual(lit, pixel(x, y))
+        clip.fixedValues[.opacity] = 0
+        try render([layer()])
+        let hidden = pixel(x, y)
+        try render([])
+        XCTAssertEqual(hidden, pixel(x, y), "不透明度0では画像と粒子の両方を非表示にする")
+        clip.fixedValues[.opacity] = nil
 
-        var cover = VisualClip(assetID: UUID(), start: 0, end: 1, automaticAnimation: .off)
+
+        var cover = VisualClip(assetID: UUID(), start: 0, end: 1, audioModulations: [:])
         cover.fixedValues[.scale] = 200
         let black = try image { context in
             context.setFillColor(.black)

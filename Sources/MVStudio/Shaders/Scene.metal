@@ -27,7 +27,7 @@ fragment float4 imageLayer(Quad in [[stage_in]], texture2d<float> image [[textur
         pixel.rgb += halo.rgb;
         pixel.a += (1 - pixel.a) * min(halo.a, 1.0);
     }
-    return pixel;
+    return pixel * settings.w;
 }
 
 float3 linearFromSRGB(float3 value) {
