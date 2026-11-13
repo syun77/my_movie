@@ -132,7 +132,7 @@ actor VideoFrameProvider {
         var result: [VisualRenderLayer] = []
         for clip in active {
             try Task.checkCancellation(); try cancellation?.check()
-            guard let asset = track.asset(clip.assetID), let sourceIn = clip.content.sourceIn else { continue }
+            guard let asset = track.asset(clip.assetID), clip.content.sourceIn != nil else { continue }
             let url = asset.reference.resolve(projectURL: projectURL)
             let session: VideoSession
             if let existing = sessions[clip.id], existing.url == url { session = existing }
@@ -140,10 +140,10 @@ actor VideoFrameProvider {
                 session = VideoSession(url: url, metadata: try await VideoMetadata.load(url))
                 sessions[clip.id] = session
             }
-            guard sourceIn + clip.end - clip.start <= session.metadata.range.duration.seconds + 1e-9 else {
+            guard clip.sourceEnd <= session.metadata.range.duration.seconds + 1e-9 else {
                 throw StudioError.message("動画が短くなっています。素材管理で置き換えてください。")
             }
-            result.append(VisualRenderLayer(clip: clip, frame: try session.frame(at: sourceIn + time - clip.start, cancellation: cancellation)))
+            result.append(VisualRenderLayer(clip: clip, frame: try session.frame(at: clip.sourceTime(at: time), cancellation: cancellation)))
             guard sessions.values.reduce(0, { $0 + $1.bufferCost }) <= 128 * 1024 * 1024 else {
                 sessions.removeAll()
                 throw StudioError.message("動画フレームが128MiBの上限を超えています。動画の解像度または同時配置数を減らしてください。")

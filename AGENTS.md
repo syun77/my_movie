@@ -133,3 +133,11 @@
 
 - 項目別音楽同期の現仕様は `docs/AUDIO_AUTOMATION.md`。AudioModulationをVisualClip.audioModulationsへ保存し、ParameterEvaluatorが手動値→加算/相対同期→物理範囲→個数丸めをプレビュー・出力・合成線で共有する。新規画像の拡大縮小は全帯域トランジェント・相対8%、動画は未設定。ProjectFile version 7で旧versionはバックアップして新規作成するUIへ送る。
 - 拍同期は音符分母1〜16の全整数・周期240/(BPM×N)秒・拍開始共通原点。スナップの5択とは独立。トランジェント帯域は全/低/中/高/カスタムHzを項目ごとに指定する。同期だけのレーンはキーを作らず表示し、表示範囲は手動カーブがあればそちら、なければautomationRangesへ一意に保持する。
+
+- Live2D再生を検討する場合、ユーザーが任意モデルを追加できる公開アプリはSDKの「拡張性アプリケーション」に該当する可能性がある。通常の小規模事業者向け免除を前提にせず、公開前に公式の審査・契約条件を確認する（https://www.live2d.com/sdk/license/expandable/）。採用は未確定。
+
+- 動画速度はVisualContent.videoのspeed（0.1〜16倍、初期1倍）へ保存する。VisualClip.sourceTime/sourceEndを素材時刻と尺検証で共有し、左トリムは曲時刻差×speedをsourceInへ加算する。速度変更は素材の使用区間を維持し、配置の長さを旧速度/新速度倍にする。隣接配置・曲末超過と最小1フレーム未満は拒否する。
+
+- DragValueField.contextMenuProviderは数値欄固有の右クリックメニューに使用する。動画速度はx0.25/x0.5/x1.0/x2.0/x4.0/x8.0/x16.0を選択可能。数値編集中のメニューもStudioWindowの既存転送を共有する。
+
+- Spineの組み込み提案は `docs/SPINE_TIMELINE.md`（未実装）。公式spine-cpp 4.3をC境界から利用し、既存3段へ配置する案。物理は任意時刻の代入だけで復元できないため、ON時は素材0秒から固定刻みで再計算し、ループの未折返し経過を保持する。採用時の検証コミットとMetal接続の実測は未確定。

@@ -313,7 +313,7 @@ extension VisualClip {
 
     mutating func trimStart(to time: Double) {
         let delta = time - start
-        if let sourceIn = content.sourceIn { content = .video(sourceIn: sourceIn + delta) }
+        if let sourceIn = content.sourceIn { content = .video(sourceIn: sourceIn + delta * content.speed, speed: content.speed) }
         for index in curves.indices {
             for keyIndex in curves[index].keys.indices { curves[index].keys[keyIndex].time -= delta }
         }

@@ -231,3 +231,7 @@ UIとProjectStoreはMainActor、解析・書出しは独立したジョブで実
 - [Metal render pass setup](https://developer.apple.com/documentation/Metal/customizing-render-pass-setup): テクスチャへのオフスクリーン描画。
 - [Media reading and writing](https://developer.apple.com/documentation/avfoundation/media-reading-and-writing): AVFoundationの読込・書込。
 - [PixelBufferReceiver](https://developer.apple.com/documentation/avfoundation/avassetwriterinput/pixelbufferreceiver): ピクセルバッファの非同期入力。
+
+## Spine再生の拡張設計（未実装）
+
+[Spine配置・再生設計](SPINE_TIMELINE.md) に、公式spine-cpp 4.3とC境界、VisualTrackへの種別追加、共通Metal合成、物理演算の固定刻み再計算、保存・履歴・動画出力の提案を記録する。現在のversion 7や画像/動画の実装仕様を変更するものではなく、実装時はversion 8を提案する。

@@ -1,3 +1,56 @@
+# Spine組み込み設計（完了・未実装）
+
+- 最終更新: 2026-11-13 JST。要件: 通常のSpine公式ランタイムで実現可能な再生機能の設計。コード実装は対象外。
+- 完了: docs/SPINE_TIMELINE.mdに4.3固定/C境界、入力依存/バージョン検証、既存3段、単一アニメーション/スキン/ループ/速度/トリム、Metal描画、物理OFFとONの固定刻み再計算、保存version 8案、履歴/素材置換/コピー、MP4、実装順/検証条件を記録。
+- 整理: 動画の速度変更による尺変更とSpineの配置長維持を区別。ループsourceInを未折返しで保持し物理位相の欠落を防ぐ。基準矩形と動的描画bounds、内部ブレンドと下段合成を分離。
+- 変更: docs/SPINE_TIMELINE.md、docs/ARCHITECTURE.md、README.md、AGENTS.md、PROGRESS.md。既存の動画速度関連の変更は保持。
+- 検証: 既存モデル/フレーム取得/描画/速度仕様と公式4.3資料を照合。文書のリンク存在とgit diff --checkを確認。文書のみのためテスト・app再生成は対象外。
+- 未解決: ランタイム固定コミット、Metal色/alphaの実測、物理ON性能は実装時の小規模検証で確定する。実行中処理なし。
+- 次: 実装依頼があれば公式サンプルでC境界・透過描画・任意時刻評価を検証し、物理OFFの読込からMP4までを接続する。
+
+# 再生速度変更の即時反映調査（完了）
+
+- 最終更新: 2026-11-13 JST。要件: 再読込まで速度が反映されない疑いの調査・修正。
+- 調査: PreviewKeyは速度を含むクリップ全体を比較し、デコーダーは要求ごとにsourceTimeを評価する。実アプリの速度編集からフレーム更新まで統合検証する。
+- 判明: ユーザーは選んだ倍率が元に戻ると回答。素材尺全体を配置した動画に倍速を設定すると、配置長維持の旧仕様では素材終端超過となり拒否される。再読込なしの正常な変更は統合テスト成功。
+- 方針変更: 素材の使用区間を維持し速度変更で配置長を旧速度/新速度倍にする。素材尺全体の動画でも倍速を選択可能にする。隣接/曲末超過・1フレーム未満は既存検証で拒否。
+- 実装: 速度編集時に終了を開始＋配置長×旧速度/新速度へ変更。成功時に終了欄も同期し、数値入力/ドラッグ/メニューを既存の確定・保存・Undo経路で共有。
+- 整理: キャッシュ無効化の追加は不要と確認。速度を含むPreviewKeyと既存のsourceTime評価を維持し、問題のある配置長固定だけを修正。手動キー/演出は曲時間のまま、隣接クリップは動かさない。
+- 検証: 全84テスト成功（/tmp/my_movie-speed-refresh-final-tests.log）。動画全体の倍速、直接入力/右クリック/再生中/Undoの即時反映、変更後の保存内容、低速化の同段衝突/曲末超過拒否を確認。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-speed-refresh-build.log）。最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 変更: VisualEditor.swift、VideoTimelineTests.swift、README.md、docs/VIDEO_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 実行中処理・未解決障害なし。実素材の手動操作は未実施。次: 最新アプリを再起動して速度を変更する。プロジェクト再読込は不要。
+
+# 再生速度の右クリック倍率（完了）
+
+- 最終更新: 2026-11-13 JST。要件: x0.25/x0.5/x1.0/x2.0/x4.0/x8.0/x16.0を右クリックから選択。
+- 方針: 共通数値欄のメニューフックを追加し、既存の速度確定経路を利用。速度上限と関連文書を16倍に統一。
+- 実装・整理: DragValueFieldにメニューフックを追加し、VisualEditorで倍率メニュー・現在値チェック・共通速度確定を実装。速度上限/検証/文書を16倍へ統一。既存の編集中右クリック転送を再利用。
+- 検証: 関連9テスト成功（/tmp/my_movie-speed-menu-test.log）。全7項目、選択反映、16倍、素材尺超過拒否、コピーを検証。
+- 生成: ./scripts/build-app.sh成功（/tmp/my_movie-speed-menu-build.log）、最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 変更: DragValueField、VisualEditor、VisualTrack、VideoTimelineTests、README、docs/VIDEO_TIMELINE.md、AGENTS、PROGRESS。
+- 実行中処理・未解決障害なし。次: 最新アプリを再起動して再生速度欄を右クリック。
+
+# 動画クリップの再生速度（完了）
+
+- 最終更新: 2026-11-13 JST。要件: 動画クリップの再生速度変更。
+- 方針: 0.1〜10倍、初期1倍。配置区間を維持し素材超過を拒否。共通数値UI、保存/Undo、トリム、プレビュー/出力へ反映。
+- 実装: content.speed、sourceTime/sourceEnd、速度UI、速度考慮の左右トリム・素材確認を接続。保存/履歴/コピー/実デコード/出力テストを追加。
+- 整理: 時刻換算をVisualClipへ集約、速度範囲をモデルとノブで共有。既存の確定・履歴経路を再利用。
+- 検証: 全84テスト成功（/tmp/my_movie-speed-full-tests.log）。最終ノブ調整後も動画関連7テスト成功（/tmp/my_movie-speed-final-tests.log）。低速/倍速のPTS、保存/Undo/コピー、トリム、素材尺制限、MP4出力を確認。
+- 生成: 制限環境のdsymutil拒否後、制限外で./scripts/build-app.sh成功（/tmp/my_movie-speed-build-final.log）。最新dist/MV Studio.appを生成、署名検証・git diff --check成功。
+- 変更: VisualTrack、ImageAnimation、VideoFrameProvider、VisualAssetLoader、VisualEditor、VideoTimelineTests、VideoExportTests、README、docs/VIDEO_TIMELINE.md、AGENTS、PROGRESS。
+- 未解決障害・実行中処理なし。実素材での手動操作は未実施。次: 最新アプリを再起動し、動画選択時の「再生速度（倍）」を使用。
+- 作業開始前のAGENTS/PROGRESSの変更は保持。
+
+# Spine / Live2D再生の比較（調査完了）
+
+- 最終更新: 2026-11-13 JST。目的: MV Studioでイラストを動かす再生機能の選定相談。実装依頼なし。
+- 調査: 公式SDK資料・ライセンスを確認。イラストの表情/髪/呼吸を主用途とする場合はLive2D、全身の定型モーションを主用途とする場合はSpineを推奨する条件付き判断。
+- 制約: Live2Dはユーザーがモデルを追加する公開アプリが拡張性アプリケーションに該当する可能性があり、公開前の審査・契約条件確認が必要。技術面では任意時刻のシークと物理演算の再現性を試作で確認する。
+- 変更: PROGRESS.md、AGENTS.mdに調査結果を記録。コード変更・ビルドなし。実行中処理なし。
+- 次: 実際に使うモデル形式・用途を決め、選んだSDKで透過描画/シーク/動画出力の小規模検証を行う。SDK採用は未確定。
+
 # 音楽同期オートメーション（完了）
 
 - 最終更新: 2026-11-13 JST。要件: docs/AUDIO_AUTOMATION.mdの項目別同期・帯域指定・音符分母1〜16を実装。

@@ -26,13 +26,13 @@ final class VideoExportTests: XCTestCase {
         let still = visuals.register(url: background, projectURL: project)
         let video = visuals.register(url: movie, projectURL: project, kind: .video(duration: 2.5))
         visuals.layers[0].clips = [VisualClip(assetID: still, start: 0, end: duration, audioModulations: [:])]
-        var trimmed = VisualClip(assetID: video, start: 0.2, end: 1.2, content: .video(sourceIn: 0.3), audioModulations: [:])
+        var trimmed = VisualClip(assetID: video, start: 0.2, end: 1.2, content: .video(sourceIn: 0.3, speed: 2), audioModulations: [:])
         trimmed.fixedValues[.x] = 240
         trimmed.audioModulations[.x] = AudioModulation(source: .beat, amount: 120, beatNoteDenominator: 7)
         trimmed.audioModulations[.opacity] = AudioModulation(amount: -30, releaseSeconds: 1,
             transientBand: TransientBand(kind: .custom, lowerHz: 300, upperHz: 500))
         visuals.layers[1].clips = [trimmed,
-            VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6), audioModulations: [:])]
+            VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6, speed: 0.5), audioModulations: [:])]
         var upper = VisualClip(assetID: video, start: 0.7, end: 1, content: .video(sourceIn: 1.1), audioModulations: [:])
         upper.effects = ImageEffects(blur: .init(radius: 2))
         upper.audioModulations[.blurRadius] = AudioModulation(source: .beat, amount: 5, beatNoteDenominator: 12)

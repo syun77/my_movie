@@ -2,6 +2,7 @@ import AppKit
 
 @MainActor
 final class DragValueField: NSTextField {
+    var contextMenuProvider: (() -> NSMenu)?
     var onDragStart: (() -> Bool)?
     var onDragChange: ((Double) -> Void)?
     var onDragEnd: (() -> Void)?
@@ -15,8 +16,9 @@ final class DragValueField: NSTextField {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard isEnabled, bounds.contains(point),
-              onCreateAutomation != nil, onRemoveAutomation != nil else { return nil }
+        guard isEnabled, bounds.contains(point) else { return nil }
+        if let contextMenuProvider { return contextMenuProvider() }
+        guard onCreateAutomation != nil, onRemoveAutomation != nil else { return nil }
         let menu = NSMenu()
         let item = menu.addItem(withTitle: hasAutomation ? "オートメーションを削除" : "オートメーションを作成",
                                action: #selector(changeAutomation), keyEquivalent: "")

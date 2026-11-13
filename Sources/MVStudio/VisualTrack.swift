@@ -9,9 +9,25 @@ enum VisualAssetKind: Codable, Sendable, Equatable {
 
 enum VisualContent: Codable, Sendable, Equatable {
     case still
-    case video(sourceIn: Double)
+    case video(sourceIn: Double, speed: Double = 1)
 
-    var sourceIn: Double? { if case let .video(value) = self { return value }; return nil }
+    var sourceIn: Double? { if case let .video(value, _) = self { return value }; return nil }
+    var speed: Double { if case let .video(_, speed) = self { return speed }; return 1 }
+
+    private enum CodingKeys: String, CodingKey { case still, video }
+    private enum VideoKeys: String, CodingKey { case sourceIn, speed }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if container.contains(.video) {
+            let video = try container.nestedContainer(keyedBy: VideoKeys.self, forKey: .video)
+            self = .video(sourceIn: try video.decode(Double.self, forKey: .sourceIn),
+                          speed: try video.decodeIfPresent(Double.self, forKey: .speed) ?? 1)
+        } else {
+            _ = try container.nestedContainer(keyedBy: VideoKeys.self, forKey: .still)
+            self = .still
+        }
+    }
 }
 
 struct VisualAsset: Codable, Sendable, Equatable, Identifiable {
@@ -32,6 +48,12 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     var fixedValues: [ImageParameter: Double] = [:]
     var curves: [ImageCurve] = []
     var effects: ImageEffects?
+
+    static let playbackSpeedRange = 0.1...16.0
+    func sourceTime(at time: Double) -> Double {
+        (content.sourceIn ?? 0) + (time - start) * content.speed
+    }
+    var sourceEnd: Double { sourceTime(at: end) }
 }
 
 struct VisualLayer: Codable, Sendable, Equatable, Identifiable {
@@ -72,9 +94,9 @@ struct VisualTrack: Codable, Sendable, Equatable {
                 guard let asset = asset(clip.assetID) else { throw StudioError.message("素材が見つかりません。") }
                 switch (asset.kind, clip.content) {
                 case (.still, .still): break
-                case let (.video(length), .video(sourceIn)):
-                    guard sourceIn.isFinite, sourceIn >= 0, sourceIn + clip.end - clip.start <= length + 1e-9 else {
-                        throw StudioError.message("動画の参照区間が素材の長さを超えています。")
+                case let (.video(length), .video(sourceIn, speed)):
+                    guard sourceIn.isFinite, sourceIn >= 0, speed.isFinite, VisualClip.playbackSpeedRange.contains(speed), clip.sourceEnd <= length + 1e-9 else {
+                        throw StudioError.message("動画の速度は0.1〜16倍で、参照区間が素材の長さを超えないようにしてください。")
                     }
                 default: throw StudioError.message("素材とクリップの種類が一致しません。")
                 }
@@ -180,12 +202,12 @@ struct VisualTrack: Codable, Sendable, Equatable {
             let start = try grid.snap(clip.start + delta, within: before...(min(after, duration) - (clip.end - clip.start)))
             clip.end += start - clip.start; clip.start = start
         case .start:
-            let sourceStart = clip.content.sourceIn.map { clip.start - $0 } ?? 0
+            let sourceStart = clip.content.sourceIn.map { clip.start - $0 / clip.content.speed } ?? 0
             clip.trimStart(to: try grid.snap(clip.start + delta, within: max(before, sourceStart)...(clip.end - 1.0 / 30)))
         case .end:
             let sourceEnd: Double
             if let sourceIn = clip.content.sourceIn, let length = asset(clip.assetID)?.kind.videoDuration {
-                sourceEnd = clip.start + length - sourceIn
+                sourceEnd = clip.start + (length - sourceIn) / clip.content.speed
             } else { sourceEnd = duration }
             clip.end = try grid.snap(clip.end + delta, within: (clip.start + 1.0 / 30)...min(after, duration, sourceEnd))
         }

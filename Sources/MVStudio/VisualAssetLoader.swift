@@ -23,8 +23,8 @@ actor VisualAssetLoader {
             try Task.checkCancellation(); try cancellation?.check()
             guard (info.kind.videoDuration != nil) == (asset.kind.videoDuration != nil),
                   track.uses(id).allSatisfy({ clip in
-                      guard let sourceIn = clip.content.sourceIn, let length = info.kind.videoDuration else { return true }
-                      return sourceIn + clip.end - clip.start <= length + 1e-9
+                      guard clip.content.sourceIn != nil, let length = info.kind.videoDuration else { return true }
+                      return clip.sourceEnd <= length + 1e-9
                   }) else { throw StudioError.message("動画の参照区間を確認してください。") }
         }
     }

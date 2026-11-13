@@ -41,6 +41,59 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(history.redo()?.visuals, moved)
     }
 
+    @MainActor func testPlaybackSpeedMappingValidationTrimAndStorage() throws {
+        var track = VisualTrack()
+        let id = track.register(url: URL(fileURLWithPath: "/tmp/video-test/speed.mov"), projectURL: project, kind: .video(duration: 8))
+        let clip = VisualClip(assetID: id, start: 10, end: 13, content: .video(sourceIn: 2, speed: 2))
+        track.layers[0].clips = [clip]
+        try track.validate(duration: 30)
+        XCTAssertEqual(clip.sourceTime(at: 11.5), 5)
+        XCTAssertEqual(clip.sourceEnd, 8)
+        let trimmed = try track.dragging(id: clip.id, part: .start, delta: 1, duration: 30, grid: TimelineSnapGrid())
+        XCTAssertEqual(trimmed.clip(clip.id)?.content.sourceIn, 4)
+        XCTAssertEqual(trimmed.clip(clip.id)?.content.speed, 2)
+        let extended = try trimmed.dragging(id: clip.id, part: .start, delta: -100, duration: 30, grid: TimelineSnapGrid())
+        XCTAssertEqual(extended.clip(clip.id)?.start, 9)
+        XCTAssertEqual(extended.clip(clip.id)?.content.sourceIn, 0)
+        XCTAssertEqual(try track.dragging(id: clip.id, part: .end, delta: 100, duration: 30, grid: TimelineSnapGrid()).clip(clip.id)?.end, 13)
+        for speed in [0, -1, 0.09, 16.01, Double.nan, .infinity, 3] {
+            var invalid = clip; invalid.content = .video(sourceIn: 2, speed: speed)
+            XCTAssertThrowsError(try track.updating(invalid, slot: 1, duration: 30))
+        }
+        var slow = clip; slow.content = .video(sourceIn: 2, speed: 0.5); slow.end = 22
+        let slowTrack = try track.updating(slow, slot: 1, duration: 30)
+        XCTAssertEqual(slow.sourceTime(at: 14), 4)
+        XCTAssertEqual(try JSONDecoder().decode(VisualTrack.self, from: JSONEncoder().encode(slowTrack)), slowTrack)
+        let legacy = Data(#"{"video":{"sourceIn":2}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(VisualContent.self, from: legacy), .video(sourceIn: 2, speed: 1))
+        let history = EditHistory()
+        history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: track, settings: SceneSettings()))
+        history.record(EditSnapshot(lyrics: LyricsTrack(), visuals: slowTrack, settings: SceneSettings()))
+        XCTAssertEqual(history.undo()?.visuals, track)
+        XCTAssertEqual(history.redo()?.visuals, slowTrack)
+    }
+
+    func testPlaybackSpeedSelectsSourceFrames() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("speed.mov")
+        try await VideoTestFixtures.makeVideo(url, codec: .h264, times: [0, 0.1, 0.35, 0.8, 1.1], end: 1.5)
+        var track = VisualTrack()
+        let id = track.register(url: url, projectURL: project, kind: .video(duration: 1.5))
+        var clip = VisualClip(assetID: id, start: 10, end: 10.7, content: .video(sourceIn: 0.1, speed: 2))
+        track.layers[0].clips = [clip]
+        let provider = VideoFrameProvider()
+        for (time, pts) in [(10.2, 0.35), (10.5, 1.1), (10.01, 0.1)] {
+            let layers = try await provider.layers(track: track, projectURL: project, time: time)
+            XCTAssertEqual(try XCTUnwrap(layers.first?.frame.presentationTime).seconds, pts, accuracy: 0.001)
+        }
+        clip.content = .video(sourceIn: 0.1, speed: 0.5)
+        track.layers[0].clips = [clip]
+        let layers = try await provider.layers(track: track, projectURL: project, time: 10.6)
+        XCTAssertEqual(try XCTUnwrap(layers.first?.frame.presentationTime).seconds, 0.35, accuracy: 0.001)
+    }
+
     func testReaderSelectsPTSForVFRSeeksAndIndependentPlacements() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -113,12 +166,44 @@ final class VideoTimelineTests: XCTestCase {
         field.stringValue = "0.5"
         editor.visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
         XCTAssertEqual(editor.visuals.track.clip(clip.id)?.content.sourceIn, 0.5)
+        let speed = try XCTUnwrap(DragValueField.fields(in: editor.visuals.view).first { $0.identifier?.rawValue == "visual.playbackSpeed" })
+        XCTAssertFalse(speed.superview!.isHidden)
+        speed.stringValue = "0.5"
+        editor.visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: speed))
+        XCTAssertEqual(editor.visuals.track.clip(clip.id)?.content.speed, 0.5)
+        XCTAssertEqual(editor.visuals.track.clip(clip.id)?.end, 5)
+        XCTAssertEqual(end.doubleValue, 5)
+        speed.frame.size = NSSize(width: 100, height: 26)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown,
+            location: speed.convert(NSPoint(x: 50, y: 13), to: nil), modifierFlags: [],
+            timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(speed.menu(for: event))
+        XCTAssertEqual(menu.items.map(\.title), ["x0.25", "x0.5", "x1.0", "x2.0", "x4.0", "x8.0", "x16.0"])
+        XCTAssertEqual(menu.items[1].state, .on)
+        let quarter = menu.items[0]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
+        XCTAssertEqual(editor.visuals.track.clip(clip.id)?.content.speed, 0.25)
+        let sixteen = menu.items[6]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(sixteen.action), to: sixteen.target, from: sixteen))
+        XCTAssertEqual(editor.visuals.track.clip(clip.id)?.content.speed, 16)
+        XCTAssertEqual(try XCTUnwrap(editor.visuals.track.clip(clip.id)).end, 1.125, accuracy: 1e-9)
+        let half = menu.items[1]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(half.action), to: half.target, from: half))
         let board = NSPasteboard.withUniqueName(); defer { board.releaseGlobally() }
         editor.editClip(.copy, pasteboard: board)
         editor.currentTime = 5
         editor.editClip(.paste, pasteboard: board)
         let copied = try XCTUnwrap(editor.visuals.track.clips.first { $0.id != clip.id })
         XCTAssertEqual(copied.start, 5); XCTAssertEqual(copied.content.sourceIn, 0.5)
+        XCTAssertEqual(copied.content.speed, 0.5)
+        let beforeRejectedSlowdown = editor.visuals.track
+        editor.timeline.onImageSelect?(clip.id, 2)
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
+        XCTAssertEqual(editor.visuals.track, beforeRejectedSlowdown)
+        editor.timeline.onImageSelect?(copied.id, 2)
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
+        XCTAssertEqual(editor.visuals.track, beforeRejectedSlowdown)
+
 
     }
 
@@ -131,8 +216,8 @@ final class VideoTimelineTests: XCTestCase {
         try await VideoTestFixtures.makeVideo(movie, codec: .h264, times: [0, 0.1, 0.35, 0.8, 1.1], end: 1.5)
         let audio = directory.appendingPathComponent("silence.wav")
         let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000)!
-        buffer.frameLength = 16000; buffer.floatChannelData![0].initialize(repeating: 0, count: 16000)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 64000)!
+        buffer.frameLength = 64000; buffer.floatChannelData![0].initialize(repeating: 0, count: 64000)
         do { let file = try AVAudioFile(forWriting: audio, settings: format.settings); try file.write(from: buffer) }
         let suite = "VideoTransport." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
@@ -188,6 +273,70 @@ final class VideoTimelineTests: XCTestCase {
         }
         XCTAssertEqual(preview.renderedTime, 0.4)
         XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.35, accuracy: 1e-6)
+        delegate.placementEditor.restoreTab(.visuals)
+        delegate.window.contentView?.layoutSubtreeIfNeeded()
+        let visuals = delegate.placementEditor.visuals
+        let clipID = track.clips[0].id
+        delegate.placementEditor.timeline.onImageSelect?(clipID, 1)
+        let speed = try XCTUnwrap(DragValueField.fields(in: visuals.view).first { $0.identifier?.rawValue == "visual.playbackSpeed" })
+        speed.stringValue = "0.5"
+        visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: speed))
+        for _ in 0..<500 {
+            if preview.visuals.first?.clip.content.speed == 0.5 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.visuals.first?.clip.content.speed, 0.5)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.1, accuracy: 1e-6)
+        speed.frame.size = NSSize(width: 100, height: 26)
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown,
+            location: speed.convert(NSPoint(x: 50, y: 13), to: nil), modifierFlags: [], timestamp: 0,
+            windowNumber: delegate.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(speed.menu(for: event))
+        let normal = menu.items[2]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(normal.action), to: normal.target, from: normal))
+        for _ in 0..<500 {
+            if preview.visuals.first?.clip.content.speed == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.visuals.first?.clip.content.speed, 1)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.35, accuracy: 1e-6)
+        delegate.undoEdit()
+        for _ in 0..<500 {
+            if preview.visuals.first?.clip.content.speed == 0.5 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.visuals.first?.clip.content.speed, 0.5)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.1, accuracy: 1e-6)
+        delegate.perform(NSSelectorFromString("togglePlay"))
+        try await Task.sleep(for: .milliseconds(150))
+        let quarter = menu.items[0]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
+        for _ in 0..<500 {
+            if preview.visuals.first?.clip.content.speed == 0.25 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.visuals.first?.clip.content.speed, 0.25)
+        XCTAssertFalse(preview.frameFailure)
+        let pausedTime = preview.renderedTime
+        delegate.perform(NSSelectorFromString("togglePlay"))
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(preview.renderedTime, pausedTime)
+        delegate.placementEditor.lyrics.onSeek?(0.4)
+        visuals.commit(track, selectedID: clipID)
+        let twice = menu.items[3]
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(twice.action), to: twice.target, from: twice))
+        for _ in 0..<500 {
+            if preview.visuals.first?.clip.content.speed == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(preview.visuals.first?.clip.content.speed, 2)
+        XCTAssertEqual(preview.visuals.first?.clip.end, 0.75)
+        XCTAssertEqual(preview.visuals.first?.clip.sourceEnd, 1.5)
+        let saved = try JSONDecoder().decode(ProjectFile.self, from: Data(contentsOf: projectURL))
+        XCTAssertEqual(saved.visuals.clip(clipID)?.content.speed, 2)
+        XCTAssertEqual(saved.visuals.clip(clipID)?.end, 0.75)
+
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.8, accuracy: 1e-6)
         func findExport(_ view: NSView) -> NSButton? {
             if let button = view as? NSButton, button.title == "MP4を書き出す" { return button }
             return view.subviews.lazy.compactMap { findExport($0) }.first

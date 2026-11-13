@@ -34,6 +34,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let start = DragValueField(frame: .zero)
     private let end = DragValueField(frame: .zero)
     private let sourceIn = DragValueField(frame: .zero)
+    private let playbackSpeed = DragValueField(frame: .zero)
+    private let speedRow = NSStackView()
     private let sourceRow = NSStackView()
     private let slot = NSPopUpButton()
     let musicEditor = AudioModulationEditor(frame: .zero)
@@ -117,6 +119,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         sourceIn.widthAnchor.constraint(equalToConstant: 100).isActive = true
         sourceRow.addArrangedSubview(NSTextField(labelWithString: "素材開始（秒）")); sourceRow.addArrangedSubview(sourceIn)
         sourceIn.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.sourceIn }, initial: { 0 }, normalize: { max(0, $0) }, commit: { [weak self] _ in self?.finishTimingEdit() })
+        playbackSpeed.contextMenuProvider = { [weak self] in self?.makePlaybackSpeedMenu() ?? NSMenu() }
+        playbackSpeed.delegate = self
+        playbackSpeed.identifier = NSUserInterfaceItemIdentifier("visual.playbackSpeed")
+        playbackSpeed.stringValue = "1"
+        playbackSpeed.knobRange = VisualClip.playbackSpeedRange
+        playbackSpeed.knobInitialValue = 1
+        playbackSpeed.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        speedRow.addArrangedSubview(NSTextField(labelWithString: "再生速度（倍）"))
+        speedRow.addArrangedSubview(playbackSpeed)
+        playbackSpeed.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.speed }, initial: { 1 }, normalize: { min(VisualClip.playbackSpeedRange.upperBound, max(VisualClip.playbackSpeedRange.lowerBound, $0)) }, commit: { [weak self] _ in self?.finishTimingEdit() })
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
@@ -158,7 +170,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, speedRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         musicEditor.onCommit = { [weak self] parameter, modulation in self?.setMusic(parameter, modulation: modulation, preview: false) }
         musicEditor.onPreview = { [weak self] parameter, modulation in
             guard let self else { return }
@@ -180,7 +192,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, slot, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, slot, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
@@ -240,6 +252,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
         sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
         sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
+        speedRow.isHidden = sourceRow.isHidden
+        playbackSpeed.isEnabled = sourceIn.isEnabled
         musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
     }
     private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
@@ -286,6 +300,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             name.stringValue = "\(clip.content.sourceIn == nil ? "画像" : "動画")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
             sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
+            playbackSpeed.stringValue = String(clip.content.speed)
             slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
         } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画を配置してください" }
         refreshAnimationValues()
@@ -333,14 +348,14 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         guard let field = obj.object as? NSTextField else { return }
         if let parameter = valueFields.first(where: { $0.value === field })?.key {
             drafts[parameter] = field.stringValue
-        } else if field === start || field === end || field === sourceIn {
+        } else if field === start || field === end || field === sourceIn || field === playbackSpeed {
             if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
             changePlacement()
         }
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
-        if let field = obj.object as? NSTextField, field === start || field === end || field === sourceIn {
+        if let field = obj.object as? NSTextField, field === start || field === end || field === sourceIn || field === playbackSpeed {
             finishTimingEdit()
         } else {
             onEndTextEditing?()
@@ -379,6 +394,26 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         return true
     }
 
+    private func makePlaybackSpeedMenu() -> NSMenu {
+        let menu = NSMenu()
+        let current = track.clip(selectedID)?.content.speed
+        for speed in [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0] {
+            let item = menu.addItem(withTitle: "x\(speed)", action: #selector(choosePlaybackSpeed(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = speed
+            item.state = current == speed ? .on : .off
+        }
+        return menu
+    }
+
+    @objc private func choosePlaybackSpeed(_ sender: NSMenuItem) {
+        guard playbackSpeed.isEnabled, let speed = sender.representedObject as? Double else { return }
+        playbackSpeed.cancelNumberDrag()
+        onBeginEdit?()
+        playbackSpeed.doubleValue = speed
+        finishTimingEdit()
+    }
+
     @objc private func changePlacement() {
         guard available, !refreshing, !processing, var clip = track.clip(selectedID) else { return }
         guard let begin = Double(start.stringValue), let finish = Double(end.stringValue),
@@ -395,11 +430,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             guard let value = Double(sourceIn.stringValue), value.isFinite, value >= 0 else {
                 timingIsValid = false; message.stringValue = "素材開始を0以上の秒数で入力してください。"; return
             }
-            clip.content = .video(sourceIn: value)
+            guard let speed = Double(playbackSpeed.stringValue), speed.isFinite, VisualClip.playbackSpeedRange.contains(speed) else {
+                timingIsValid = false; message.stringValue = "再生速度を0.1〜16倍で入力してください。"; return
+            }
+            clip.end = clip.start + (clip.end - clip.start) * clip.content.speed / speed
+            clip.content = .video(sourceIn: value, speed: speed)
         }
         do {
             let value = try track.updating(clip, slot: slot.indexOfSelectedItem + 1, duration: duration)
             timingIsValid = true
+            end.stringValue = String(clip.end)
             commit(value, selectedID: clip.id, refreshEditor: false)
             effectsEditor.load(clip, editable: true)
         } catch { timingIsValid = false; report(error) }
@@ -486,8 +526,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                 let compatible = inspected.map { info in
                     (info.kind.videoDuration != nil) == (asset.kind.videoDuration != nil)
                         && self.track.uses(asset.id).allSatisfy { clip in
-                            guard let sourceIn = clip.content.sourceIn, let length = info.kind.videoDuration else { return true }
-                            return sourceIn + clip.end - clip.start <= length + 1e-9
+                            guard clip.content.sourceIn != nil, let length = info.kind.videoDuration else { return true }
+                            return clip.sourceEnd <= length + 1e-9
                         }
                 } ?? false
                 let image = compatible ? inspected?.thumbnail : nil
