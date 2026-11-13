@@ -150,3 +150,17 @@ vertex Quad positionedImage(uint vertexID [[vertex_id]], constant Placement &pla
 fragment float4 sourceImage(Quad in [[stage_in]], texture2d<float> source [[texture(0)]]) {
     return source.sample(linearSampler, in.uv);
 }
+
+struct SpineVertex { float x, y, u, v, r, g, b, a; };
+struct SpineRaster { float4 position [[position]]; float2 uv; float4 color; };
+vertex SpineRaster spineVertex(uint id [[vertex_id]], device const SpineVertex *vertices [[buffer(0)]], constant float4 &bounds [[buffer(1)]]) {
+    SpineVertex v = vertices[id];
+    float2 p = (float2(v.x, v.y) - bounds.xy) / bounds.zw;
+    return {float4(p.x * 2 - 1, p.y * 2 - 1, 0, 1), float2(v.u, v.v), float4(v.r, v.g, v.b, v.a)};
+}
+fragment float4 spineFragment(SpineRaster in [[stage_in]], texture2d<float> page [[texture(0)]], sampler sampling [[sampler(0)]], constant uint &pma [[buffer(0)]]) {
+    float4 pixel = page.sample(sampling, in.uv);
+    float3 rgb = pma ? (pixel.a > 0 ? saturate(pixel.rgb / pixel.a) : float3(0)) : pixel.rgb;
+    float alpha = pixel.a * in.color.a;
+    return float4(linearFromSRGB(saturate(rgb * in.color.rgb)) * alpha, alpha);
+}

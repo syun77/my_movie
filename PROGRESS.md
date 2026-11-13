@@ -1,3 +1,45 @@
+# Spineアニメーション・オートメーション設計（作業中）
+
+- 最終更新: 2026-11-14 JST。要件: 名前付き水平線へスナップ/常時ホールドの選択レーン、左欄右クリックで2アニメーションのブレンド、上下端に名前指定、既定シングル曲線の仕様を検討。今回は設計のみ。
+- 確認: 現行SpinePlayback/SpinePoseProvider、ImageCurve/補間、TimelineViewの共通左欄・右クリック、固定4.3ランタイムと公式資料を照合。
+- 方針: 離散選択と連続ブレンドを専用モデルで分離。共通時計、未キー項目、モード変換、複数clipの名前表示を補足する。
+- 次: 詳細仕様と未確定の提案を文書化し、関連設計への参照を整合。コード変更・実行中処理なし。
+
+# Spine初期実装（完了）
+
+- 最終更新: 2026-11-14 JST。目的: SPINE_PHASE1.md A〜Dの実装。atlas・移動/回転・凸/凹マスク、3段配置・保存/履歴・MP4接続。
+- 実装済み: 公式4.3（405f43295b5832e86d9df3a80beb6bc9df772312）の同梱/C境界、PNG/atlas、weighted mesh/clip、Metal、UI、version8、主音声同期、MP4、再読込・出力中の素材固定。
+- 整理済み: 保存モデル/ランタイム所有/Metalを分離、シェーダー読込共有、旧互換decode削除、bounds計算の重複を解消、取消をファイル読込/PNG変換へ伝播。前作業の文書変更を保持。
+- 検証: 全90テスト成功（/tmp/my-movie-spine-full-tests.log）。提供モデルの開眼/瞬き/首のマスクと合成を目視確認。Spine3段1080p測定はCPU最大約16ms/GPU最大約6ms（9時刻、連続性能保証ではない）。
+- 描画画像: /tmp/my-movie-spine-open.png、/tmp/my-movie-spine-blink.png、/tmp/my-movie-spine-composite.png。
+- 変更: 新規SpineBridge/ThirdParty/SpineAsset/SpinePoseProvider/SpineMetalRenderer/SceneShaders/SpineTests、既存モデル・素材UI・描画・出力経路・保存/コピー・関連文書・build-app.sh。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-spine-release.log）、最新dist/MV Studio.app生成済み。codesign --verify --deep --strict、Spineライセンス同梱一致、git diff --check成功。公式ランタイムsrc/includeが取得元と一致することも確認。
+- 未確定: Spine Editor参照画像との厳密比較と他機種性能。物理ON・特殊blend・複数skin・.skelは初期範囲外。
+- 実行中処理・未解決障害なし。手動の実アプリ操作は未実施（UIは統合テストで検証）。
+- 次: 最新アプリを再起動し、「画像・演出」→「＋素材を配置…」でJSON、必要に応じてatlasを選択する。
+
+# Spine初期実装目標の設計（完了・未実装）
+
+- 最終更新: 2026-11-14 JST。要件: atlas化テクスチャ、単純な移動/回転、凸形/凹形マスクを最初の目標として設計。今回は文書のみ。
+- 調査: 提供JSONは4.3.26、15 bones/66 slots、region32/weighted mesh9/clipping25。目の24マスクはweighted・convex指定、首はunweighted9頂点で凹形。atlasは1701×1776・PMA・90度回転/trimあり。原本は変更・コピーしていない。
+- 完了: docs/SPINE_PHASE1.mdへ対象/後段、実データ構造、公式runtime→clip済みpacket→Metalの責務、atlas復元、任意時刻、end slot、段階A〜Dと受入条件を記録。
+- 整理: 全体設計の初期順序/ゲートを整合。物理ON・全blendは初期検証の前提から除外。weighted mesh/clipはサンプル再現に必要なため初期対象。
+- 変更: docs/SPINE_PHASE1.md（新規）、docs/SPINE_TIMELINE.md、docs/ARCHITECTURE.md、README.md、AGENTS.md、PROGRESS.md。前作業の設計変更は保持。
+- 検証: regionのatlas参照、end slot順序、weighted33件の配列/ボーンindex/weight合計、mesh index、首の凹形を静的確認。整数相当値がJSONで浮動表記のため検査は数値として検証。文書のローカルリンクとgit diff --check成功。
+- 未検証: 公式runtimeでの実読込/描画・参照画像との一致・性能。固定commitは実装時に確定。文書のみのためテスト/アプリ再生成なし。実行中処理なし。
+- 次: 実装依頼時にA（runtime固定/C境界/atlas・region・weighted mesh静止表示）から開始し、B移動/回転→Cマスクを合格後、D本体へ接続する。
+
+# Spine設計の再点検・詳細化（完了・未実装）
+
+- 最終更新: 2026-11-14 JST。要件: 組み込み設計の完成度を確認し、不足する詳細を詰める。コード実装は対象外。
+- 確認: AGENTS.md・既存進捗・設計、VisualTrack/VisualRenderLayer/Package.swiftと公式4.3のspine-cpp/API資料を照合。
+- 完了: SPINE_TIMELINE.md 12節へ種別付きデータ/C境界/所有、固定刻み・終端保持、非同期状態/待機中の再生意図、固定原点、色と発光の検証、予算、revision、統合前ゲートを追記。
+- 整理: 終端保持でsourceInをDへ丸める矛盾を解消。物理時間とポーズ参照時刻を分離。実装済み仕様と設計案、試作が必要な事項を明示。
+- 変更: docs/SPINE_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 検証: 文書内の時間規則・型・所有/取消の整合を確認。git diff --check成功。文書のみのためテストとアプリ生成は対象外。
+- 未確定: 完全commit SHA、blend/tint式とCore Imageの発光保持、物理再現性・性能の実測はG1〜G4で確定する。実行中処理なし。
+- 次: 実装依頼時に公式ソースを固定し、機能別サンプルでG1〜G4を検証。その後に物理OFFから本体を縦接続する。
+
 # Spine組み込み設計（完了・未実装）
 
 - 最終更新: 2026-11-13 JST。要件: 通常のSpine公式ランタイムで実現可能な再生機能の設計。コード実装は対象外。

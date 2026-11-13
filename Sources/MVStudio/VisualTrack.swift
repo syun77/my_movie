@@ -3,6 +3,29 @@ import Foundation
 enum VisualAssetKind: Codable, Sendable, Equatable {
     case still
     case video(duration: Double)
+    case spine(SpineAssetDescriptor)
+
+    var spineDescriptor: SpineAssetDescriptor? { if case let .spine(value) = self { return value }; return nil }
+    var title: String { switch self { case .still: return "画像"; case .video: return "動画"; case .spine: return "Spine" } }
+    func sameType(as other: Self) -> Bool {
+        switch (self, other) {
+        case (.still, .still), (.video, .video), (.spine, .spine): return true
+        default: return false
+        }
+    }
+    func rebased(from source: URL, to destination: URL) -> Self {
+        guard var descriptor = spineDescriptor else { return self }
+        descriptor.atlasReference = AssetReference(url: descriptor.atlasReference.resolve(projectURL: source), projectURL: destination)
+        return .spine(descriptor)
+    }
+    func accepts(_ content: VisualContent) -> Bool {
+        switch (self, content) {
+        case (.still, .still): return true
+        case let (.video(duration), .video(sourceIn, speed)): return sourceIn >= 0 && speed > 0 && duration > 0
+        case let (.spine(descriptor), .spine(playback)): return playback.isValid && descriptor.animations.contains { $0.name == playback.animationName }
+        default: return false
+        }
+    }
 
     var videoDuration: Double? { if case let .video(duration) = self { return duration }; return nil }
 }
@@ -10,22 +33,19 @@ enum VisualAssetKind: Codable, Sendable, Equatable {
 enum VisualContent: Codable, Sendable, Equatable {
     case still
     case video(sourceIn: Double, speed: Double = 1)
+    case spine(SpinePlayback)
 
-    var sourceIn: Double? { if case let .video(value, _) = self { return value }; return nil }
+    var sourceIn: Double? {
+        switch self { case .still: return nil; case let .video(value, _): return value; case let .spine(value): return value.sourceIn }
+    }
     var speed: Double { if case let .video(_, speed) = self { return speed }; return 1 }
-
-    private enum CodingKeys: String, CodingKey { case still, video }
-    private enum VideoKeys: String, CodingKey { case sourceIn, speed }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        if container.contains(.video) {
-            let video = try container.nestedContainer(keyedBy: VideoKeys.self, forKey: .video)
-            self = .video(sourceIn: try video.decode(Double.self, forKey: .sourceIn),
-                          speed: try video.decodeIfPresent(Double.self, forKey: .speed) ?? 1)
-        } else {
-            _ = try container.nestedContainer(keyedBy: VideoKeys.self, forKey: .still)
-            self = .still
+    var isVideo: Bool { if case .video = self { return true }; return false }
+    var spinePlayback: SpinePlayback? { if case let .spine(value) = self { return value }; return nil }
+    mutating func setSourceIn(_ value: Double) {
+        switch self {
+        case .still: break
+        case let .video(_, speed): self = .video(sourceIn: value, speed: speed)
+        case var .spine(playback): playback.sourceIn = value; self = .spine(playback)
         }
     }
 }
@@ -78,7 +98,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
         var ids = Set<UUID>()
         guard layers.count == 3, Set(layers.map(\.slot)) == Set(1...3) else { throw StudioError.message("素材レイヤーは1〜3の3段が必要です。") }
         for asset in assets {
-            guard ids.insert(asset.id).inserted, !asset.reference.path.isEmpty, asset.kind.videoDuration.map({ $0.isFinite && $0 > 0 }) ?? true else { throw StudioError.message("素材素材の参照が不正です。") }
+            guard ids.insert(asset.id).inserted, !asset.reference.path.isEmpty, asset.kind.spineDescriptor?.isValid != false, asset.kind.videoDuration.map({ $0.isFinite && $0 > 0 }) ?? true else { throw StudioError.message("素材素材の参照が不正です。") }
         }
         let assetIDs = Set(assets.map(\.id))
         for layer in layers {
@@ -94,6 +114,8 @@ struct VisualTrack: Codable, Sendable, Equatable {
                 guard let asset = asset(clip.assetID) else { throw StudioError.message("素材が見つかりません。") }
                 switch (asset.kind, clip.content) {
                 case (.still, .still): break
+                case let (.spine(descriptor), .spine):
+                    guard descriptor.isValid, asset.kind.accepts(clip.content) else { throw StudioError.message("Spineの設定が不正です。") }
                 case let (.video(length), .video(sourceIn, speed)):
                     guard sourceIn.isFinite, sourceIn >= 0, speed.isFinite, VisualClip.playbackSpeedRange.contains(speed), clip.sourceEnd <= length + 1e-9 else {
                         throw StudioError.message("動画の速度は0.1〜16倍で、参照区間が素材の長さを超えないようにしてください。")
@@ -108,6 +130,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
     }
 
     mutating func register(url: URL, projectURL: URL, kind: VisualAssetKind = .still) -> UUID {
+        let kind = kind.rebased(from: projectURL, to: projectURL)
         let canonical = url.standardizedFileURL
         if let index = assets.firstIndex(where: { $0.reference.resolve(projectURL: projectURL).standardizedFileURL == canonical }) {
             assets[index].kind = kind
@@ -120,7 +143,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
 
     func replacingAsset(id: UUID, url: URL, projectURL: URL, kind: VisualAssetKind = .still) throws -> VisualTrack {
         guard let index = assets.firstIndex(where: { $0.id == id }) else { throw StudioError.message("素材が見つかりません。") }
-        guard (assets[index].kind.videoDuration != nil) == (kind.videoDuration != nil) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
+        guard assets[index].kind.sameType(as: kind) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
         var value = self
         value.assets[index].kind = kind
         if let existing = assets.first(where: { $0.id != id && $0.reference.resolve(projectURL: projectURL).standardizedFileURL == url.standardizedFileURL }) {
@@ -166,6 +189,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
             range.end = try grid.snap(limit, within: (range.start + 1.0 / 30)...limit)
             content = .video(sourceIn: 0)
         }
+        if let descriptor = asset.kind.spineDescriptor { content = .spine(SpinePlayback(animationName: descriptor.animations[0].name)) }
         var clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
         if content.sourceIn != nil { clip.audioModulations = [:] }
         return (try inserting(clip, slot: slot, duration: duration), clip)

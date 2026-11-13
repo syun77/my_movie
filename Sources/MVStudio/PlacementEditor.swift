@@ -323,7 +323,7 @@ final class PlacementEditor: NSViewController {
                 guard !asset.reference.relative else { return false }
                 url = URL(fileURLWithPath: asset.reference.path)
             }
-            try ClipClipboard.visual(clip, assetURL: url, kind: asset.kind).write(to: pasteboard)
+            try ClipClipboard.visual(clip, assetURL: url, kind: asset.kind.rebased(from: visuals.projectURL ?? URL(fileURLWithPath: "/"), to: URL(fileURLWithPath: "/"))).write(to: pasteboard)
         } else {
             guard let clip = selectedLyric else { return false }
             try ClipClipboard.lyrics(clip).write(to: pasteboard)

@@ -984,7 +984,7 @@ final class TimelineView: NSView {
 
     private func droppedURL(_ pasteboard: NSPasteboard) -> URL? {
         let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        guard objects.count == 1, let url = objects.first, ["png", "jpg", "jpeg", "tif", "tiff", "mp4", "mov", "m4v"].contains(url.pathExtension.lowercased()) else { return nil }
+        guard objects.count == 1, let url = objects.first, ["png", "jpg", "jpeg", "tif", "tiff", "mp4", "mov", "m4v", "json"].contains(url.pathExtension.lowercased()) else { return nil }
         return url
     }
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

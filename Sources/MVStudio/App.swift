@@ -511,8 +511,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                     let lag = abs(self.preview.time - request.time)
                     if self.player?.isPlaying == true, lag > 0.25 {
                         self.stopPlayback()
-                        self.preview.frameFailure = true; self.preview.frameStatus = "動画の読み込みが再生に追従できません。"
-                        self.status.stringValue = "動画の読み込みが再生に追従できません。一時停止しました。"
+                        self.preview.frameFailure = true; self.preview.frameStatus = "素材の描画準備が再生に追従できません。"
+                        self.status.stringValue = "素材の描画準備が再生に追従できません。一時停止しました。"
                         continue
                     }
                     self.preview.visuals = layers
@@ -523,8 +523,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 catch {
                     guard request.revision == self.previewRevision else { continue }
                     self.stopPlayback(); self.preview.visuals = []
-                    self.preview.frameFailure = true; self.preview.frameStatus = "動画を確認してください。素材管理から置き換えられます。"
-                    self.status.stringValue = "動画を確認してください: " + error.localizedDescription
+                    self.preview.frameFailure = true; self.preview.frameStatus = "素材を確認してください。素材管理から置き換えられます。"
+                    self.status.stringValue = "素材を確認してください: " + error.localizedDescription
                     self.preview.invalidateFrame()
                     self.pendingFrame = nil
                 }

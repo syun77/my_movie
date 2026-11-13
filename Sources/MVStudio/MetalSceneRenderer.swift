@@ -25,6 +25,7 @@ final class MetalSceneRenderer {
     private let orbPipeline: MTLRenderPipelineState
     private let overlayPipeline: MTLRenderPipelineState
     private let outputPipeline: MTLRenderPipelineState
+    private let spineRenderer: SpineMetalRenderer
     private let scene: MTLTexture
 
     private struct ImageKey: Equatable {
@@ -85,11 +86,7 @@ final class MetalSceneRenderer {
         filters = CIContext(mtlCommandQueue: queue, options: [
             .workingColorSpace: Self.linearRGB, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false
         ])
-        let appResources = Bundle.main.url(forResource: "MVStudio_MVStudio", withExtension: "bundle").flatMap(Bundle.init(url:))
-        guard let shader = (appResources ?? .module).url(forResource: "Scene", withExtension: "metal", subdirectory: "Shaders") else {
-            throw StudioError.message("演出用のシェーダーを読み込めません。")
-        }
-        let library = try device.makeLibrary(source: String(contentsOf: shader, encoding: .utf8), options: nil)
+        let library = try SceneShaders.library(device: device)
         guard let bloomFunction = library.makeFunction(name: "bloomHighlights") else { throw Self.renderError }
         highlight = try device.makeComputePipelineState(function: bloomFunction)
         func pipeline(_ vertex: String, _ fragment: String, format: MTLPixelFormat = .rgba16Float,
@@ -114,6 +111,7 @@ final class MetalSceneRenderer {
         orbPipeline = try pipeline("particleQuad", "orbLight", additive: true)
         overlayPipeline = try pipeline("fullscreen", "artwork")
         outputPipeline = try pipeline("fullscreen", "outputColor", format: .bgra8Unorm, blending: false)
+        spineRenderer = try SpineMetalRenderer(device: device, library: library)
         scene = try Self.makeTexture(device: device, width: Int(size.width), height: Int(size.height),
                                      format: .rgba16Float, usage: [.shaderRead, .renderTarget])
     }
@@ -132,17 +130,24 @@ final class MetalSceneRenderer {
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
         for layer in visuals where layer.clip.start <= time && time < layer.clip.end {
+            let frame: VisualFrame
+            switch layer.source {
+            case let .frame(value): frame = value
+            case let .spine(packet):
+                let rendered = try spineRenderer.render(packet, commands: commands)
+                frame = try VisualFrame(texture: rendered.texture, referenceBounds: rendered.reference)
+            }
             var clip = layer.clip
             clip.effects = clip.evaluatedEffects(at: time, settings: settings, features: features)
             let blur = clip.effects?.blur
             let bloom = clip.effects?.bloom
             let glows = bloom.map { $0.isEnabled && $0.intensity > 0 && $0.threshold < 100 } ?? false
-            let key = ImageKey(source: layer.frame, transform: transform(layer, at: time, settings: settings, features: features, shake: clip.effects?.shake),
+            let key = ImageKey(source: frame, transform: transform(frame, clip: layer.clip, at: time, settings: settings, features: features, shake: clip.effects?.shake),
                                correction: clip.effects?.colorCorrection.flatMap { $0.isEnabled ? $0 : nil },
                                blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
                                threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
                                glowRadius: glows ? bloom?.radius ?? 0 : 0)
-            let source = try sourceTexture(layer.frame, cached: nextSources[clip.assetID] ?? sourceCache[clip.assetID], commands: commands)
+            let source = try sourceTexture(frame, cached: nextSources[clip.assetID] ?? sourceCache[clip.assetID], commands: commands)
             nextSources[clip.assetID] = source
             let previous = imageCache[clip.id]
             let image = try (previous?.key == key ? previous : nil)
@@ -221,6 +226,7 @@ final class MetalSceneRenderer {
     }
 
     func discardCache() {
+        spineRenderer.discardCache()
         sourceCache.removeAll()
         imageCache.removeAll()
         lyricsCache = nil
@@ -229,21 +235,21 @@ final class MetalSceneRenderer {
         transformScratch = nil
     }
 
-    private func transform(_ layer: VisualRenderLayer, at time: Double, settings: SceneSettings, features: AudioFeatures?, shake: ImageEffects.Shake?) -> CGAffineTransform {
-        let image = layer.frame
-        let clip = layer.clip
-        let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
+    private func transform(_ image: VisualFrame, clip: VisualClip, at time: Double, settings: SceneSettings, features: AudioFeatures?, shake: ImageEffects.Shake?) -> CGAffineTransform {
+        let reference = image.referenceBounds ?? CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let fit = min(size.width / reference.width, size.height / reference.height)
         let imageScale = fit * (ParameterEvaluator.value(.scale, clip: clip, at: time, settings: settings, features: features) / 100)
         let displacement = shake?.displacement(at: time - clip.start) ?? .zero
         let angle = ParameterEvaluator.value(.rotation, clip: clip, at: time, settings: settings, features: features).truncatingRemainder(dividingBy: 360) * (-.pi / 180)
         return CGAffineTransform(translationX: size.width / 2 + (ParameterEvaluator.value(.x, clip: clip, at: time, settings: settings, features: features) + displacement.x) * scale,
                                  y: size.height / 2 + (ParameterEvaluator.value(.y, clip: clip, at: time, settings: settings, features: features) + displacement.y) * scale)
             .rotated(by: angle).scaledBy(x: imageScale, y: imageScale)
-            .translatedBy(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2)
+            .translatedBy(x: -reference.midX, y: -reference.midY)
     }
 
     private func sourceTexture(_ image: VisualFrame, cached: SourceImage?, commands: MTLCommandBuffer) throws -> SourceImage {
         if let cached, cached.image == image { return cached }
+        if let texture = image.texture { return SourceImage(image: image, texture: texture) }
         let source = image.image
         let texture = try render(source, bounds: source.extent, reusing: nil, commands: commands)
         return SourceImage(image: image, texture: texture)

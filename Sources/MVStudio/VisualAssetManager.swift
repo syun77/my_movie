@@ -28,7 +28,8 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
         let replace = NSButton(title: "置き換え…", target: self, action: #selector(replace))
         let remove = NSButton(title: "素材を削除…", target: self, action: #selector(remove))
         let close = NSButton(title: "閉じる", target: self, action: #selector(closeSheet))
-        buttons = [add, replace, remove, close]
+        let reloadButton = NSButton(title: "再読込", target: self, action: #selector(reloadSelected))
+        buttons = [add, replace, reloadButton, remove, close]
         let toolbar = NSStackView(views: buttons); toolbar.spacing = 10
         message.font = .systemFont(ofSize: 11); message.lineBreakMode = .byTruncatingTail
         for child in [scroll, detail, message, toolbar] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
@@ -49,7 +50,7 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
         case "image":
             let view = NSImageView(); view.image = editor?.thumbnails[asset.id]; view.imageScaling = .scaleProportionallyUpOrDown
             return view
-        case "name": return NSTextField(labelWithString: (asset.kind.videoDuration == nil ? "画像: " : "動画: ") + asset.name)
+        case "name": return NSTextField(labelWithString: (asset.kind.title + ": ") + asset.name)
         case "status": return NSTextField(labelWithString: editor?.missing.contains(asset.id) == true ? "見つからない/読込不能" : editor?.thumbnails[asset.id] == nil ? "確認中" : uses == 0 ? "未配置" : "読込済み")
         default: return NSTextField(labelWithString: "\(uses)配置")
         }
@@ -64,6 +65,7 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
     func showError(_ error: Error) { message.stringValue = error.localizedDescription }
     @objc private func add() { if let url = VisualEditor.chooseFile() { editor?.importFile(url) } }
     @objc private func replace() { guard let asset = selected, let url = VisualEditor.chooseFile() else { return }; editor?.importFile(url, replacingAsset: asset.id) }
+    @objc private func reloadSelected() { if let asset = selected { editor?.reloadAsset(asset.id) } }
     @objc private func remove() {
         guard let asset = selected, let editor else { return }
         let uses = editor.track.uses(asset.id)

@@ -60,7 +60,7 @@ AudioModulationはenabled/source/blend/amount/releaseSeconds/beatNoteDenominator
 
 ## 保存形式と実装順
 
-保存形式はProjectFile version 7。version 6以前への互換処理は設けない。既存のバックアップして新規作成するUIを使用する。既存プロジェクトの動きを引き継ぐ必要が出た場合は、実装前に明示的な変換を別途設計する。
+保存形式はProjectFile version 8。version 7以前への互換処理は設けない。既存のバックアップして新規作成するUIを使用する。既存プロジェクトの動きを引き継ぐ必要が出た場合は、実装前に明示的な変換を別途設計する。
 
 1. AudioModulation・イベント検索・共通評価器を実装し、変形と演出へ統合する。
 2. 拡大率専用自動アニメUI/モデルを廃止し、項目単位の設定UIへ統合する。
@@ -145,7 +145,7 @@ TransientDetectorは約5msブロックのチャンネル平均パワーを帯域
 
 TransientBandはall/low/mid/high/customの種別とカスタム下限/上限を持つ値型とし、AudioModulation.transientBandへ保存する。プリセット切替で保持する最後のカスタム範囲も設定値として扱う。解析中フラグ・検出時刻列・キャッシュは保存しない。設定変更は既存の仮編集/確定経路で自動保存・Undo/Redoに反映し、解析完了自体は履歴に追加しない。
 
-AudioFeaturesと解析サービスが帯域キーごとの時刻列を供給し、ParameterEvaluatorは選択帯域の直近イベントを二分探索する。音声ごとに結果を共有し、項目や描画ごとにPCMを読む処理は作らない。保存形式はversion 7に含め、帯域追加だけの別バージョンは設けない。
+AudioFeaturesと解析サービスが帯域キーごとの時刻列を供給し、ParameterEvaluatorは選択帯域の直近イベントを二分探索する。音声ごとに結果を共有し、項目や描画ごとにPCMを読む処理は作らない。保存形式はversion 8に含め、帯域追加だけの別バージョンは設けない。
 
 ### 追加の検証
 
@@ -204,7 +204,7 @@ BPMは4分音符の毎分拍数と定義し、1拍=60/BPM秒。指定Nに対し�
 
 ### モデルと共通化
 
-AudioModulation.beatNoteDenominatorはInt、許容1...16、既定4。秒換算値は保存せず、SceneSettingsのBPMから導出する。前案のbeatDivisionという曖昧な名前は使用しない。保存はProjectFile version 7に含める。
+AudioModulation.beatNoteDenominatorはInt、許容1...16、既定4。秒換算値は保存せず、SceneSettingsのBPMから導出する。前案のbeatDivisionという曖昧な名前は使用しない。保存はProjectFile version 8に含める。
 
 BeatTimingへ周期・直近発火・可視範囲の発火列を集約し、ParameterEvaluatorとグラフが共有する。タイムラインのスナップは既存の5択を維持するが、同じ分母の秒換算式は共有できる。音楽同期のためにスナップの選択肢を勝手に拡張しない。
 

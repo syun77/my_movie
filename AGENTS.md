@@ -36,7 +36,7 @@
 - ビルドのモジュールキャッシュは書込可能な一時ディレクトリへ指定する。制限された環境ではMetal GPU・エンコーダへのアクセスやdsymutilが失敗する場合がある。動画出力テストはmacOSメディアサービスへアクセスできる環境で実行する。
 - 自動保存は音声と同じフォルダの `<音声ファイル名>.mvproject`（JSON）。素材参照とSceneSettingsを保存し、UserDefaultsの`lastProjectURL`から起動時に復元する。素材コピーはせず、同一フォルダのみ相対参照。読み込みと設定の検証に失敗したプロジェクトは上書きしない。
 - タイムラインの初期用途は歌詞テロップ用テキストの配置。設計は `docs/TIMELINE.md` に記録する。歌詞一覧・区間編集と全歌詞共通のフォント・サイズ・描画位置・縁取りは実装済み。独立した拡大タイムラインのドラッグ移動/端トリムも実装済み。Undo/Redoは共通EditHistoryで実装済み。
-- 歌詞は `LyricsTrack` としてProjectFile version 7へ保存する。縁取り幅は720p基準の外側幅0〜12px。Core Textでストローク後に白い本文を描き、共通MetalSceneRendererで前景テクスチャとして合成する。対応外の旧プロジェクトにはバックアップして新規作成するUIを使う。
+- 歌詞は `LyricsTrack` としてProjectFile version 8へ保存する。縁取り幅は720p基準の外側幅0〜12px。Core Textでストローク後に白い本文を描き、共通MetalSceneRendererで前景テクスチャとして合成する。対応外の旧プロジェクトにはバックアップして新規作成するUIを使う。
 - 歌詞区間はタイムラインのドラッグまたは開始/終了欄で編集する。確定時の一覧更新は選択操作と区別し、開始位置へ意図せずシークしない。
 - 歌詞の本文と開始/終了は変更時に自動反映・保存する。適用ボタンは不要。IME変換中は保留し、入力中のカーソルや文字列を確定処理で書き換えない。空本文は許可し、不正な時間区間は最後の有効モデルを保持する。
 - Swiftで直接所有するNSWindowは `isReleasedWhenClosed = false` にする。デフォルトの自動解放で閉じた後、終了コールバックから参照するとEXC_BAD_ACCESSになる。閉じる操作とアプリ終了は共通の保存確認を使い、終了時にタイマーと音声再生を停止する。
@@ -52,7 +52,7 @@
 - 動画出力はVideoExporterの共通定数で1920×1080/30fps・H.264（映像生成時12Mbps目標）を指定し、UIも同じ定数を表示する。歌詞縁取り幅の720p基準は描画倍率の基準として維持し、1080pでは1.5倍に拡大する。
 
 - 画像配置はdocs/IMAGE_TIMELINE.mdの仕様を実装済み。PlacementEditorが「歌詞」「画像・演出」タブと共通TimelineViewを所有し、歌詞ゴーストは画像モードの背景だけに描く。VisualTrackは固定3段で同段重なり禁止/別段許可、連結は歌詞専用。
-- ProjectFile version 7はvisualAssets/visualLayersを保存し、VisualClipが固定変形・手動グラフ・自動アニメ・追加演出を所有する。旧version 4/5/6は読み込まず、既存のバックアップして新規作成するUIを利用する。
+- ProjectFile version 8はvisualAssets/visualLayersを保存し、VisualClipが固定変形・手動グラフ・自動アニメ・追加演出を所有する。旧version 4/5/6/7は読み込まず、既存のバックアップして新規作成するUIを利用する。
 - 画像読込はVisualEditorの非同期処理に集約し、ボタン/タイムラインドロップ/管理画面から利用する。ファイルドロップは1枚ずつ、行/横座標を配置先に使う。未配置素材も保存し、クリップ削除で自動除去しない。
 - 管理画面の素材置換は全使用配置、クリップの画像変更は選択配置だけが対象。使用中素材の削除は配置削除を確認し、元素材ファイルを削除しない。欠損素材の参照と配置を保持し、置き換えて復旧する。未配置の欠損は出力を止めない。
 - ImageAssetStoreはactor上でImageIOデコードと128MiB/32件上限のキャッシュを管理する。プレビューは現在有効な画像を非同期取得し、出力はフレームごとに有効画像を取得する。プロジェクト/素材確認世代を照合し古い結果を適用しない。AppKitのペーストボードテストと動画出力テストはmacOSサービスへアクセスできる環境で実行する。
@@ -131,7 +131,7 @@
 
 - 色調補正はImageEffects.ColorCorrectionに色相±180°・明度±100%・彩度0〜200%（初期0/0/100）を保存し、共通オートメーションに対応する。MetalSceneRendererのCore Image処理で素材だけに色相→明度/彩度→ブラー→ブルームの順で適用する。粒子・歌詞・スペクトラムは補正対象外。
 
-- 項目別音楽同期の現仕様は `docs/AUDIO_AUTOMATION.md`。AudioModulationをVisualClip.audioModulationsへ保存し、ParameterEvaluatorが手動値→加算/相対同期→物理範囲→個数丸めをプレビュー・出力・合成線で共有する。新規画像の拡大縮小は全帯域トランジェント・相対8%、動画は未設定。ProjectFile version 7で旧versionはバックアップして新規作成するUIへ送る。
+- 項目別音楽同期の現仕様は `docs/AUDIO_AUTOMATION.md`。AudioModulationをVisualClip.audioModulationsへ保存し、ParameterEvaluatorが手動値→加算/相対同期→物理範囲→個数丸めをプレビュー・出力・合成線で共有する。新規画像の拡大縮小は全帯域トランジェント・相対8%、動画は未設定。ProjectFile version 8で旧versionはバックアップして新規作成するUIへ送る。
 - 拍同期は音符分母1〜16の全整数・周期240/(BPM×N)秒・拍開始共通原点。スナップの5択とは独立。トランジェント帯域は全/低/中/高/カスタムHzを項目ごとに指定する。同期だけのレーンはキーを作らず表示し、表示範囲は手動カーブがあればそちら、なければautomationRangesへ一意に保持する。
 
 - Live2D再生を検討する場合、ユーザーが任意モデルを追加できる公開アプリはSDKの「拡張性アプリケーション」に該当する可能性がある。通常の小規模事業者向け免除を前提にせず、公開前に公式の審査・契約条件を確認する（https://www.live2d.com/sdk/license/expandable/）。採用は未確定。
@@ -140,4 +140,6 @@
 
 - DragValueField.contextMenuProviderは数値欄固有の右クリックメニューに使用する。動画速度はx0.25/x0.5/x1.0/x2.0/x4.0/x8.0/x16.0を選択可能。数値編集中のメニューもStudioWindowの既存転送を共有する。
 
-- Spineの組み込み提案は `docs/SPINE_TIMELINE.md`（未実装）。公式spine-cpp 4.3をC境界から利用し、既存3段へ配置する案。物理は任意時刻の代入だけで復元できないため、ON時は素材0秒から固定刻みで再計算し、ループの未折返し経過を保持する。採用時の検証コミットとMetal接続の実測は未確定。
+- Spineの初期実装は `docs/SPINE_PHASE1.md`、後段の設計は `docs/SPINE_TIMELINE.md`。公式spine-cpp 4.3（405f43295b5832e86d9df3a80beb6bc9df772312）をThirdPartyへ同梱し、C境界・SpinePoseProvider・SpineMetalRendererで接続する。default skin・速度1倍・物理OFF・normal blend。atlasのPMA/90度回転/trim、weighted mesh/凸形・凹形clip、移動/回転を扱い、3段・保存version8・履歴・MP4を共有する。
+- Spineの提供サンプルは4.3.26、目のmesh/マスクがweighted、首が凹形。任意サンプルの受入テストは `MV_SPINE_SAMPLE_DIR` へフォルダを指定し、SpineTestsを実行する。原本はリポジトリへコピーせず参照する。Metal/MP4/AppKit試験はmacOSサービスへアクセスできる環境で行う。
+- Spineの描画面は既存positionedImageへ渡すtextureの方向に揃える。CGImageサムネイルと実合成の両方を確認する。SpineのsourceInは終端保持でも尺へ丸めない。出力providerは使用素材を予算内で事前固定し、LRUで途中再読込しない。外部変更は素材管理の再読込で反映する。ランタイムライセンスはbuild-app.shでResources/Licensesへ同梱する。

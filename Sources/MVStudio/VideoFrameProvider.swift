@@ -126,13 +126,13 @@ actor VideoFrameProvider {
     }
 
     func layers(track: VisualTrack, projectURL: URL, time: Double, cancellation: ExportCancellation? = nil) async throws -> [VisualRenderLayer] {
-        let active = track.active(at: time).filter { $0.content.sourceIn != nil }
+        let active = track.active(at: time).filter { $0.content.isVideo }
         let ids = Set(active.map(\.id))
         sessions = sessions.filter { ids.contains($0.key) }
         var result: [VisualRenderLayer] = []
         for clip in active {
             try Task.checkCancellation(); try cancellation?.check()
-            guard let asset = track.asset(clip.assetID), clip.content.sourceIn != nil else { continue }
+            guard let asset = track.asset(clip.assetID), clip.content.isVideo else { continue }
             let url = asset.reference.resolve(projectURL: projectURL)
             let session: VideoSession
             if let existing = sessions[clip.id], existing.url == url { session = existing }

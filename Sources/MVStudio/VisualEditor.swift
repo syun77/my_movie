@@ -30,13 +30,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var timingIsValid = true
     private var selectedID: UUID?
     private var selectedSlot = 1
-    private let name = NSTextField(labelWithString: "素材行を選択し、画像・動画を配置してください")
+    private let name = NSTextField(labelWithString: "素材行を選択し、画像・動画・Spineを配置してください")
     private let start = DragValueField(frame: .zero)
     private let end = DragValueField(frame: .zero)
     private let sourceIn = DragValueField(frame: .zero)
     private let playbackSpeed = DragValueField(frame: .zero)
     private let speedRow = NSStackView()
     private let sourceRow = NSStackView()
+    private let spineRow = NSStackView()
+    private let spineAnimation = NSPopUpButton()
+    private let spineLoop = NSButton(checkboxWithTitle: "ループ", target: nil, action: nil)
     private let slot = NSPopUpButton()
     let musicEditor = AudioModulationEditor(frame: .zero)
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
@@ -101,7 +104,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var drafts: [ImageParameter: String] = [:]
     private var graphParameters: [ImageParameter] = []
     private var rangeParameter: ImageParameter?
-    private let message = NSTextField(labelWithString: "画像・動画を空白へドロップするか、ボタンで配置できます")
+    private let message = NSTextField(labelWithString: "画像・動画・Spineを空白へドロップするか、ボタンで配置できます")
     private var controls: [NSControl] = []
     private var clipControls: [NSControl] = []
     private var manager: VisualAssetManager?
@@ -129,6 +132,12 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         speedRow.addArrangedSubview(NSTextField(labelWithString: "再生速度（倍）"))
         speedRow.addArrangedSubview(playbackSpeed)
         playbackSpeed.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.speed }, initial: { 1 }, normalize: { min(VisualClip.playbackSpeedRange.upperBound, max(VisualClip.playbackSpeedRange.lowerBound, $0)) }, commit: { [weak self] _ in self?.finishTimingEdit() })
+        spineAnimation.identifier = NSUserInterfaceItemIdentifier("visual.spine.animation")
+        spineLoop.identifier = NSUserInterfaceItemIdentifier("visual.spine.loop")
+        spineAnimation.target = self; spineAnimation.action = #selector(changeSpine)
+        spineLoop.target = self; spineLoop.action = #selector(changeSpine)
+        spineRow.addArrangedSubview(NSTextField(labelWithString: "アニメーション"))
+        spineRow.addArrangedSubview(spineAnimation); spineRow.addArrangedSubview(spineLoop)
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
@@ -170,7 +179,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, speedRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         musicEditor.onCommit = { [weak self] parameter, modulation in self?.setMusic(parameter, modulation: modulation, preview: false) }
         musicEditor.onPreview = { [weak self] parameter, modulation in
             guard let self else { return }
@@ -192,7 +201,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, slot, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, slot, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
@@ -252,8 +261,9 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
         sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
         sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
-        speedRow.isHidden = sourceRow.isHidden
-        playbackSpeed.isEnabled = sourceIn.isEnabled
+        speedRow.isHidden = track.clip(selectedID)?.content.isVideo != true
+        playbackSpeed.isEnabled = sourceIn.isEnabled && !speedRow.isHidden
+        spineRow.isHidden = track.clip(selectedID)?.content.spinePlayback == nil
         musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
     }
     private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
@@ -297,12 +307,18 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         refreshing = true; defer { refreshing = false }
         timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
         if let clip = track.clip(selectedID) {
-            name.stringValue = "\(clip.content.sourceIn == nil ? "画像" : "動画")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
+            name.stringValue = "\(track.asset(clip.assetID)?.kind.title ?? "素材")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
             sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
             playbackSpeed.stringValue = String(clip.content.speed)
+            spineAnimation.removeAllItems()
+            if let descriptor = track.asset(clip.assetID)?.kind.spineDescriptor, let playback = clip.content.spinePlayback {
+                spineAnimation.addItems(withTitles: descriptor.animations.map(\.name))
+                spineAnimation.selectItem(withTitle: playback.animationName)
+                spineLoop.state = playback.loop ? .on : .off
+            }
             slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
-        } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画を配置してください" }
+        } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画・Spineを配置してください" }
         refreshAnimationValues()
         refreshControls()
     }
@@ -430,11 +446,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             guard let value = Double(sourceIn.stringValue), value.isFinite, value >= 0 else {
                 timingIsValid = false; message.stringValue = "素材開始を0以上の秒数で入力してください。"; return
             }
-            guard let speed = Double(playbackSpeed.stringValue), speed.isFinite, VisualClip.playbackSpeedRange.contains(speed) else {
-                timingIsValid = false; message.stringValue = "再生速度を0.1〜16倍で入力してください。"; return
-            }
-            clip.end = clip.start + (clip.end - clip.start) * clip.content.speed / speed
-            clip.content = .video(sourceIn: value, speed: speed)
+            if clip.content.isVideo {
+                guard let speed = Double(playbackSpeed.stringValue), speed.isFinite, VisualClip.playbackSpeedRange.contains(speed) else {
+                    timingIsValid = false; message.stringValue = "再生速度を0.1〜16倍で入力してください。"; return
+                }
+                clip.end = clip.start + (clip.end - clip.start) * clip.content.speed / speed
+                clip.content = .video(sourceIn: value, speed: speed)
+            } else { clip.content.setSourceIn(value) }
         }
         do {
             let value = try track.updating(clip, slot: slot.indexOfSelectedItem + 1, duration: duration)
@@ -443,6 +461,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             commit(value, selectedID: clip.id, refreshEditor: false)
             effectsEditor.load(clip, editable: true)
         } catch { timingIsValid = false; report(error) }
+    }
+
+    @objc private func changeSpine() {
+        guard available, !processing, !refreshing, var clip = track.clip(selectedID), var playback = clip.content.spinePlayback,
+              let animation = spineAnimation.titleOfSelectedItem, let slot = track.slot(of: clip.id) else { return }
+        onBeginEdit?()
+        if playback.animationName != animation { playback.animationName = animation; playback.sourceIn = 0 }
+        playback.loop = spineLoop.state == .on; clip.content = .spine(playback)
+        do { commit(try track.updating(clip, slot: slot, duration: duration), selectedID: clip.id) }
+        catch { report(error); refreshSelection() }
     }
 
     @objc private func removeClip() {
@@ -476,18 +504,31 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         if let url = Self.chooseFile() { completion(url) }
     }
     static func chooseFile() -> URL? {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg, .tiff, .mpeg4Movie, .quickTimeMovie, .movie]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.json, .png, .jpeg, .tiff, .mpeg4Movie, .quickTimeMovie, .movie]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url : nil
     }
     func importFile(_ url: URL, placement: (slot: Int, time: Double)? = nil, replacingAsset: UUID? = nil, replacingClip: UUID? = nil) {
         guard available, !processing, let projectURL else { return }
+        let atlasURL: URL?
+        if url.pathExtension.lowercased() == "json" {
+            let existing = track.assets.first { $0.reference.resolve(projectURL: projectURL).standardizedFileURL == url.standardizedFileURL }
+            let candidate = existing?.kind.spineDescriptor?.atlasReference.resolve(projectURL: projectURL) ?? url.deletingPathExtension().appendingPathExtension("atlas")
+            if FileManager.default.fileExists(atPath: candidate.path) { atlasURL = candidate }
+            else {
+                let panel = NSOpenPanel(); panel.title = "Spineのatlasファイルを選択"; panel.allowedContentTypes = [UTType(filenameExtension: "atlas") ?? .data]
+                panel.directoryURL = url.deletingLastPathComponent(); panel.allowsMultipleSelection = false
+                guard panel.runModal() == .OK, let selected = panel.url else { return }
+                atlasURL = selected
+            }
+        } else { atlasURL = nil }
         let token = generation
         onBeginEdit?(); processing = true; onProcessing?(true); refreshControls(); manager?.setProcessing(true)
         importTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == token { processing = false; onProcessing?(false); refreshControls(); manager?.setProcessing(false) } }
             do {
-                let inspected = try await store.inspect(url)
+                await store.invalidate()
+                let inspected = try await store.inspect(url, atlasURL: atlasURL)
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 var value = track
@@ -499,7 +540,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                         let result = try value.adding(assetID: assetID, at: placement.time, slot: placement.slot, duration: duration, grid: snapGrid)
                         value = result.track; selection = result.clip.id
                     } else if let replacingClip, var clip = value.clip(replacingClip) {
-                        guard (clip.content.sourceIn != nil) == (inspected.kind.videoDuration != nil) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
+                        guard track.asset(clip.assetID)?.kind.sameType(as: inspected.kind) == true, inspected.kind.accepts(clip.content) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
                         clip.assetID = assetID; value = try value.updating(clip, slot: value.slot(of: replacingClip)!, duration: duration)
                     } else if replacingClip != nil { throw StudioError.message("置き換える配置が見つかりません。") }
                 }
@@ -522,10 +563,11 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         Task { [weak self] in
             guard let self else { return }
             for asset in assets {
-                let inspected = try? await store.inspect(asset.reference.resolve(projectURL: projectURL), maximumSize: 160)
+                let inspected = try? await store.inspect(asset.reference.resolve(projectURL: projectURL), maximumSize: 160, atlasURL: asset.kind.spineDescriptor?.atlasReference.resolve(projectURL: projectURL))
                 let compatible = inspected.map { info in
-                    (info.kind.videoDuration != nil) == (asset.kind.videoDuration != nil)
+                    info.kind.sameType(as: asset.kind)
                         && self.track.uses(asset.id).allSatisfy { clip in
+                            guard info.kind.accepts(clip.content) else { return false }
                             guard clip.content.sourceIn != nil, let length = info.kind.videoDuration else { return true }
                             return clip.sourceEnd <= length + 1e-9
                         }
@@ -545,6 +587,10 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         let controller = VisualAssetManager(editor: self)
         manager = controller; refreshControls()
         window.beginSheet(controller.window!) { [weak self] _ in self?.manager = nil; self?.refreshControls() }
+    }
+    func reloadAsset(_ id: UUID) {
+        guard let asset = track.asset(id), let projectURL else { return }
+        importFile(asset.reference.resolve(projectURL: projectURL), replacingAsset: id)
     }
     func deleteAsset(_ id: UUID, includingPlacements: Bool) {
         do { commit(try track.removingAsset(id: id, includingPlacements: includingPlacements), selectedID: selectedID); manager?.reload() }

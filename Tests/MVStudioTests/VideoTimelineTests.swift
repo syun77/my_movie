@@ -33,7 +33,7 @@ final class VideoTimelineTests: XCTestCase {
         let file = ProjectFile(audioURL: project.deletingPathExtension(), visuals: moved, settings: SceneSettings(), projectURL: project)
         let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(file))
         try decoded.validate()
-        XCTAssertEqual(decoded.version, 7); XCTAssertEqual(decoded.visuals, moved)
+        XCTAssertEqual(decoded.version, ProjectFile.currentVersion); XCTAssertEqual(decoded.visuals, moved)
         let history = EditHistory()
         history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: track, settings: SceneSettings()))
         history.record(EditSnapshot(lyrics: LyricsTrack(), visuals: moved, settings: SceneSettings()))
@@ -65,7 +65,7 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(slow.sourceTime(at: 14), 4)
         XCTAssertEqual(try JSONDecoder().decode(VisualTrack.self, from: JSONEncoder().encode(slowTrack)), slowTrack)
         let legacy = Data(#"{"video":{"sourceIn":2}}"#.utf8)
-        XCTAssertEqual(try JSONDecoder().decode(VisualContent.self, from: legacy), .video(sourceIn: 2, speed: 1))
+        XCTAssertThrowsError(try JSONDecoder().decode(VisualContent.self, from: legacy))
         let history = EditHistory()
         history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: track, settings: SceneSettings()))
         history.record(EditSnapshot(lyrics: LyricsTrack(), visuals: slowTrack, settings: SceneSettings()))
@@ -86,12 +86,12 @@ final class VideoTimelineTests: XCTestCase {
         let provider = VideoFrameProvider()
         for (time, pts) in [(10.2, 0.35), (10.5, 1.1), (10.01, 0.1)] {
             let layers = try await provider.layers(track: track, projectURL: project, time: time)
-            XCTAssertEqual(try XCTUnwrap(layers.first?.frame.presentationTime).seconds, pts, accuracy: 0.001)
+            XCTAssertEqual(try XCTUnwrap(layers.first?.frame?.presentationTime).seconds, pts, accuracy: 0.001)
         }
         clip.content = .video(sourceIn: 0.1, speed: 0.5)
         track.layers[0].clips = [clip]
         let layers = try await provider.layers(track: track, projectURL: project, time: 10.6)
-        XCTAssertEqual(try XCTUnwrap(layers.first?.frame.presentationTime).seconds, 0.35, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(layers.first?.frame?.presentationTime).seconds, 0.35, accuracy: 0.001)
     }
 
     func testReaderSelectsPTSForVFRSeeksAndIndependentPlacements() async throws {
@@ -116,9 +116,9 @@ final class VideoTimelineTests: XCTestCase {
         for (time, pts) in [(10.36, 0.35), (10.05, 0.0), (10.85, 0.8), (10.2, 0.1)] {
             let layers = try await provider.layers(track: track, projectURL: project, time: time)
             XCTAssertEqual(layers.count, 2)
-            XCTAssertEqual(layers[0].frame.width, 48); XCTAssertEqual(layers[0].frame.height, 64)
-            XCTAssertEqual(try XCTUnwrap(layers[0].frame.presentationTime).seconds, pts, accuracy: 1e-6)
-            if time == 10.36 { XCTAssertEqual(try XCTUnwrap(layers[1].frame.presentationTime).seconds, 0.35, accuracy: 1e-6) }
+            XCTAssertEqual(layers[0].frame?.width, 48); XCTAssertEqual(layers[0].frame?.height, 64)
+            XCTAssertEqual(try XCTUnwrap(layers[0].frame?.presentationTime).seconds, pts, accuracy: 1e-6)
+            if time == 10.36 { XCTAssertEqual(try XCTUnwrap(layers[1].frame?.presentationTime).seconds, 0.35, accuracy: 1e-6) }
             let commands = try renderer.encode(visuals: [layers[0]], features: nil, settings: SceneSettings(spectrum: false),
                 lyrics: LyricsTrack(), time: time, target: target, video: false)
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -134,7 +134,7 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertGreaterThan(renderedRed[2], renderedRed[0] + 20)
         first.content = .video(sourceIn: 0.5); track.layers[0].clips = [first]
         let layers = try await provider.layers(track: track, projectURL: project, time: 10.4)
-        XCTAssertEqual(try XCTUnwrap(layers[0].frame.presentationTime).seconds, 0.8, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(layers[0].frame?.presentationTime).seconds, 0.8, accuracy: 1e-6)
         let inactive = try await provider.layers(track: track, projectURL: project, time: 11)
         XCTAssertTrue(inactive.isEmpty)
         await provider.invalidate()
@@ -229,9 +229,9 @@ final class VideoTimelineTests: XCTestCase {
         try storage.save(ProjectFile(audioURL: audio, visuals: track, settings: SceneSettings(spectrum: false), projectURL: projectURL), to: projectURL)
         let referenceProvider = VideoFrameProvider()
         let referenceEnd = try await referenceProvider.layers(track: track, projectURL: projectURL, time: 0.85)
-        let expectedEnd = try redValue(referenceEnd[0].frame)
+        let expectedEnd = try redValue(try XCTUnwrap(referenceEnd[0].frame))
         let referenceStart = try await referenceProvider.layers(track: track, projectURL: projectURL, time: 0.05)
-        let expectedStart = try redValue(referenceStart[0].frame)
+        let expectedStart = try redValue(try XCTUnwrap(referenceStart[0].frame))
         let delegate = AppDelegate(storage: storage)
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification, object: app))
         defer {
@@ -259,20 +259,20 @@ final class VideoTimelineTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.renderedTime, 0.85)
-        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first).frame), expectedEnd, accuracy: 6)
+        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first?.frame)), expectedEnd, accuracy: 6)
         delegate.placementEditor.lyrics.onSeek?(0.05)
         for _ in 0..<500 {
             if preview.renderedTime == 0.05, !preview.visuals.isEmpty { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first).frame), expectedStart, accuracy: 6)
+        XCTAssertEqual(try redValue(try XCTUnwrap(preview.visuals.first?.frame)), expectedStart, accuracy: 6)
         for time in [0.9, 0.1, 1.2, 0.25, 0.4] { delegate.placementEditor.lyrics.onSeek?(time) }
         for _ in 0..<500 {
             if preview.renderedTime == 0.4, !preview.visuals.isEmpty { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.renderedTime, 0.4)
-        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.35, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame?.presentationTime).seconds, 0.35, accuracy: 1e-6)
         delegate.placementEditor.restoreTab(.visuals)
         delegate.window.contentView?.layoutSubtreeIfNeeded()
         let visuals = delegate.placementEditor.visuals
@@ -286,7 +286,7 @@ final class VideoTimelineTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.visuals.first?.clip.content.speed, 0.5)
-        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame?.presentationTime).seconds, 0.1, accuracy: 1e-6)
         speed.frame.size = NSSize(width: 100, height: 26)
         let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown,
             location: speed.convert(NSPoint(x: 50, y: 13), to: nil), modifierFlags: [], timestamp: 0,
@@ -299,14 +299,14 @@ final class VideoTimelineTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.visuals.first?.clip.content.speed, 1)
-        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.35, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame?.presentationTime).seconds, 0.35, accuracy: 1e-6)
         delegate.undoEdit()
         for _ in 0..<500 {
             if preview.visuals.first?.clip.content.speed == 0.5 { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(preview.visuals.first?.clip.content.speed, 0.5)
-        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame?.presentationTime).seconds, 0.1, accuracy: 1e-6)
         delegate.perform(NSSelectorFromString("togglePlay"))
         try await Task.sleep(for: .milliseconds(150))
         let quarter = menu.items[0]
@@ -336,7 +336,7 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(saved.visuals.clip(clipID)?.content.speed, 2)
         XCTAssertEqual(saved.visuals.clip(clipID)?.end, 0.75)
 
-        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame.presentationTime).seconds, 0.8, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(preview.visuals.first?.frame?.presentationTime).seconds, 0.8, accuracy: 1e-6)
         func findExport(_ view: NSView) -> NSButton? {
             if let button = view as? NSButton, button.title == "MP4を書き出す" { return button }
             return view.subviews.lazy.compactMap { findExport($0) }.first
@@ -368,7 +368,7 @@ final class VideoTimelineTests: XCTestCase {
             let layers = try await provider.layers(track: track, projectURL: project, time: Double(frame) / 30)
             samples.append(Date().timeIntervalSince(start))
             XCTAssertEqual(layers.count, 3)
-            XCTAssertEqual(layers[0].frame.width, 1920)
+            XCTAssertEqual(layers[0].frame?.width, 1920)
         }
         let ordered = samples.dropFirst().sorted()
         print("VIDEO_3x1080_DECODE median_ms=\(ordered[ordered.count / 2] * 1000) p95_ms=\(ordered[Int(Double(ordered.count - 1) * 0.95)] * 1000)")
