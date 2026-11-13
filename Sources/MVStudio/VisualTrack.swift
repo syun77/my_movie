@@ -22,7 +22,7 @@ enum VisualAssetKind: Codable, Sendable, Equatable {
         switch (self, content) {
         case (.still, .still): return true
         case let (.video(duration), .video(sourceIn, speed)): return sourceIn >= 0 && speed > 0 && duration > 0
-        case let (.spine(descriptor), .spine(playback)): return playback.isValid && descriptor.animations.contains { $0.name == playback.animationName }
+        case let (.spine(descriptor), .spine(playback)): return playback.isValid && playback.names.isSubset(of: Set(descriptor.animations.map(\.name)))
         default: return false
         }
     }
@@ -123,6 +123,10 @@ struct VisualTrack: Codable, Sendable, Equatable {
                 default: throw StudioError.message("素材とクリップの種類が一致しません。")
                 }
                 guard clip.effects?.isValid != false else { throw StudioError.message("素材クリップの追加演出の設定が不正です。") }
+                if let playback = clip.content.spinePlayback {
+                    try playback.validate()
+                    for id in playback.keyIDs { guard ids.insert(id).inserted else { throw StudioError.message("制御点のIDが重複しています。") } }
+                }
                 try clip.validateAnimation(ids: &ids)
                 previousEnd = clip.end
             }

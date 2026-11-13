@@ -38,6 +38,11 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let speedRow = NSStackView()
     private let sourceRow = NSStackView()
     private let spineRow = NSStackView()
+    private let spineLabel = NSTextField(labelWithString: "アニメーション")
+    private let spineAutomation = NSButton(title: "オートメーションを作成", target: nil, action: nil)
+    private let spineBlendRow = NSStackView()
+    private let spineMaximum = NSPopUpButton()
+    private let spineWeight = DragValueField(frame: .zero)
     private let spineAnimation = NSPopUpButton()
     private let spineLoop = NSButton(checkboxWithTitle: "ループ", target: nil, action: nil)
     private let slot = NSPopUpButton()
@@ -136,8 +141,22 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         spineLoop.identifier = NSUserInterfaceItemIdentifier("visual.spine.loop")
         spineAnimation.target = self; spineAnimation.action = #selector(changeSpine)
         spineLoop.target = self; spineLoop.action = #selector(changeSpine)
-        spineRow.addArrangedSubview(NSTextField(labelWithString: "アニメーション"))
-        spineRow.addArrangedSubview(spineAnimation); spineRow.addArrangedSubview(spineLoop)
+        spineAutomation.identifier = NSUserInterfaceItemIdentifier("visual.spine.automation")
+        spineAutomation.target = self; spineAutomation.action = #selector(createSpineAutomation)
+        spineRow.addArrangedSubview(spineLabel)
+        spineRow.addArrangedSubview(spineAnimation); spineRow.addArrangedSubview(spineLoop); spineRow.addArrangedSubview(spineAutomation)
+        spineMaximum.identifier = NSUserInterfaceItemIdentifier("visual.spine.maximum")
+        spineMaximum.target = self; spineMaximum.action = #selector(changeSpine)
+        spineWeight.identifier = NSUserInterfaceItemIdentifier("visual.spine.weight")
+        spineWeight.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        spineWeight.knobRange = 0...100; spineWeight.knobInitialValue = 0
+        spineWeight.delegate = self; spineWeight.target = self; spineWeight.action = #selector(commitSpineWeight)
+        spineWeight.bindNumber(current: { [weak self] in
+            guard case let .blend(value) = self?.track.clip(self?.selectedID)?.content.spinePlayback?.mode else { return nil }
+            return value.baseWeight * 100
+        }, initial: { 0 }, normalize: { min(100, max(0, $0)) }, preview: { [weak self] in self?.setSpineWeight($0, preview: true) }, commit: { [weak self] in self?.setSpineWeight($0, preview: false) })
+        for child in [NSTextField(labelWithString: "B（100%）"), spineMaximum, NSTextField(labelWithString: "基準%"), spineWeight] { spineBlendRow.addArrangedSubview(child) }
+        for popup in [spineAnimation, spineMaximum] { popup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
@@ -179,7 +198,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, spineBlendRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         musicEditor.onCommit = { [weak self] parameter, modulation in self?.setMusic(parameter, modulation: modulation, preview: false) }
         musicEditor.onPreview = { [weak self] parameter, modulation in
             guard let self else { return }
@@ -201,12 +220,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, slot, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, spineAutomation, spineMaximum, spineWeight, slot, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
     private func row(_ views: [NSView]) -> NSStackView { let row = NSStackView(views: views); row.spacing = 10; return row }
     private func connectTimeline() {
+        timeline?.onSpineLaneAction = { [weak self] in self?.editSpineLane($0) }
         timeline?.onImageSelect = { [weak self] id, slot in self?.select(id, slot: slot) }
         timeline?.onImagePreview = { [weak self] value in self?.onPreview?(value) }
         timeline?.onImageCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
@@ -264,6 +284,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         speedRow.isHidden = track.clip(selectedID)?.content.isVideo != true
         playbackSpeed.isEnabled = sourceIn.isEnabled && !speedRow.isHidden
         spineRow.isHidden = track.clip(selectedID)?.content.spinePlayback == nil
+        if case .blend = track.clip(selectedID)?.content.spinePlayback?.mode { spineBlendRow.isHidden = false }
+        else { spineBlendRow.isHidden = true }
         musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
     }
     private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
@@ -316,6 +338,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                 spineAnimation.addItems(withTitles: descriptor.animations.map(\.name))
                 spineAnimation.selectItem(withTitle: playback.animationName)
                 spineLoop.state = playback.loop ? .on : .off
+                spineAutomation.title = playback.hasLane ? "レーンを表示" : "オートメーションを作成"
+                spineLabel.stringValue = playback.hasLane ? "基準" : "アニメーション"
+                spineMaximum.removeAllItems(); spineMaximum.addItems(withTitles: descriptor.animations.map(\.name))
+                if case let .blend(blend) = playback.mode {
+                    spineLabel.stringValue = "A（0%）"; spineMaximum.selectItem(withTitle: blend.maximumAnimation)
+                    spineWeight.doubleValue = blend.baseWeight * 100
+                }
             }
             slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
         } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画・Spineを配置してください" }
@@ -361,6 +390,10 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if let field = obj.object as? NSTextField, field === spineWeight {
+            if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
+            commitSpineWeight(); return
+        }
         guard let field = obj.object as? NSTextField else { return }
         if let parameter = valueFields.first(where: { $0.value === field })?.key {
             drafts[parameter] = field.stringValue
@@ -467,10 +500,96 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         guard available, !processing, !refreshing, var clip = track.clip(selectedID), var playback = clip.content.spinePlayback,
               let animation = spineAnimation.titleOfSelectedItem, let slot = track.slot(of: clip.id) else { return }
         onBeginEdit?()
-        if playback.animationName != animation { playback.animationName = animation; playback.sourceIn = 0 }
+        if case var .blend(blend) = playback.mode {
+            guard let maximum = spineMaximum.titleOfSelectedItem, maximum != animation else { report(StudioError.message("異なる2つのアニメーションを選んでください。")); refreshSelection(); return }
+            blend.minimumAnimation = animation; blend.maximumAnimation = maximum; playback.mode = .blend(blend)
+        } else if playback.animationName != animation {
+            if case .single = playback.mode { playback.sourceIn = 0 }
+            playback.animationName = animation
+        }
         playback.loop = spineLoop.state == .on; clip.content = .spine(playback)
         do { commit(try track.updating(clip, slot: slot, duration: duration), selectedID: clip.id) }
         catch { report(error); refreshSelection() }
+    }
+
+    @objc private func createSpineAutomation() {
+        guard var playback = track.clip(selectedID)?.content.spinePlayback, let slot = track.slot(of: selectedID ?? UUID()) else { return }
+        if !playback.hasLane {
+            if case var .blend(blend) = playback.mode { blend.automated = true; playback.mode = .blend(blend) }
+            else { playback.createSelection() }
+            commitSpinePlayback(playback)
+        }
+        timeline?.revealAutomation(in: slot)
+    }
+
+    private func commitSpinePlayback(_ playback: SpinePlayback, preview: Bool = false, editingWeight: Bool = false) {
+        guard var clip = track.clip(selectedID), let slot = track.slot(of: clip.id) else { return }
+        clip.content = .spine(playback)
+        do {
+            let value = try track.updating(clip, slot: slot, duration: duration)
+            if preview { onPreview?(value) }
+            else {
+                if !editingWeight { onBeginEdit?() }
+                commit(value, selectedID: clip.id, refreshEditor: !editingWeight)
+            }
+        } catch { report(error) }
+    }
+
+    private func setSpineWeight(_ percent: Double?, preview: Bool) {
+        guard let percent else { onPreview?(track); return }
+        guard percent.isFinite, (0...100).contains(percent), var playback = track.clip(selectedID)?.content.spinePlayback,
+              case var .blend(blend) = playback.mode else { return }
+        blend.baseWeight = percent / 100; playback.mode = .blend(blend)
+        commitSpinePlayback(playback, preview: preview, editingWeight: spineWeight.currentEditor() != nil)
+    }
+    @objc private func commitSpineWeight() {
+        guard let value = Double(spineWeight.stringValue), value.isFinite, (0...100).contains(value) else {
+            report(StudioError.message("ブレンドの基準を0〜100%で入力してください。")); return
+        }
+        setSpineWeight(value, preview: false)
+    }
+
+    func editSpineLane(_ action: SpineLaneAction) {
+        guard available, !processing, var playback = track.clip(selectedID)?.content.spinePlayback,
+              let clip = track.clip(selectedID), let descriptor = track.asset(clip.assetID)?.kind.spineDescriptor else { return }
+        let local = currentTime - clip.start
+        switch action {
+        case .remove: playback.removeLane(at: local)
+        case .selection:
+            if case .selection = playback.mode { return }
+            if case let .blend(blend) = playback.mode {
+                let alert = NSAlert(); alert.messageText = "ブレンドを削除してアニメーション切替にしますか？"
+                alert.informativeText = "中間の混合率と制御点を削除します。Undoで戻せます。"
+                let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 28))
+                popup.addItems(withTitles: [blend.minimumAnimation, blend.maximumAnimation]); popup.selectItem(at: blend.weight(at: local) < 0.5 ? 0 : 1)
+                alert.accessoryView = popup; alert.addButton(withTitle: "切替に変更"); alert.addButton(withTitle: "キャンセル")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                playback.mode = .selection(base: popup.titleOfSelectedItem!, keys: [])
+            } else { playback.createSelection() }
+        case .blend:
+            let names = descriptor.animations.map(\.name)
+            guard names.count >= 2 else { report(StudioError.message("ブレンドには2つ以上のアニメーションが必要です。")); return }
+            let alert = NSAlert(); alert.messageText = "2つのアニメーションでブレンド"
+            let a = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 28)), b = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 28))
+            a.addItems(withTitles: names); b.addItems(withTitles: names)
+            let request = playback.resolved(at: local)
+            a.selectItem(withTitle: request.animation)
+            b.selectItem(withTitle: request.secondAnimation ?? names.first(where: { $0 != request.animation })!)
+            let stack = NSStackView(views: [NSTextField(labelWithString: "A（最小・0%）"), a, NSTextField(labelWithString: "B（最大・100%）"), b]); stack.orientation = .vertical
+            stack.frame = NSRect(x: 0, y: 0, width: 320, height: 110); stack.alignment = .leading
+            alert.accessoryView = stack; alert.addButton(withTitle: "ブレンドに変更"); alert.addButton(withTitle: "キャンセル")
+            guard alert.runModal() == .alertFirstButtonReturn, let minimum = a.titleOfSelectedItem, let maximum = b.titleOfSelectedItem else { return }
+            do { try playback.createBlend(minimum: minimum, maximum: maximum) }
+            catch {
+                guard minimum != maximum else { report(error); return }
+                let confirm = NSAlert(); confirm.messageText = "既存キーを削除してブレンドを作成しますか？"; confirm.informativeText = error.localizedDescription
+                confirm.addButton(withTitle: "既存キーを削除して作成"); confirm.addButton(withTitle: "キャンセル")
+                guard confirm.runModal() == .alertFirstButtonReturn else { return }
+                do { try playback.createBlend(minimum: minimum, maximum: maximum, discardingKeys: true) } catch { report(error); return }
+            }
+        }
+        commitSpinePlayback(playback)
+        if playback.hasLane, let slot = track.slot(of: clip.id) { timeline?.revealAutomation(in: slot) }
     }
 
     @objc private func removeClip() {

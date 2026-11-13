@@ -65,16 +65,40 @@ extern "C" int32_t mv_spine_animation_count(MVSpine *v) { return int32_t(v->data
 extern "C" const char *mv_spine_animation_name(MVSpine *v, int32_t i) { return v->data->getAnimations()[i]->getName().buffer(); }
 extern "C" double mv_spine_animation_duration(MVSpine *v, int32_t i) { return v->data->getAnimations()[i]->getDuration(); }
 extern "C" void mv_spine_bounds(MVSpine *v, float *b) { std::memcpy(b, v->bounds, sizeof(v->bounds)); }
-extern "C" int32_t mv_spine_evaluate(MVSpine *v, const char *name, double time, int32_t loop, char *error, int32_t capacity) {
+extern "C" int32_t mv_spine_evaluate(MVSpine *v, const char *name, const char *secondName, double weight, double time, int32_t loop, char *error, int32_t capacity) {
     std::lock_guard<std::mutex> lock(runtimeMutex);
     try {
         if (!std::isfinite(time) || time < 0 || time > 1e12) throw std::runtime_error("Invalid Spine time");
-        auto animation = v->data->findAnimation(name);
-        if (!animation) throw std::runtime_error("Animation not found");
-        double duration = animation->getDuration();
-        double poseTime = duration > 0 ? (loop ? std::fmod(time,duration) : std::min(time,duration)) : 0;
-        v->skeleton->setupPose();
-        animation->apply(*v->skeleton, -1, float(poseTime), false, nullptr, 1, spine::MixFrom_Setup, false, false, false);
+        auto apply = [&](const char *animationName) {
+            auto animation = v->data->findAnimation(animationName);
+            if (!animation) throw std::runtime_error("Animation not found");
+            double duration = animation->getDuration();
+            double poseTime = duration > 0 ? (loop ? std::fmod(time,duration) : std::min(time,duration)) : 0;
+            v->skeleton->setupPose();
+            animation->apply(*v->skeleton, -1, float(poseTime), false, nullptr, 1, spine::MixFrom_Setup, false, false, false);
+        };
+        if (!std::isfinite(weight) || weight < 0 || weight > 1) throw std::runtime_error("Invalid blend weight");
+        bool blend = secondName && secondName[0];
+        apply(blend && weight == 1 ? secondName : name);
+        if (blend && weight > 0 && weight < 1) {
+            struct Local { float x, y, rotation; };
+            std::vector<Local> first;
+            auto &bones = v->skeleton->getBones();
+            first.reserve(bones.size());
+            for (unsigned i=0;i<bones.size();i++) {
+                auto &pose = bones[i]->getPose();
+                first.push_back({pose.getX(), pose.getY(), pose.getRotation()});
+            }
+            apply(secondName);
+            for (unsigned i=0;i<bones.size();i++) {
+                auto &pose = bones[i]->getPose(); auto a = first[i];
+                double delta = std::fmod(double(pose.getRotation()) - a.rotation, 360.0);
+                if (delta <= -180) delta += 360;
+                if (delta > 180) delta -= 360;
+                pose.setPosition(float(a.x + (pose.getX()-a.x)*weight), float(a.y + (pose.getY()-a.y)*weight));
+                pose.setRotation(float(a.rotation + delta*weight));
+            }
+        }
         v->skeleton->updateWorldTransform(spine::Physics_None);
         v->vertices.clear(); v->indices.clear(); v->commands.clear();
         for (auto c = v->renderer.render(*v->skeleton); c; c = c->next) {

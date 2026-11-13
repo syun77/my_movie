@@ -1,7 +1,7 @@
 import Foundation
 
 struct ProjectFile: Codable {
-    static let currentVersion = 8
+    static let currentVersion = 9
 
     private(set) var version: Int
     let audio: AssetReference
@@ -30,7 +30,8 @@ struct ProjectFile: Codable {
         try visuals.validate()
         let imageClips = visuals.clips
         let keyIDs = imageClips.flatMap { clip in clip.curves.flatMap { $0.keys.map(\.id) } }
-        let ids = visualAssets.map(\.id) + visualLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
+        let spineIDs = imageClips.flatMap { $0.content.spinePlayback?.keyIDs ?? [] }
+        let ids = spineIDs + visualAssets.map(\.id) + visualLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
         guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
               settings.beatOffset.isFinite, settings.beatOffset >= 0, settings.spectrumStyle.isValid,

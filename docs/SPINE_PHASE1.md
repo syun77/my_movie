@@ -155,3 +155,5 @@ SpineAsset.swiftが保存型/packet、SpinePoseProvider.swiftが依存ロード�
 arm64の開発ビルドで提供モデル3段・1080pの9時刻を測定し、CPU評価最大約16ms、GPU最大約6msだった。連続30fpsや他機種の性能保証を示す値ではない。物理ON・16倍・全blendのG4は未実施。最低対応macOS 14を指定しているが、実行検証は現在の開発Macのみ。
 
 最終回帰検証は全90テスト成功（SpineTests 6件を含む）。GPU・AppKit・メディアサービスへアクセスできる環境で実施した。
+
+アニメーションの切替/ポーズブレンドのオートメーションは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) として追加実装済み。現在の保存形式はversion 9で、SpinePlaybackは再生モード・専用キーを含む。上記の初期単一再生はsingleモードとして維持する。

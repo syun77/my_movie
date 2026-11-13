@@ -18,7 +18,7 @@ final class TimelineView: NSView {
     var missingAssets = Set<UUID>() { didSet { needsDisplay = true } }
     var selectedImageID: UUID? {
         didSet {
-            if oldValue != selectedImageID { selectGraph(nil) }
+            if oldValue != selectedImageID { selectGraph(nil); spineLane.clearSelection() }
             updateGraphLayout()
         }
     }
@@ -32,6 +32,8 @@ final class TimelineView: NSView {
     var keySnapEnabled = true
     var heights = TimelineHeights() { didSet { updateRowLayout() } }
     var onHeightCommit: (() -> Void)?
+    private let spineLane = SpineTimelineLane()
+    var onSpineLaneAction: ((SpineLaneAction) -> Void)?
     private var imageScroll = 0.0
     private var lyricScroll = 0.0
     private var rowScroll: Double {
@@ -58,6 +60,7 @@ final class TimelineView: NSView {
     }
     private var keyDrag: KeyDrag?
     private var hoverPoint: NSPoint?
+    private var defaultToolTip: String?
     private let graphPadding = 4.0
     private let keyHitRadius = 11.0
     private let keyMarkerRadius = 4.0
@@ -149,7 +152,7 @@ final class TimelineView: NSView {
                                            width: bounds.width - Self.gutter, manualOrigin: manualOrigin)
     }
     private var frozenGeometry: TimelineGeometry? {
-        drag?.geometry ?? keyDrag?.geometry ?? imageDrag?.geometry ?? dropGeometry ?? scrubGeometry
+        spineLane.frozenGeometry ?? drag?.geometry ?? keyDrag?.geometry ?? imageDrag?.geometry ?? dropGeometry ?? scrubGeometry
     }
 
     func followPlayhead() { manualOrigin = nil }
@@ -184,8 +187,16 @@ final class TimelineView: NSView {
         addTrackingArea(NSTrackingArea(rect: .zero,
                                        options: [.inVisibleRect, .activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved],
                                        owner: self, userInfo: nil))
+        spineLane.onCommit = { [weak self] in self?.onImageCommit?($0, $1) }
+        spineLane.onPreview = { [weak self] in self?.onImagePreview?($0) }
+        spineLane.onBegin = { [weak self] in self?.onBeginEdit?() }
+        spineLane.onSelect = { [weak self] in self?.selectGraph(nil) }
+        spineLane.onError = { [weak self] in self?.onError?($0) }
+        spineLane.onAction = { [weak self] in self?.onSpineLaneAction?($0) }
+        spineLane.onDisplay = { [weak self] in self?.needsDisplay = true }
         identifier = NSUserInterfaceItemIdentifier("placement.timeline")
         toolTip = "Shift＋ホイールで横スクロール、⌘＋ホイールで拡大・縮小、Option＋ホイールで再生位置を移動。本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。行の下の境界線で高さを調整。空白や目盛りでシーク。Escで取り消し。"
+        defaultToolTip = toolTip
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("歌詞タイムライン")
@@ -330,12 +341,16 @@ final class TimelineView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         hoverPoint = convert(event.locationInWindow, from: nil)
+        spineLane.mouseMoved(hoverPoint)
+        toolTip = hoverPoint.flatMap { spineLane.tooltip(at: $0) } ?? defaultToolTip
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         if hoverPoint != nil {
             hoverPoint = nil
+            spineLane.mouseMoved(nil)
+            toolTip = defaultToolTip
             needsDisplay = true
         }
     }
@@ -412,6 +427,7 @@ final class TimelineView: NSView {
     }
     private func seek(at x: Double, geometry: TimelineGeometry) { onSeek?(max(0, min(duration, geometry.time(at: x - Self.gutter)))) }
     func cancelDrag() {
+        spineLane.cancel()
         if let resize = rowResize {
             rowResize = nil
             if case .lyrics = resize.row { lyricScroll = resize.initialScroll }
@@ -430,6 +446,8 @@ final class TimelineView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard canEditClips else { return super.menu(for: event) }
         let point = convert(event.locationInWindow, from: nil)
+        configureSpineLane(displayed: visuals)
+        if visualMode, let menu = spineLane.menu(at: point) { return menu }
         if visualMode, onImageCommit != nil,
            let hit = graphKey(at: point, in: graphLanes(in: visuals)),
            window?.makeFirstResponder(self) != false {
@@ -533,6 +551,7 @@ final class TimelineView: NSView {
     private func selectVisualClip(_ id: UUID, slot: Int) {
         selectedSlot = slot
         selectedImageID = id
+        spineLane.clearSelection()
         if selectedKeyID != nil { selectGraph(selectedParameter) }
         onImageSelect?(id, slot)
     }
@@ -573,6 +592,7 @@ final class TimelineView: NSView {
     }
 
     private func removeSelectedKey() -> Bool {
+        if visualMode, spineClip(in: selectedSlot) != nil, spineLane.removeSelectedKey() { return true }
         guard visualMode, expandedLayerSlots.contains(selectedSlot), let parameter = selectedParameter,
               let id = selectedKeyID, let clip = visuals.clip(selectedImageID) else { return false }
         editGraphKey(KeyMenuTarget(clipID: clip.id, parameter: parameter, keyID: id), delete: true)
@@ -603,13 +623,41 @@ final class TimelineView: NSView {
         return layerParameters[slot] ?? []
     }
 
+    private func hasAutomation(in slot: Int) -> Bool {
+        layerParameters[slot]?.isEmpty == false || visuals.layers.first(where: { $0.slot == slot })?.clips.contains(where: { $0.content.spinePlayback?.hasLane == true }) == true
+    }
+    private func spineClip(in slot: Int) -> VisualClip? {
+        guard expandedLayerSlots.contains(slot), let id = selectedImageID, visuals.slot(of: id) == slot,
+              let clip = visuals.clip(selectedImageID), clip.content.spinePlayback?.hasLane == true else { return nil }
+        return clip
+    }
+    private func spineMinimumHeight(_ slot: Int) -> Double {
+        guard let clip = spineClip(in: slot), let descriptor = visuals.asset(clip.assetID)?.kind.spineDescriptor else { return 80 }
+        if case .selection = clip.content.spinePlayback?.mode { return max(80, Double(descriptor.animations.count) * 18 + 16) }
+        return 80
+    }
+    private func spineHeight(_ slot: Int) -> Double { spineClip(in: slot) == nil ? 0 : rowHeight(.spine(slot)) }
+    private func spineY(_ slot: Int) -> Double {
+        automationParameters(in: slot).reduce(rowY(slot) + rowHeight(.visual(slot))) { $0 + rowHeight(.automation(slot, $1)) }
+    }
+    private func configureSpineLane(displayed: VisualTrack) {
+        guard visualMode, let clip = displayed.clip(selectedImageID), let slot = displayed.slot(of: clip.id),
+              expandedLayerSlots.contains(slot), clip.content.spinePlayback?.hasLane == true,
+              let descriptor = displayed.asset(clip.assetID)?.kind.spineDescriptor else { spineLane.configure(nil); return }
+        spineLane.duration = duration
+        spineLane.configure(.init(track: displayed, clip: clip, descriptor: descriptor, slot: slot,
+                                  rect: CGRect(x: 0, y: spineY(slot), width: bounds.width, height: spineHeight(slot)),
+                                  viewport: graphViewport, geometry: geometry))
+    }
+
     private func rowHeight(_ row: TimelineHeights.Row) -> Double {
         if let resize = rowResize, resize.row == row { return resize.height }
+        if case let .spine(slot) = row { return max(spineMinimumHeight(slot), heights[row]) }
         return heights[row]
     }
 
     private func height(of slot: Int) -> Double {
-        automationParameters(in: slot).reduce(rowHeight(.visual(slot))) { $0 + rowHeight(.automation(slot, $1)) }
+        automationParameters(in: slot).reduce(rowHeight(.visual(slot)) + spineHeight(slot)) { $0 + rowHeight(.automation(slot, $1)) }
     }
 
     private var contentHeight: Double { (1...3).reduce(0) { $0 + height(of: $1) } }
@@ -623,7 +671,8 @@ final class TimelineView: NSView {
         guard visualMode else { return [RowBoundary(row: .lyrics, y: lyricBoundaryY)] }
         return (1...3).flatMap { slot -> [RowBoundary] in
             let image = RowBoundary(row: .visual(slot), y: rowY(slot) + rowHeight(.visual(slot)))
-            return [image] + automationParameters(in: slot).enumerated().map { index, parameter in
+            let spine = spineHeight(slot) > 0 ? [RowBoundary(row: .spine(slot), y: spineY(slot) + spineHeight(slot))] : []
+            return spine + [image] + automationParameters(in: slot).enumerated().map { index, parameter in
                 let row = TimelineHeights.Row.automation(slot, parameter)
                 return RowBoundary(row: row, y: graphY(slot: slot, index: index) - graphPadding + rowHeight(row))
             }
@@ -657,7 +706,9 @@ final class TimelineView: NSView {
     private func updateRowResize(with event: NSEvent) {
         guard var resize = rowResize else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let range = resize.row.range
+        let range: ClosedRange<Double>
+        if case let .spine(slot) = resize.row { range = spineMinimumHeight(slot)...resize.row.range.upperBound }
+        else { range = resize.row.range }
         resize.height = min(range.upperBound, max(range.lowerBound, resize.initialHeight + point.y - resize.initialY))
         rowResize = resize
         rowScroll = resize.initialScroll
@@ -666,6 +717,7 @@ final class TimelineView: NSView {
     }
 
     func selectGraph(_ parameter: ImageParameter?, key: UUID? = nil, reveal: Bool = false) {
+        if parameter != nil { spineLane.clearSelection() }
         selectedParameter = parameter
         selectedKeyID = key
         if reveal, let parameter, let slot = selectedImageID.flatMap({ visuals.slot(of: $0) }),
@@ -685,6 +737,9 @@ final class TimelineView: NSView {
 
     func revealAutomation(in slot: Int) {
         setAutomationExpanded(true, in: slot)
+        if spineHeight(slot) > 0 {
+            revealRows(from: spineY(slot), height: min(spineHeight(slot), max(1, rowsBottom - rowsTop)))
+        }
     }
 
     private func setAutomationExpanded(_ expanded: Bool, in slot: Int) {
@@ -838,7 +893,7 @@ final class TimelineView: NSView {
             let rowCenter = rowY(slot) + rowHeight(.visual(slot)) / 2
             label("画像\(slot)" + (slot == 3 ? " 前" : slot == 1 ? " 後" : ""),
                   rect: NSRect(x: 5, y: rowCenter - 8, width: 50, height: 16), color: .lightGray, size: 11)
-            if layerParameters[slot]?.isEmpty == false {
+            if hasAutomation(in: slot) {
                 let button = disclosureRect(for: slot)
                 label(expandedLayerSlots.contains(slot) ? "v" : ">",
                       rect: NSRect(x: button.minX + 6, y: button.midY - 7.5, width: 16, height: 15),
@@ -855,6 +910,8 @@ final class TimelineView: NSView {
                 }
             }
         }
+        configureSpineLane(displayed: displayed)
+        spineLane.draw()
         let lanes = graphLanes(in: displayed)
         NSBezierPath(rect: clipBounds).addClip()
         time = ceil(geometry.origin / interval) * interval
@@ -926,9 +983,11 @@ final class TimelineView: NSView {
     private func imageMouseDown(_ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let frozen = geometry
+        configureSpineLane(displayed: visuals)
+        if spineLane.mouseDown(point) { needsDisplay = true; return }
         if graphMouseDown(at: point, geometry: frozen) { return }
         if let slot = slot(at: point) {
-            if layerParameters[slot]?.isEmpty == false, disclosureRect(for: slot).contains(point) {
+            if hasAutomation(in: slot), disclosureRect(for: slot).contains(point) {
                 setAutomationExpanded(!expandedLayerSlots.contains(slot), in: slot)
                 return
             }
@@ -945,6 +1004,7 @@ final class TimelineView: NSView {
         onBeginEdit?(); scrubGeometry = frozen; seek(at: point.x, geometry: frozen)
     }
     private func imageMouseDragged(_ event: NSEvent) {
+        if spineLane.frozenGeometry != nil { spineLane.mouseDragged(convert(event.locationInWindow, from: nil), grid: keySnapEnabled ? snapGrid : nil, duration: duration); return }
         let point = convert(event.locationInWindow, from: nil)
         if keyDrag != nil { updateKeyDrag(to: point); return }
         if var drag = imageDrag {
@@ -969,6 +1029,7 @@ final class TimelineView: NSView {
         } else if let geometry = scrubGeometry { seek(at: point.x, geometry: geometry) }
     }
     private func imageMouseUp(_ event: NSEvent) {
+        if spineLane.mouseUp(convert(event.locationInWindow, from: nil), grid: keySnapEnabled ? snapGrid : nil, duration: duration) { needsDisplay = true; return }
         if keyDrag != nil {
             finishKeyDrag(at: convert(event.locationInWindow, from: nil))
             return

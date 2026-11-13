@@ -1,9 +1,26 @@
-# Spineアニメーション・オートメーション設計（作業中）
+# Spineアニメーション・オートメーション（完了）
 
-- 最終更新: 2026-11-14 JST。要件: 名前付き水平線へスナップ/常時ホールドの選択レーン、左欄右クリックで2アニメーションのブレンド、上下端に名前指定、既定シングル曲線の仕様を検討。今回は設計のみ。
+- 最終更新: 2026-11-14 JST。要件: 名前への縦スナップ/固定hold切替、左欄右クリックのA/Bブレンド、single既定。ユーザー確定: クリップ共通時計を継続し、切替で再開始しない。
+- 実装: NumericCurve共通補間、専用名キー/再生mode、Cローカルポーズ混合、SpineTimelineLane、右クリック/インスペクター、version9、履歴/トリム/コピー/出力へ接続。
+- 整理: 数値補間と種別別laneを分離、最短回転/未キー項目を明示。名前順へ依存しない保存、隠れたキーのDelete抑制、レーン表示位置と数値入力履歴を整理。新規ファイルの書式を統一。
+- 検証: 全97テスト成功（/tmp/my-movie-spine-automation-full-tests.log）。専用7件で共通時計・0/50/100%・角度・シーク・負時刻キー・保存/履歴/複製ID・lane操作・固定混合復帰を確認。MP4試験に切替とブレンドを組み込み全31PTS/画素比較成功。提供Spineモデルの既存試験も成功。
+- 表示確認: /tmp/my-movie-spine-selection-lane.png、/tmp/my-movie-spine-blend-lane.pngを目視確認。
+- 変更: NumericCurve/SpineAnimationAutomation/SpineTimelineLane/SpineAutomationTests/SpineTestFixtures新規、ImageAnimation/SpinePlayback/SpineBridge/Provider、TimelineView/Heights、VisualEditor/Track、保存/コピー、関連テスト・文書。前作業の変更を保持。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-spine-automation-release.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strict、Spineライセンス同梱一致、git diff --check・文書ローカルリンク検査成功。
+- 未対応: 物理ON、切替時の再開始、deform/制約等の混合。障害なし。
+- 実行中処理なし。実アプリの手動操作は未実施（UI操作/描画は統合テストで確認）。
+- 次: 最新アプリを再起動し、Spine選択→「オートメーションを作成」。左欄右クリックからブレンドを選ぶ。
+
+# Spineアニメーション・オートメーション設計（設計完了・未実装）
+
+- 最終更新: 2026-11-14 JST。要件: 名前付き水平線へスナップ/常時ホールドの選択レーン、左欄右クリックで2アニメーションのブレンド、上下端に名前指定、既定singleの仕様検討。今回は設計のみ。
 - 確認: 現行SpinePlayback/SpinePoseProvider、ImageCurve/補間、TimelineViewの共通左欄・右クリック、固定4.3ランタイムと公式資料を照合。
-- 方針: 離散選択と連続ブレンドを専用モデルで分離。共通時計、未キー項目、モード変換、複数clipの名前表示を補足する。
-- 次: 詳細仕様と未確定の提案を文書化し、関連設計への参照を整合。コード変更・実行中処理なし。
+- 完了: docs/SPINE_AUTOMATION.mdへレーン表示、離散名キー、連続混合率、時間、ポーズ混合、未キー項目、モード変換/固定ブレンド、保存version9案、履歴/トリム/素材置換/出力/受入条件を記録。
+- 判断: 提示UIは成立。必須の縦スナップと時間スナップを区別。同レイヤーの異素材は選択clipの名前を表示。共通時計継続、独立ポーズ混合、情報を失う変換時の扱いは追加提案として明示。
+- 整理・検証: 離散名をImageParameterの番号へ混ぜず、共通数値カーブの責務抽出と専用laneを提案。文書リンク/見出し/仕様整合とgit diff --checkを確認。文書のみでテスト・アプリ再生成なし。
+- 変更: 新規docs/SPINE_AUTOMATION.md、docs/SPINE_TIMELINE.md、README.md、AGENTS.md、PROGRESS.md。前作業のコード・文書変更を保持。
+- 未確定: 共通時計継続はユーザー未指定の提案。実装時にローカルposeの0/50/100%・角度・未キー項目を試作検証する。実行中処理なし。
+- 次: 仕様への意見を反映。実装依頼時は離散選択の型/評価/レーンから実装する。
 
 # Spine初期実装（完了）
 

@@ -6,39 +6,13 @@ import AVFoundation
 @testable import MVStudio
 
 final class SpineTests: XCTestCase {
-    private func fixture() throws -> (URL, URL, URL) {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("spine-tests-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let json = dir.appendingPathComponent("model.json"), atlas = dir.appendingPathComponent("separate.atlas")
-        let context = try XCTUnwrap(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 16,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
-        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
-        let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
-        try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("page.png"))
-        try "page.png\nsize:4,4\nfilter:Linear,Linear\npma:true\nwhite\nbounds:0,0,4,4\n".write(to: atlas, atomically: true, encoding: .utf8)
-        let root: [String: Any] = [
-            "skeleton": ["spine": "4.3.26", "width": 200, "height": 100],
-            "bones": [["name": "root"], ["name": "child", "parent": "root"]],
-            "slots": [["name": "clip", "bone": "child", "attachment": "clip"], ["name": "shape", "bone": "child", "attachment": "shape"], ["name": "after", "bone": "root", "attachment": "after"]],
-            "skins": [["name": "default", "attachments": [
-                "clip": ["clip": ["type": "clipping", "end": "shape", "vertexCount": 6, "vertices": [0,0,100,0,100,40,40,40,40,100,0,100]]],
-                "shape": ["shape": ["path": "white", "x": 50, "y": 50, "width": 100, "height": 100]],
-                "after": ["after": ["path": "white", "x": 150, "y": 50, "width": 100, "height": 100]]
-            ]]],
-            "animations": ["move": ["bones": ["child": ["translatex": [["value": 0], ["time": 1, "value": 10]]]]],
-                           "rotate": ["bones": ["child": ["rotate": [["value": 0], ["time": 1, "value": 90]]]]]]
-        ]
-        try JSONSerialization.data(withJSONObject: root, options: .sortedKeys).write(to: json)
-        return (dir, json, atlas)
-    }
-
     private func packet(_ layers: [VisualRenderLayer]) throws -> SpineDrawPacket {
         guard case let .spine(value) = try XCTUnwrap(layers.first).source else { throw StudioError.message("Missing Spine packet") }
         return value
     }
 
     func testConcaveClippingMotionSeekAndEndSlot() async throws {
-        let (dir, json, atlas) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (dir, json, atlas) = try SpineTestFixtures.make(); defer { try? FileManager.default.removeItem(at: dir) }
         let provider = SpinePoseProvider()
         let (descriptor, initial) = try await provider.inspect(skeleton: json, atlas: atlas)
         XCTAssertEqual(descriptor.exportVersion, "4.3.26")
@@ -74,7 +48,7 @@ final class SpineTests: XCTestCase {
     }
 
     func testPersistenceTrimAndClipboardReferences() async throws {
-        let (dir, json, atlas) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (dir, json, atlas) = try SpineTestFixtures.make(); defer { try? FileManager.default.removeItem(at: dir) }
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
@@ -85,7 +59,7 @@ final class SpineTests: XCTestCase {
         XCTAssertEqual(track.clips[0].content.sourceIn, 3.5)
         let file = ProjectFile(audioURL: dir.appendingPathComponent("audio.wav"), visuals: track, settings: SceneSettings(), projectURL: project)
         let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(file)); try decoded.validate()
-        XCTAssertEqual(decoded.version, 8); XCTAssertEqual(decoded.visuals, track)
+        XCTAssertEqual(decoded.version, ProjectFile.currentVersion); XCTAssertEqual(decoded.visuals, track)
         let absolute = track.assets[0].kind.rebased(from: project, to: URL(fileURLWithPath: "/"))
         XCTAssertFalse(try XCTUnwrap(absolute.spineDescriptor).atlasReference.relative)
         XCTAssertEqual(absolute.spineDescriptor?.atlasReference.path, atlas.path)
@@ -94,7 +68,7 @@ final class SpineTests: XCTestCase {
     }
 
     func testMissingDependenciesAndExportSnapshot() async throws {
-        let (dir, json, atlas) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (dir, json, atlas) = try SpineTestFixtures.make(); defer { try? FileManager.default.removeItem(at: dir) }
         let provider = SpinePoseProvider(); let (descriptor, _) = try await provider.inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
@@ -116,7 +90,7 @@ final class SpineTests: XCTestCase {
     }
 
     @MainActor func testInspectorAnimationLoopSourceAndHistory() async throws {
-        let (dir, json, atlas) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (dir, json, atlas) = try SpineTestFixtures.make(); defer { try? FileManager.default.removeItem(at: dir) }
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
@@ -150,7 +124,7 @@ final class SpineTests: XCTestCase {
     }
 
     func testExportSpineAndPreviewUseSameFrames() async throws {
-        let (dir, json, atlas) = try fixture(); defer { try? FileManager.default.removeItem(at: dir) }
+        let (dir, json, atlas) = try SpineTestFixtures.make(); defer { try? FileManager.default.removeItem(at: dir) }
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
         let audio = dir.appendingPathComponent("audio.wav"), output = dir.appendingPathComponent("result.mp4")
         let format = AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1)!
@@ -160,7 +134,14 @@ final class SpineTests: XCTestCase {
         do { let file = try AVAudioFile(forWriting: audio, settings: format.settings); try file.write(from: buffer) }
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
-        track.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1.025, content: .spine(SpinePlayback(animationName: "move")), audioModulations: [:])]
+        var blendPlayback = SpinePlayback(animationName: "move", sourceIn: 0.25)
+        blendPlayback.mode = .blend(SpineBlend(minimumAnimation: "move", maximumAnimation: "rotate", keys: [ImageKeyframe(time: 0, value: 0), ImageKeyframe(time: 1, value: 1)]))
+        track.layers[0].clips = [VisualClip(assetID: id, start: 0, end: 1.025, content: .spine(blendPlayback), audioModulations: [:])]
+        var selectionPlayback = SpinePlayback(animationName: "move", sourceIn: 0.25)
+        selectionPlayback.mode = .selection(base: "move", keys: [SpineAnimationKey(time: 0.5, animationName: "rotate")])
+        var upper = VisualClip(assetID: id, start: 0, end: 1.025, content: .spine(selectionPlayback), audioModulations: [:])
+        upper.fixedValues[.scale] = 50; upper.fixedValues[.x] = 240
+        track.layers[1].clips = [upper]
         let features = AudioFeatures(duration: 1.025, step: 0.1, frames: Array(repeating: Array(repeating: 0, count: 64), count: 12), transientEvents: [TransientBand(): []])
         var settings = SceneSettings(); settings.spectrum = false
         try await VideoExporter.export(visuals: track, projectURL: project, audioURL: audio, features: features, settings: settings, destination: output, cancellation: ExportCancellation(), progress: { _ in })

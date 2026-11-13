@@ -356,6 +356,7 @@ final class PlacementEditor: NSViewController {
                 clip.curves[curve].keys[key].id = UUID()
             }
         }
+        if var playback = clip.content.spinePlayback { playback.renewKeyIDs(); clip.content = .spine(playback) }
         let updated = try track.inserting(clip, slot: slot, duration: duration)
         visuals.commit(updated, selectedID: clip.id)
     }

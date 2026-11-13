@@ -24,13 +24,6 @@ struct SpineAssetDescriptor: Codable, Sendable, Equatable {
     }
 }
 
-struct SpinePlayback: Codable, Sendable, Equatable {
-    var animationName: String
-    var sourceIn: Double = 0
-    var loop = true
-    var isValid: Bool { !animationName.isEmpty && sourceIn.isFinite && (0...1e12).contains(sourceIn) }
-}
-
 struct SpinePage: @unchecked Sendable {
     let bytes: Data
     let width: Int

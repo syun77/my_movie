@@ -49,10 +49,12 @@ private final class SpineSession {
         } catch { mv_spine_destroy(handle); throw error }
     }
 
-    func packet(playback: SpinePlayback, time: Double, bounds: CGRect) throws -> SpineDrawPacket {
+    func packet(playback: SpinePlayback, time: Double, bounds: CGRect, localTime: Double = 0) throws -> SpineDrawPacket {
         guard playback.isValid, time.isFinite, time >= 0 else { throw StudioError.message("Spineの再生時刻が不正です。") }
         var error = [CChar](repeating: 0, count: 1024)
-        guard mv_spine_evaluate(handle, playback.animationName, time, playback.loop ? 1 : 0, &error, Int32(error.count)) == 1 else { throw StudioError.message(String(cString: error)) }
+        guard playback.names.isSubset(of: Set(descriptor.animations.map(\.name))) else { throw StudioError.message("Spineのアニメーション名を確認してください。") }
+        let request = playback.resolved(at: localTime)
+        guard mv_spine_evaluate(handle, request.animation, request.secondAnimation ?? "", request.weight, time, playback.loop ? 1 : 0, &error, Int32(error.count)) == 1 else { throw StudioError.message(String(cString: error)) }
         var n: Int32 = 0
         let vp = mv_spine_vertices(handle, &n); let vertices = Array(UnsafeBufferPointer(start: vp, count: Int(n)))
         let ip = mv_spine_indices(handle, &n); let indices = Array(UnsafeBufferPointer(start: ip, count: Int(n)))
@@ -241,7 +243,7 @@ actor SpinePoseProvider {
             try Task.checkCancellation(); try cancellation?.check()
             guard case let .spine(playback) = clip.content, let asset = track.asset(clip.assetID), case let .spine(descriptor) = asset.kind else { return nil }
             let value = try session(skeleton: asset.reference.resolve(projectURL: projectURL), atlas: descriptor.atlasReference.resolve(projectURL: projectURL), cancellation: cancellation)
-            let packet = try value.packet(playback: playback, time: clip.sourceTime(at: time), bounds: descriptor.referenceBounds.rect)
+            let packet = try value.packet(playback: playback, time: clip.sourceTime(at: time), bounds: descriptor.referenceBounds.rect, localTime: time - clip.start)
             return VisualRenderLayer(clip: clip, spine: packet)
         }
     }
