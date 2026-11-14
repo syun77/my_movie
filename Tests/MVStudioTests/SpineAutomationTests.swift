@@ -43,7 +43,7 @@ final class SpineAutomationTests: XCTestCase {
         XCTAssertEqual(playback.resolved(at: 0).weight, 1)
         playback.removeLane(at: 0.25)
         XCTAssertFalse(playback.hasLane)
-        XCTAssertEqual(playback.resolved(at: 10).weight, 1)
+        XCTAssertEqual(playback.mode, .single("B"))
         var three = SpinePlayback(animationName: "A")
         three.mode = .selection(
             base: "A",
@@ -149,7 +149,7 @@ final class SpineAutomationTests: XCTestCase {
             projectURL: URL(fileURLWithPath: "/tmp/audio.mvproject"))
         let decoded = try JSONDecoder().decode(ProjectFile.self, from: JSONEncoder().encode(file))
         try decoded.validate()
-        XCTAssertEqual(decoded.version, 9)
+        XCTAssertEqual(decoded.version, ProjectFile.currentVersion)
         XCTAssertEqual(decoded.visuals, trimmed)
         let history = EditHistory()
         history.reset(EditSnapshot(lyrics: LyricsTrack(), visuals: original, settings: SceneSettings()))
@@ -172,7 +172,7 @@ final class SpineAutomationTests: XCTestCase {
         XCTAssertThrowsError(try original.updating(invalid, slot: 1, duration: 10))
     }
 
-    @MainActor func testBlendLaneBendInterpolationAndFixedRemoval() async throws {
+    @MainActor func testBlendLaneBendInterpolationAndSingleRemoval() async throws {
         let (dir, json, atlas) = try SpineTestFixtures.make()
         defer { try? FileManager.default.removeItem(at: dir) }
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
@@ -247,7 +247,30 @@ final class SpineAutomationTests: XCTestCase {
         editor.visuals.editSpineLane(.remove)
         let fixed = try XCTUnwrap(editor.visuals.track.clips[0].content.spinePlayback)
         XCTAssertFalse(fixed.hasLane)
-        XCTAssertEqual(fixed.resolved(at: 10).weight, 0.375, accuracy: 0.001)
+        XCTAssertEqual(fixed.mode, .single("move"))
+        XCTAssertEqual(fixed.sourceIn, playback.sourceIn)
+        XCTAssertEqual(fixed.loop, playback.loop)
+        XCTAssertEqual(editor.currentTime, 0.75)
+        func find(_ view: NSView, _ id: String) -> NSView? {
+            if view.identifier?.rawValue == id { return view }
+            return view.subviews.lazy.compactMap { find($0, id) }.first
+        }
+        let animation = try XCTUnwrap(find(editor.inspector, "visual.spine.animation") as? NSPopUpButton)
+        let maximum = try XCTUnwrap(find(editor.inspector, "visual.spine.maximum"))
+        let weight = try XCTUnwrap(find(editor.inspector, "visual.spine.weight"))
+        XCTAssertEqual(animation.titleOfSelectedItem, "move")
+        XCTAssertTrue(maximum.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(weight.isHiddenOrHasHiddenAncestor)
+        let deleted = editor.visuals.track
+        editor.visuals.restore(current)
+        XCTAssertFalse(maximum.isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(weight.isHiddenOrHasHiddenAncestor)
+        editor.visuals.restore(deleted)
+        XCTAssertTrue(maximum.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(weight.isHiddenOrHasHiddenAncestor)
+        var maximumPlayback = playback
+        maximumPlayback.removeLane(at: 1)
+        XCTAssertEqual(maximumPlayback.mode, .single("rotate"))
         editor.visuals.setAvailable(false)
     }
 

@@ -227,7 +227,7 @@ actor SpinePoseProvider {
 
     func prepare(track: VisualTrack, projectURL: URL, cancellation: ExportCancellation?) throws {
         invalidate(); pinned = true
-        for id in Set(track.clips.map(\.assetID)) {
+        for id in Set(track.clips.compactMap(\.assetID)) {
             try cancellation?.check(); try Task.checkCancellation()
             guard let asset = track.asset(id), case let .spine(descriptor) = asset.kind else { continue }
             let value = try session(skeleton: asset.reference.resolve(projectURL: projectURL), atlas: descriptor.atlasReference.resolve(projectURL: projectURL), cancellation: cancellation)

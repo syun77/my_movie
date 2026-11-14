@@ -21,6 +21,10 @@ actor VisualFrameProvider {
         let movies = try await videos.layers(track: track, projectURL: projectURL, time: time, cancellation: cancellation)
         try Task.checkCancellation(); try cancellation?.check()
         let spine = try await spines.layers(track: track, projectURL: projectURL, time: time, cancellation: cancellation)
-        return (images + movies + spine).sorted { (track.slot(of: $0.clip.id) ?? 0) < (track.slot(of: $1.clip.id) ?? 0) }
+        return (images + movies + spine).map { layer in
+            var result = layer
+            result.slot = track.slot(of: layer.clip.id) ?? 1
+            return result
+        }.sorted { $0.slot < $1.slot }
     }
 }

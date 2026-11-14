@@ -2,6 +2,9 @@ import Foundation
 import simd
 
 struct ImageEffects: Codable, Equatable, Sendable {
+    var shape: Shape?
+    var mask: Mask?
+    var solidBackground: SolidBackground?
     var blur: Blur?
     var bloom: Bloom?
     var particles: Particles?
@@ -10,6 +13,11 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var orbs: Orbs?
     var shake: Shake?
     var colorCorrection: ColorCorrection?
+
+    struct SolidBackground: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var color = RGBColor.black
+    }
 
     struct ColorCorrection: Codable, Equatable, Sendable {
         var isEnabled = true
@@ -384,6 +392,8 @@ struct ImageEffects: Codable, Equatable, Sendable {
     }
 
     var isValid: Bool {
+        if shape?.isValid == false || mask?.isValid == false { return false }
+        if let solidBackground, !solidBackground.color.isValid { return false }
         if let blur, !Blur.radiusRange.contains(blur.radius) { return false }
         if let bloom, !(Bloom.thresholdRange.contains(bloom.threshold) && Bloom.radiusRange.contains(bloom.radius)
                         && Bloom.intensityRange.contains(bloom.intensity)) { return false }

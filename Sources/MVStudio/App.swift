@@ -114,7 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
         placementEditor.restoreTab(timelineDisplaySettings.visualMode ? .visuals : .lyrics)
-        placementEditor.onModeChange = { [weak self] value in self?.timelineDisplaySettings.visualMode = value }
+        preview.showsMaskGuide = timelineDisplaySettings.visualMode
+        placementEditor.onModeChange = { [weak self] value in
+            self?.timelineDisplaySettings.visualMode = value
+            self?.preview.showsMaskGuide = value
+        }
         placementEditor.onError = { [weak self] value in self?.status.stringValue = value }
         placementEditor.onVisibleSpanChange = { [weak self] value in
             self?.timelineDisplaySettings.visibleSpan = value
@@ -157,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             guard let self else { return }
             self.stopPlayback(); self.seek.doubleValue = time; self.scrub()
         }
+        placementEditor.visuals.onSelectionChange = { [weak self] id in self?.preview.guideClipID = id }
         placementEditor.visuals.onProcessing = { [weak self] value in self?.imageProcessing = value; self?.refreshControls() }
         placementEditor.visuals.onAssetsReload = { [weak self] in
             guard let self else { return }
@@ -306,7 +311,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 self.projectURL = projectURL
                 lyricsEditor.clearPresetSelection()
                 placementEditor.spectrum.clearPresetSelection()
-                if let project { restoreSceneSettings(project.settings) }
+                if let project {
+                    restoreSceneSettings(project.settings)
+                } else if let filenameBPM = AudioFilename.bpm(in: url) {
+                    var settings = preview.settings
+                    settings.bpm = filenameBPM
+                    restoreSceneSettings(settings)
+                }
                 placementEditor.restoreTimelineHeights(project?.timelineHeights ?? TimelineHeights())
                 preview.lyrics = project?.lyrics ?? LyricsTrack()
                 visualTrack = project?.visuals ?? VisualTrack(); previewTrack = visualTrack
@@ -480,6 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private struct PreviewKey: Equatable {
         let projectURL: URL
         let clips: [VisualClip]
+        let slots: [Int]
         let assets: [VisualAsset]
     }
     private var lastPreviewKey: PreviewKey?
@@ -487,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         guard let projectURL else { return }
         let track = previewTrack, time = preview.time
         let active = track.active(at: time)
-        let key = PreviewKey(projectURL: projectURL, clips: active, assets: active.compactMap { track.asset($0.assetID) })
+        let key = PreviewKey(projectURL: projectURL, clips: active, slots: active.map { track.slot(of: $0.id) ?? 1 }, assets: active.compactMap { track.asset($0.assetID) })
         let dynamic = active.contains { $0.content.sourceIn != nil }
         if key != lastPreviewKey {
             previewRevision += 1; lastPreviewKey = key

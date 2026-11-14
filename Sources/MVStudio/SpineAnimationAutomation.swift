@@ -190,11 +190,8 @@ struct SpinePlayback: Codable, Sendable, Equatable {
         switch mode {
         case .single: break
         case .selection: mode = .single(resolved(at: time).animation)
-        case .blend(var value):
-            value.baseWeight = value.weight(at: time)
-            value.keys = []
-            value.automated = false
-            mode = .blend(value)
+        case .blend(let value):
+            mode = .single(value.weight(at: time) < 0.5 ? value.minimumAnimation : value.maximumAnimation)
         }
     }
 }

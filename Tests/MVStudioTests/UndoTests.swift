@@ -141,6 +141,8 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit(); XCTAssertEqual(editor.visuals.track, result.track)
         delegate.redoEdit(); XCTAssertEqual(editor.visuals.track, replaced)
         var movedClip = replaced.clips[0]; movedClip.start = 2; movedClip.end = 4
+        movedClip.effects = ImageEffects(shape: .init(), mask: .init(target: .below))
+        _ = movedClip.setKey(.maskStrength, at: 2.5, value: 30)
         movedClip.audioModulations = [.scale: AudioModulation(blend: .relative, amount: 20)]
         _ = movedClip.setKey(.x, at: 2.5, value: 240)
         let moved = try replaced.updating(movedClip, slot: 3, duration: 10)
@@ -277,6 +279,16 @@ final class UndoTests: XCTestCase {
 
         editor.restoreTab(.visuals)
         editor.timeline.onImageSelect?(movedClip.id, 3)
+        let shapeWidth = try XCTUnwrap(find(editor.visuals.view, "visuals.value.shapeWidth") as? DragValueField)
+        shapeWidth.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        shapeWidth.mouseDragged(with: try mouse(.leftMouseDragged, x: 140))
+        shapeWidth.mouseUp(with: try mouse(.leftMouseUp, x: 140))
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.shape?.geometry.width, 440)
+        delegate.undoEdit()
+        XCTAssertEqual(shapeWidth.doubleValue, 400)
+        delegate.redoEdit()
+        XCTAssertEqual(shapeWidth.doubleValue, 440)
+        delegate.undoEdit()
         let disclosure = try XCTUnwrap(find(editor.visuals.view, "visuals.effects") as? NSButton)
         disclosure.performClick(nil)
         let addEffect = try XCTUnwrap(find(editor.visuals.view, "visuals.effects.add") as? NSPopUpButton)
@@ -302,7 +314,7 @@ final class UndoTests: XCTestCase {
         XCTAssertEqual(blurField.doubleValue, 19)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
         let addEmbers = try XCTUnwrap(addEffect.item(withTitle: "舞い上がる火の粉"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addEmbers.action), to: addEmbers.target, from: addEmbers))
@@ -318,7 +330,7 @@ final class UndoTests: XCTestCase {
         XCTAssertEqual(wind.doubleValue, -6)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
         let addSnow = try XCTUnwrap(addEffect.item(withTitle: "雪"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addSnow.action), to: addSnow.target, from: addSnow))
@@ -335,7 +347,7 @@ final class UndoTests: XCTestCase {
         XCTAssertEqual(fallSpeed.doubleValue, 250)
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
         let addOrbs = try XCTUnwrap(addEffect.item(withTitle: "光の粒子2"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addOrbs.action), to: addOrbs.target, from: addOrbs))
@@ -359,7 +371,7 @@ final class UndoTests: XCTestCase {
             delegate.undoEdit()
         }
         delegate.undoEdit()
-        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
         let addParticles = try XCTUnwrap(addEffect.item(withTitle: "光の粒子"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addParticles.action), to: addParticles.target, from: addParticles))
@@ -383,7 +395,7 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit()
         delegate.undoEdit()
         delegate.undoEdit()
-        XCTAssertNil(editor.visuals.track.clip(movedClip.id)?.effects)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
         editor.visuals.openManager()
         XCTAssertNotNil(editor.visuals.managerWindow?.sheetParent)

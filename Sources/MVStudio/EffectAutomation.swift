@@ -40,6 +40,21 @@ extension ImageParameter {
 
     var effect: Effect? {
         switch self {
+        case .shapeWidth: return Effect("図形 幅", "px", \.shape, \.geometry.width, ShapeGeometry().width, ShapeGeometry.sizeRange)
+        case .shapeHeight: return Effect("図形 高さ", "px", \.shape, \.geometry.height, ShapeGeometry().height, ShapeGeometry.sizeRange)
+        case .shapeX: return Effect("図形 中心X", "px", \.shape, \.geometry.x, ShapeGeometry().x, ShapeGeometry.positionRange)
+        case .shapeY: return Effect("図形 中心Y", "px", \.shape, \.geometry.y, ShapeGeometry().y, ShapeGeometry.positionRange)
+        case .shapeRotation: return Effect("図形 回転", "°", \.shape, \.geometry.rotation, ShapeGeometry().rotation, ShapeGeometry.rotationRange)
+        case .shapeInnerRatio: return Effect("図形 星の内径比", "%", \.shape, \.geometry.innerRatio, ShapeGeometry().innerRatio, ShapeGeometry.innerRatioRange)
+        case .shapeOpacity: return Effect("図形 不透明度", "%", \.shape, \.opacity, ImageEffects.Shape().opacity, 0...100)
+        case .maskWidth: return Effect("マスク 幅", "px", \.mask, \.geometry.width, ShapeGeometry().width, ShapeGeometry.sizeRange)
+        case .maskHeight: return Effect("マスク 高さ", "px", \.mask, \.geometry.height, ShapeGeometry().height, ShapeGeometry.sizeRange)
+        case .maskX: return Effect("マスク 中心X", "px", \.mask, \.geometry.x, ShapeGeometry().x, ShapeGeometry.positionRange)
+        case .maskY: return Effect("マスク 中心Y", "px", \.mask, \.geometry.y, ShapeGeometry().y, ShapeGeometry.positionRange)
+        case .maskRotation: return Effect("マスク 回転", "°", \.mask, \.geometry.rotation, ShapeGeometry().rotation, ShapeGeometry.rotationRange)
+        case .maskInnerRatio: return Effect("マスク 星の内径比", "%", \.mask, \.geometry.innerRatio, ShapeGeometry().innerRatio, ShapeGeometry.innerRatioRange)
+        case .maskFeather: return Effect("マスク 境界ぼかし", "px", \.mask, \.feather, ImageEffects.Mask().feather, 0...200)
+        case .maskStrength: return Effect("マスク 強さ", "%", \.mask, \.strength, ImageEffects.Mask().strength, 0...100)
         case .colorHue: return Effect("色調補正 色相", "°", \.colorCorrection, \.hue, ImageEffects.ColorCorrection().hue, ImageEffects.ColorCorrection.hueRange)
         case .colorBrightness: return Effect("色調補正 明度", "%", \.colorCorrection, \.brightness, ImageEffects.ColorCorrection().brightness, ImageEffects.ColorCorrection.brightnessRange)
         case .colorSaturation: return Effect("色調補正 彩度", "%", \.colorCorrection, \.saturation, ImageEffects.ColorCorrection().saturation, ImageEffects.ColorCorrection.saturationRange)

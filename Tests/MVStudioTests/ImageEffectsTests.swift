@@ -328,6 +328,40 @@ final class ImageEffectsTests: XCTestCase {
             return bgra
         }
 
+        let transparent = try image { _ in }
+        var solidClip = VisualClip(assetID: nil, start: 0, end: 1, audioModulations: [:],
+                                    effects: ImageEffects(solidBackground: .init(color: RGBColor(red: 0.2, green: 0.4, blue: 0.6))))
+        func solidClipLayer() -> VisualRenderLayer { VisualRenderLayer(clip: solidClip, image: transparent) }
+        try render([solidClipLayer()])
+        for point in [(10, 10), (960, 540), (1900, 1060)] {
+            let color = pixel(point.0, point.1)
+            XCTAssertEqual(Double(color[0]), 153, accuracy: 2)
+            XCTAssertEqual(Double(color[1]), 102, accuracy: 2)
+            XCTAssertEqual(Double(color[2]), 51, accuracy: 2)
+        }
+        solidClip.effects?.solidBackground?.color = RGBColor(red: 1, green: 0, blue: 0)
+        try render([solidClipLayer()])
+        XCTAssertGreaterThan(pixel(960, 540)[2], 250, "色変更時にキャッシュを更新する")
+        let foreground = try image { context in
+            context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 6, y: 6, width: 4, height: 4))
+        }
+        solidClip.fixedValues[.scale] = 50
+        try render([VisualRenderLayer(clip: solidClip, image: foreground)])
+        XCTAssertGreaterThan(pixel(960, 540)[1], 245, "素材は背景の上に描画する")
+        XCTAssertGreaterThan(pixel(10, 10)[2], 250, "素材の変形にかかわらず背景は全面を塗る")
+        solidClip.effects?.solidBackground?.isEnabled = false
+        try render([solidClipLayer()])
+        XCTAssertLessThan(pixel(960, 540)[2], 20)
+        solidClip.effects?.solidBackground?.isEnabled = true
+        solidClip.fixedValues[.opacity] = 0
+        try render([solidClipLayer()])
+        XCTAssertLessThan(pixel(960, 540)[2], 20)
+        solidClip.fixedValues[.opacity] = 100
+        solidClip.effects?.solidBackground = nil
+        try render([solidClipLayer()])
+        XCTAssertLessThan(pixel(960, 540)[2], 20)
+
         let colored = try image { context in
             context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.1, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))

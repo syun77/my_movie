@@ -18,6 +18,9 @@ final class MetalSceneRenderer {
     private let filters: CIContext
     private let highlight: MTLComputePipelineState
     private let placementPipeline: MTLRenderPipelineState
+    private let shapePipeline: MTLRenderPipelineState
+    private let maskedClipPipeline: MTLRenderPipelineState
+    private let guidePipeline: MTLRenderPipelineState
     private let imagePipeline: MTLRenderPipelineState
     private let particlePipeline: MTLRenderPipelineState
     private let emberPipeline: MTLRenderPipelineState
@@ -31,6 +34,8 @@ final class MetalSceneRenderer {
     private struct ImageKey: Equatable {
         let source: VisualFrame
         let transform: CGAffineTransform
+        let shape: ImageEffects.Shape?
+        let background: RGBColor?
         let correction: ImageEffects.ColorCorrection?
         let blur: Double
         let threshold: Double
@@ -38,7 +43,7 @@ final class MetalSceneRenderer {
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
-                && lhs.correction == rhs.correction && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
+                && lhs.shape == rhs.shape && lhs.background == rhs.background && lhs.correction == rhs.correction && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
         }
     }
 
@@ -70,6 +75,7 @@ final class MetalSceneRenderer {
     private var sourceCache: [UUID: SourceImage] = [:]
     private var imageCache: [UUID: ProcessedImage] = [:]
     private var spectrumTarget: OverlayTarget?
+    private var maskTargets: [Int: MTLTexture] = [:]
     private var transformScratch: MTLTexture?
     private var bloomScratch: MTLTexture?
     private var lyricsCache: (text: String, style: LyricsStyle, image: Overlay)?
@@ -99,11 +105,14 @@ final class MetalSceneRenderer {
             color.isBlendingEnabled = blending
             color.sourceRGBBlendFactor = .one
             color.destinationRGBBlendFactor = additive ? .one : .oneMinusSourceAlpha
-            color.sourceAlphaBlendFactor = .one
-            color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            color.sourceAlphaBlendFactor = additive ? .zero : .one
+            color.destinationAlphaBlendFactor = additive ? .one : .oneMinusSourceAlpha
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
-        placementPipeline = try pipeline("positionedImage", "sourceImage", blending: false)
+        placementPipeline = try pipeline("positionedImage", "sourceImage", blending: true)
+        shapePipeline = try pipeline("fullscreen", "coloredShape")
+        maskedClipPipeline = try pipeline("fullscreen", "maskedClip")
+        guidePipeline = try pipeline("fullscreen", "maskGuide")
         imagePipeline = try pipeline("fullscreen", "imageLayer")
         particlePipeline = try pipeline("particleQuad", "particleLight", additive: true)
         emberPipeline = try pipeline("particleQuad", "emberLight", additive: true)
@@ -118,14 +127,14 @@ final class MetalSceneRenderer {
 
     // The caller keeps one frame in flight per renderer.
     func encode(visuals: [VisualRenderLayer], features: AudioFeatures?, settings: SceneSettings, lyrics: LyricsTrack,
-                time: Double, target: MTLTexture, video: Bool) throws -> MTLCommandBuffer {
+                time: Double, target: MTLTexture, video: Bool, guideClipID: UUID? = nil) throws -> MTLCommandBuffer {
         if framesSinceCleanup == Self.filterCacheCleanupInterval {
             filters.clearCaches()
             framesSinceCleanup = 0
         }
         framesSinceCleanup += 1
         guard let commands = queue.makeCommandBuffer() else { throw Self.renderError }
-        var prepared: [(VisualClip, ProcessedImage, Float)] = []
+        var prepared: [(clip: VisualClip, image: ProcessedImage, intensity: Float, slot: Int)] = []
         var nextSources: [UUID: SourceImage] = [:]
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
@@ -143,16 +152,19 @@ final class MetalSceneRenderer {
             let bloom = clip.effects?.bloom
             let glows = bloom.map { $0.isEnabled && $0.intensity > 0 && $0.threshold < 100 } ?? false
             let key = ImageKey(source: frame, transform: transform(frame, clip: layer.clip, at: time, settings: settings, features: features, shake: clip.effects?.shake),
+                               shape: clip.effects?.shape.flatMap { $0.isEnabled ? $0 : nil },
+                               background: clip.effects?.solidBackground.flatMap { $0.isEnabled ? $0.color : nil },
                                correction: clip.effects?.colorCorrection.flatMap { $0.isEnabled ? $0 : nil },
                                blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
                                threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
                                glowRadius: glows ? bloom?.radius ?? 0 : 0)
-            let source = try sourceTexture(frame, cached: nextSources[clip.assetID] ?? sourceCache[clip.assetID], commands: commands)
-            nextSources[clip.assetID] = source
+            let sourceID = clip.assetID ?? clip.id
+            let source = try sourceTexture(frame, cached: nextSources[sourceID] ?? sourceCache[sourceID], commands: commands)
+            nextSources[sourceID] = source
             let previous = imageCache[clip.id]
             let image = try (previous?.key == key ? previous : nil)
                 ?? process(key, source: source.texture, reusing: previous, commands: commands)
-            prepared.append((clip, image, glows ? Float((bloom?.intensity ?? 0) / 100) : 0))
+            prepared.append((clip, image, glows ? Float((bloom?.intensity ?? 0) / 100) : 0, layer.slot))
             if cost + image.cost <= Self.cacheLimit {
                 nextCache[clip.id] = image
                 cost += image.cost
@@ -161,42 +173,36 @@ final class MetalSceneRenderer {
         let overlays = try foreground(features: features, settings: settings, lyrics: lyrics, time: time)
 
         let clear = MTLClearColor(red: Self.linear(0.025), green: Self.linear(0.035), blue: Self.linear(0.065), alpha: 1)
-        let spriteSize = SIMD2<Double>(Self.videoSize.width, Self.videoSize.height)
-        let composition = try encoder(commands, target: scene, clear: clear)
-        for (clip, layer, intensity) in prepared {
-            let opacity = Float(min(100, max(0, ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features))) / 100)
-            if opacity == 0 { continue }
-            composition.setRenderPipelineState(imagePipeline)
-            composition.setFragmentTexture(layer.image, index: 0)
-            composition.setFragmentTexture(layer.glow ?? layer.image, index: 1)
-            var values = SIMD4(Float(scene.width) / Float(layer.image.width), Float(scene.height) / Float(layer.image.height), intensity, opacity)
-            composition.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
+        var composition = try encoder(commands, target: scene, clear: clear)
+        var intermediates: [Int: MTLTexture] = [:]
+        for item in prepared.sorted(by: { $0.slot < $1.slot }) {
+            let (clip, layer, intensity, slot) = item
+            let maskOwner = prepared.first { $0.slot == slot + 1 && $0.clip.effects?.mask?.isEnabled == true && $0.clip.effects?.mask?.target == .below }
+            var intermediate: MTLTexture?
+            if maskOwner != nil {
+                composition.endEncoding()
+                let texture = try filterTexture(bounds: canvas, reusing: maskTargets[slot])
+                intermediate = texture
+                intermediates[slot] = texture
+                composition = try encoder(commands, target: texture, clear: MTLClearColorMake(0, 0, 0, 0))
+            }
+            drawClip(clip, image: layer, intensity: intensity, at: time, settings: settings, features: features, encoder: composition)
+            if let intermediate, let maskOwner {
+                composition.endEncoding()
+                composition = try encoder(commands, target: scene, clear: clear, load: true)
+                let ownerOpacity = ParameterEvaluator.value(.opacity, clip: maskOwner.clip, at: time, settings: settings, features: features) / 100
+                var mask = ShapeRenderer.mask(maskOwner.clip.effects?.mask, opacity: ownerOpacity)
+                composition.setRenderPipelineState(maskedClipPipeline)
+                composition.setFragmentTexture(intermediate, index: 0)
+                composition.setFragmentBytes(&mask, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
+                quad(composition)
+            }
+        }
+        if !video, let guide = prepared.first(where: { $0.clip.id == guideClipID }), let mask = guide.clip.effects?.mask, mask.isEnabled {
+            var uniforms = ShapeRenderer.uniforms(mask.geometry)
+            composition.setRenderPipelineState(guidePipeline)
+            composition.setFragmentBytes(&uniforms, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
             quad(composition)
-            let localTime = time - clip.start
-            if let particles = clip.effects?.particles, particles.isEnabled, particles.opacity > 0 {
-                let time = localTime + particles.phaseOffset
-                let huePhase = (time / 20).truncatingRemainder(dividingBy: 1)
-                var palette = SIMD4(Float(particles.color.red), Float(particles.color.green), Float(particles.color.blue), Float(huePhase))
-                composition.setFragmentBytes(&palette, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
-                for emitter in particles.emitters {
-                    drawSprites(particles.instances(at: localTime, size: spriteSize, emitter: emitter),
-                                with: particlePipeline, encoder: composition, opacity: opacity)
-                }
-            }
-            if let embers = clip.effects?.embers, embers.isEnabled, embers.brightness > 0 {
-                drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: composition, opacity: opacity)
-            }
-            if let snow = clip.effects?.snow, snow.isEnabled, snow.opacity > 0 {
-                drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: composition, opacity: opacity)
-            }
-            if let orbs = clip.effects?.orbs, orbs.isEnabled, orbs.opacity > 0 {
-                ImageEffects.Orbs.colors.withUnsafeBytes { bytes in
-                    composition.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 0)
-                }
-                var saturation = Float(orbs.saturation / 100)
-                composition.setFragmentBytes(&saturation, length: MemoryLayout<Float>.size, index: 1)
-                drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: composition, opacity: opacity)
-            }
         }
         composition.setRenderPipelineState(overlayPipeline)
         for overlay in overlays {
@@ -219,14 +225,55 @@ final class MetalSceneRenderer {
         output.setFragmentBytes(&transfer, length: MemoryLayout<UInt32>.size, index: 0)
         quad(output)
         output.endEncoding()
-        commands.addCompletedHandler { _ in _ = visuals }
+        commands.addCompletedHandler { [intermediates] _ in _ = visuals; _ = intermediates }
         sourceCache = nextSources
+        maskTargets = intermediates
         imageCache = nextCache
         return commands
     }
 
+    private func drawClip(_ clip: VisualClip, image: ProcessedImage, intensity: Float, at time: Double,
+                          settings: SceneSettings, features: AudioFeatures?, encoder: MTLRenderCommandEncoder) {
+        let spriteSize = SIMD2<Double>(Self.videoSize.width, Self.videoSize.height)
+        let opacity = Float(min(100, max(0, ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features))) / 100)
+        encoder.setRenderPipelineState(imagePipeline)
+        encoder.setFragmentTexture(image.image, index: 0)
+        encoder.setFragmentTexture(image.glow ?? image.image, index: 1)
+        var values = SIMD4(Float(scene.width) / Float(image.image.width), Float(scene.height) / Float(image.image.height), intensity, opacity)
+        encoder.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
+        var ownMask = ShapeRenderer.mask(clip.effects?.mask.flatMap { $0.target == .image ? $0 : nil })
+        encoder.setFragmentBytes(&ownMask, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 1)
+        quad(encoder)
+        let localTime = time - clip.start
+        if let particles = clip.effects?.particles, particles.isEnabled, particles.opacity > 0 {
+            let time = localTime + particles.phaseOffset
+            let huePhase = (time / 20).truncatingRemainder(dividingBy: 1)
+            var palette = SIMD4(Float(particles.color.red), Float(particles.color.green), Float(particles.color.blue), Float(huePhase))
+            encoder.setFragmentBytes(&palette, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            for emitter in particles.emitters {
+                drawSprites(particles.instances(at: localTime, size: spriteSize, emitter: emitter),
+                            with: particlePipeline, encoder: encoder, opacity: opacity)
+            }
+        }
+        if let embers = clip.effects?.embers, embers.isEnabled, embers.brightness > 0 {
+            drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: encoder, opacity: opacity)
+        }
+        if let snow = clip.effects?.snow, snow.isEnabled, snow.opacity > 0 {
+            drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: encoder, opacity: opacity)
+        }
+        if let orbs = clip.effects?.orbs, orbs.isEnabled, orbs.opacity > 0 {
+            ImageEffects.Orbs.colors.withUnsafeBytes { bytes in
+                encoder.setFragmentBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+            }
+            var saturation = Float(orbs.saturation / 100)
+            encoder.setFragmentBytes(&saturation, length: MemoryLayout<Float>.size, index: 1)
+            drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: encoder, opacity: opacity)
+        }
+    }
+
     func discardCache() {
         spineRenderer.discardCache()
+        maskTargets.removeAll()
         sourceCache.removeAll()
         imageCache.removeAll()
         lyricsCache = nil
@@ -260,11 +307,21 @@ final class MetalSceneRenderer {
         let bounds = CGRect(origin: .zero, size: canvas.insetBy(dx: -padding, dy: -padding).size)
         let positioned = try filterTexture(bounds: bounds, reusing: key.blur > 0 || key.correction != nil ? transformScratch : previous?.image)
         var placement = placement(for: key, padding: padding, bounds: bounds)
-        let pass = try encoder(commands, target: positioned, clear: MTLClearColorMake(0, 0, 0, 0))
+        let clear = key.background.map { MTLClearColorMake(Self.linear($0.red), Self.linear($0.green), Self.linear($0.blue), 1) }
+            ?? MTLClearColorMake(0, 0, 0, 0)
+        let pass = try encoder(commands, target: positioned, clear: clear)
         pass.setRenderPipelineState(placementPipeline)
         pass.setVertexBytes(&placement, length: MemoryLayout<Placement>.stride, index: 0)
         pass.setFragmentTexture(source, index: 0)
         quad(pass)
+        if let shape = key.shape {
+            var uniforms = ShapeRenderer.uniforms(shape.geometry)
+            uniforms.color = SIMD4(Float(Self.linear(shape.color.red)), Float(Self.linear(shape.color.green)), Float(Self.linear(shape.color.blue)), Float(shape.opacity / 100))
+            uniforms.viewport = SIMD4(Float(bounds.width), Float(bounds.height), Float(padding), Float(scale))
+            pass.setRenderPipelineState(shapePipeline)
+            pass.setFragmentBytes(&uniforms, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
+            quad(pass)
+        }
         pass.endEncoding()
 
         var rendered = positioned
@@ -398,11 +455,11 @@ final class MetalSceneRenderer {
         return Overlay(texture: texture, bounds: bounds)
     }
 
-    private func encoder(_ commands: MTLCommandBuffer, target: MTLTexture, clear: MTLClearColor) throws -> MTLRenderCommandEncoder {
+    private func encoder(_ commands: MTLCommandBuffer, target: MTLTexture, clear: MTLClearColor, load: Bool = false) throws -> MTLRenderCommandEncoder {
         let pass = MTLRenderPassDescriptor()
         let color = pass.colorAttachments[0]!
         color.texture = target
-        color.loadAction = .clear
+        color.loadAction = load ? .load : .clear
         color.storeAction = .store
         color.clearColor = clear
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { throw Self.renderError }

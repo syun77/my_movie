@@ -3,6 +3,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class VisualEditor: NSViewController, NSTextFieldDelegate {
+    var onSelectionChange: ((UUID?) -> Void)?
     var onProcessing: ((Bool) -> Void)?
     var onAssetsReload: (() -> Void)?
     var onBeginTextEditing: (() -> Void)?
@@ -241,6 +242,15 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if field.isEnabled { field.selectText(nil) }
         }
         timeline?.keySnapEnabled = keySnap.state == .on
+        timeline?.onCreateEmptyClip = { [weak self] slot, time in
+            guard let self, self.available, self.finishEditing() else { return }
+            do {
+                let result = try self.track.addingEmpty(at: time, slot: slot, duration: self.duration, grid: self.snapGrid)
+                self.onBeginEdit?()
+                self.selectedSlot = slot
+                self.commit(result.track, selectedID: result.clip.id)
+            } catch { self.report(error) }
+        }
         timeline?.onDropImage = { [weak self] url, slot, time in self?.importFile(url, placement: (slot, time)) }
         timeline?.visuals = track
     }
@@ -274,11 +284,12 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         refreshControls()
     }
     private func refreshControls() {
+        onSelectionChange?(selectedID)
         controls.forEach { $0.isEnabled = available && !processing && manager == nil }
         clipControls.forEach { $0.isEnabled = available && !processing && manager == nil && track.clip(selectedID) != nil }
         timeline?.isEnabled = available && !processing && manager == nil
         refreshGraphControls()
-        effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
+        effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil, track: track)
         sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
         sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
         speedRow.isHidden = track.clip(selectedID)?.content.isVideo != true
@@ -313,7 +324,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if preview { onPreview?(value) }
             else {
                 commit(value, selectedID: clip.id, refreshEditor: false)
-                effectsEditor.load(clip, editable: true)
+                effectsEditor.load(clip, editable: true, track: track)
                 refreshGraphControls(resetRange: true)
             }
         } catch { report(error) }
@@ -329,7 +340,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         refreshing = true; defer { refreshing = false }
         timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
         if let clip = track.clip(selectedID) {
-            name.stringValue = "\(track.asset(clip.assetID)?.kind.title ?? "素材")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "不明")"
+            name.stringValue = "\(track.asset(clip.assetID)?.kind.title ?? "素材")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "空のクリップ")"
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
             sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
             playbackSpeed.stringValue = String(clip.content.speed)
@@ -492,7 +503,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             timingIsValid = true
             end.stringValue = String(clip.end)
             commit(value, selectedID: clip.id, refreshEditor: false)
-            effectsEditor.load(clip, editable: true)
+            effectsEditor.load(clip, editable: true, track: track)
         } catch { timingIsValid = false; report(error) }
     }
 
@@ -659,7 +670,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                         let result = try value.adding(assetID: assetID, at: placement.time, slot: placement.slot, duration: duration, grid: snapGrid)
                         value = result.track; selection = result.clip.id
                     } else if let replacingClip, var clip = value.clip(replacingClip) {
-                        guard track.asset(clip.assetID)?.kind.sameType(as: inspected.kind) == true, inspected.kind.accepts(clip.content) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
+                        guard (clip.assetID == nil ? inspected.kind == .still : track.asset(clip.assetID)?.kind.sameType(as: inspected.kind) == true), inspected.kind.accepts(clip.content) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
                         clip.assetID = assetID; value = try value.updating(clip, slot: value.slot(of: replacingClip)!, duration: duration)
                     } else if replacingClip != nil { throw StudioError.message("置き換える配置が見つかりません。") }
                 }

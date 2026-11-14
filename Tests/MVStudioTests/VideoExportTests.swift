@@ -27,6 +27,9 @@ final class VideoExportTests: XCTestCase {
         let video = visuals.register(url: movie, projectURL: project, kind: .video(duration: 2.5))
         visuals.layers[0].clips = [VisualClip(assetID: still, start: 0, end: duration, audioModulations: [:])]
         var trimmed = VisualClip(assetID: video, start: 0.2, end: 1.2, content: .video(sourceIn: 0.3, speed: 2), audioModulations: [:])
+        trimmed.effects = ImageEffects(shape: .init(geometry: ShapeGeometry(kind: .star, width: 500, height: 500, x: 700, y: 400), color: RGBColor(red: 1, green: 0.4, blue: 0)))
+        _ = trimmed.setKey(.shapeRotation, at: 0.2, value: -90)
+        _ = trimmed.setKey(.shapeRotation, at: 1.2, value: 90)
         trimmed.fixedValues[.x] = 240
         trimmed.audioModulations[.x] = AudioModulation(source: .beat, amount: 120, beatNoteDenominator: 7)
         trimmed.audioModulations[.opacity] = AudioModulation(amount: -30, releaseSeconds: 1,
@@ -34,7 +37,7 @@ final class VideoExportTests: XCTestCase {
         visuals.layers[1].clips = [trimmed,
             VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6, speed: 0.5), audioModulations: [:])]
         var upper = VisualClip(assetID: video, start: 0.7, end: 1, content: .video(sourceIn: 1.1), audioModulations: [:])
-        upper.effects = ImageEffects(blur: .init(radius: 2))
+        upper.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(kind: .ellipse, width: 900, height: 600), target: .below, feather: 20), blur: .init(radius: 2))
         upper.audioModulations[.blurRadius] = AudioModulation(source: .beat, amount: 5, beatNoteDenominator: 12)
         visuals.layers[2].clips = [upper]
         // Unused missing media must not prevent export.
@@ -83,7 +86,7 @@ final class VideoExportTests: XCTestCase {
                 let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
                 CVPixelBufferLockBaseAddress(buffer, .readOnly)
                 defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-                for (x, y) in [(960, 400), (20, 20)] {
+                for (x, y) in [(960, 400), (700, 400), (1180, 600), (20, 20)] {
                     var expected = [UInt8](repeating: 0, count: 4)
                     target.getBytes(&expected, bytesPerRow: 4, from: MTLRegionMake2D(x, y, 1, 1), mipmapLevel: 0)
                     let pixel = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)

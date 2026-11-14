@@ -41,6 +41,7 @@ enum VisualSource: @unchecked Sendable {
 }
 
 struct VisualRenderLayer: @unchecked Sendable {
+    var slot: Int = 1
     let clip: VisualClip
     let source: VisualSource
     var frame: VisualFrame? { if case let .frame(frame) = source { return frame }; return nil }

@@ -97,6 +97,7 @@ final class TimelineView: NSView {
     var onImageSelect: ((UUID?, Int) -> Void)?
     var onImagePreview: ((VisualTrack) -> Void)?
     var onImageCommit: ((VisualTrack, UUID) -> Void)?
+    var onCreateEmptyClip: ((Int, Double) -> Void)?
     var onDropImage: ((URL, Int, Double) -> Void)?
     private var imageDrag: ImageDrag?
     private var dropGeometry: TimelineGeometry?
@@ -446,6 +447,19 @@ final class TimelineView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard canEditClips else { return super.menu(for: event) }
         let point = convert(event.locationInWindow, from: nil)
+        if visualMode, onCreateEmptyClip != nil, point.x >= Self.gutter,
+           point.x <= bounds.width - TimelineGeometry.inset, let slot = slot(at: point),
+           let layer = visuals.layers.first(where: { $0.slot == slot }) {
+            let time = geometry.time(at: point.x - Self.gutter)
+            if !layer.clips.contains(where: { $0.start <= time && time < $0.end }),
+               (try? visuals.placement(at: time, slot: slot, duration: duration, grid: snapGrid)) != nil {
+                let menu = NSMenu()
+                let item = menu.addItem(withTitle: "空のクリップを作成", action: #selector(createEmptyClip(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = EmptyClipTarget(slot: slot, time: time)
+                return menu
+            }
+        }
         configureSpineLane(displayed: visuals)
         if visualMode, let menu = spineLane.menu(at: point) { return menu }
         if visualMode, onImageCommit != nil,
@@ -490,6 +504,16 @@ final class TimelineView: NSView {
             item.isEnabled = canPerformClipCommand?(command) == true
         }
         return menu
+    }
+
+    private struct EmptyClipTarget {
+        let slot: Int
+        let time: Double
+    }
+
+    @objc private func createEmptyClip(_ item: NSMenuItem) {
+        guard canEditClips, let target = item.representedObject as? EmptyClipTarget else { return }
+        onCreateEmptyClip?(target.slot, target.time)
     }
 
     private struct KeyMenuTarget {
@@ -935,11 +959,11 @@ final class TimelineView: NSView {
                 let clipRect = imageRect(clip, slot: layer.slot)
                 let rect = clipRect.intersection(clipBounds)
                 guard !rect.isEmpty else { continue }
-                let missing = missingAssets.contains(clip.assetID)
+                let missing = clip.assetID.map { missingAssets.contains($0) } ?? false
                 (missing ? NSColor.systemRed : NSColor(calibratedRed: 0.22, green: 0.42, blue: 0.57, alpha: 1)).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 0), xRadius: 4, yRadius: 4).fill()
                 if clip.id == selectedImageID { NSColor.cyan.setStroke(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).stroke() }
-                let title = (missing ? "⚠ " : "") + (clip.content.sourceIn == nil ? "" : "▶ ") + (displayed.asset(clip.assetID)?.name ?? "不明")
+                let title = (missing ? "⚠ " : "") + (clip.content.sourceIn == nil ? "" : "▶ ") + (displayed.asset(clip.assetID)?.name ?? "空のクリップ")
                 drawClipLabels(title, timing: clipTiming(start: clip.start, end: clip.end), in: clipRect, visible: rect)
                 drawClipGrips(in: clipRect, visible: rect)
             }

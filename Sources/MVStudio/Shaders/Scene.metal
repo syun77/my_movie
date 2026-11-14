@@ -16,8 +16,94 @@ vertex Quad fullscreen(uint vertexID [[vertex_id]]) {
     return {float4(uv.x * 2 - 1, 1 - uv.y * 2, 0, 1), uv};
 }
 
+
+struct ShapeUniforms {
+    float4 geometry;
+    float4 details;
+    float4 color;
+    float4 viewport;
+    float4 mask;
+};
+
+float2 shapeVertex(int i, int count, constant ShapeUniforms &shape) {
+    float2 unit;
+    if (int(shape.details.y) == 1) {
+        unit = i == 0 ? float2(0, -1) : (i == 1 ? float2(1, 1) : float2(-1, 1));
+    } else {
+        float angle = -M_PI_F / 2 + float(i) * 2 * M_PI_F / float(count);
+        float radius = i % 2 == 0 ? 1 : shape.details.w;
+        unit = float2(cos(angle), sin(angle)) * radius;
+    }
+    return unit * shape.geometry.zw * 0.5;
+}
+
+float shapeDistance(float2 point, constant ShapeUniforms &shape) {
+    float2 p = point - shape.geometry.xy;
+    float c = cos(shape.details.x), s = sin(shape.details.x);
+    p = float2(c * p.x + s * p.y, -s * p.x + c * p.y);
+    float2 halfSize = shape.geometry.zw * 0.5;
+    int kind = int(shape.details.y);
+    if (kind == 0) {
+        float2 d = abs(p) - halfSize;
+        return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+    }
+    if (kind == 2) {
+        float2 q = p / halfSize;
+        float k = length(q);
+        return k < 1e-6 ? -min(halfSize.x, halfSize.y) : (k - 1) / length(q / halfSize);
+    }
+    int count = kind == 1 ? 3 : int(shape.details.z) * 2;
+    float distanceSquared = 1e20;
+    bool inside = false;
+    float2 a = shapeVertex(count - 1, count, shape);
+    for (int i = 0; i < count; ++i) {
+        float2 b = shapeVertex(i, count, shape);
+        float2 edge = b - a;
+        float2 nearest = a + edge * clamp(dot(p - a, edge) / max(dot(edge, edge), 1e-10), 0.0, 1.0);
+        distanceSquared = min(distanceSquared, dot(p - nearest, p - nearest));
+        if ((a.y > p.y) != (b.y > p.y)) {
+            float crossing = (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x;
+            if (p.x < crossing) inside = !inside;
+        }
+        a = b;
+    }
+    return sqrt(distanceSquared) * (inside ? -1 : 1);
+}
+
+float shapeCoverage(float2 point, constant ShapeUniforms &shape, float feather) {
+    if (shape.geometry.z <= 0 || shape.geometry.w <= 0) return 0;
+    float distance = shapeDistance(point, shape);
+    float transition = max(fwidth(distance), 0.001) + feather;
+    return 1 - smoothstep(-transition * 0.5, transition * 0.5, distance);
+}
+
+float maskFactor(float2 point, constant ShapeUniforms &shape) {
+    if (shape.mask.w == 0 || shape.mask.z == 0) return 1;
+    float coverage = shapeCoverage(point, shape, shape.mask.y);
+    if (shape.mask.x != 0) coverage = 1 - coverage;
+    return mix(1.0, coverage, shape.mask.z);
+}
+
+fragment float4 coloredShape(Quad in [[stage_in]], constant ShapeUniforms &shape [[buffer(0)]]) {
+    float2 point = (float2(in.uv.x, 1 - in.uv.y) * shape.viewport.xy - shape.viewport.z) / shape.viewport.w;
+    float alpha = shapeCoverage(point, shape, 0) * shape.color.a;
+    return float4(shape.color.rgb * alpha, alpha);
+}
+
+fragment float4 maskedClip(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
+                           constant ShapeUniforms &shape [[buffer(0)]]) {
+    return image.sample(linearSampler, in.uv) * maskFactor(in.uv * float2(1920, 1080), shape);
+}
+
+fragment float4 maskGuide(Quad in [[stage_in]], constant ShapeUniforms &shape [[buffer(0)]]) {
+    if (shape.geometry.z <= 0 || shape.geometry.w <= 0) return 0;
+    float d = shapeDistance(in.uv * float2(1920, 1080), shape);
+    float alpha = 1 - smoothstep(1.0, 3.0, abs(d));
+    return float4(float3(0.15, 0.7, 1) * alpha, alpha);
+}
+
 fragment float4 imageLayer(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
-                           texture2d<float> glow [[texture(1)]], constant float4 &settings [[buffer(0)]]) {
+                           texture2d<float> glow [[texture(1)]], constant float4 &settings [[buffer(0)]], constant ShapeUniforms &mask [[buffer(1)]]) {
     float2 uv = (in.uv - 0.5) * settings.xy + 0.5;
     // Core Image renders with the bottom of its extent in the first texture row.
     uv.y = 1 - uv.y;
@@ -27,7 +113,7 @@ fragment float4 imageLayer(Quad in [[stage_in]], texture2d<float> image [[textur
         pixel.rgb += halo.rgb;
         pixel.a += (1 - pixel.a) * min(halo.a, 1.0);
     }
-    return pixel * settings.w;
+    return pixel * settings.w * maskFactor(in.uv * float2(1920, 1080), mask);
 }
 
 float3 linearFromSRGB(float3 value) {

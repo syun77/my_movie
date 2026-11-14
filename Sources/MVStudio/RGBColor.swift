@@ -5,6 +5,7 @@ struct RGBColor: Codable, Sendable, Equatable {
     var green: Double
     var blue: Double
 
+    static let white = RGBColor(red: 1, green: 1, blue: 1)
     static let black = RGBColor(red: 0, green: 0, blue: 0)
     func cgColor(alpha: CGFloat = 1) -> CGColor {
         CGColor(red: red, green: green, blue: blue, alpha: alpha)

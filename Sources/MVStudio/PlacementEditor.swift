@@ -289,7 +289,7 @@ final class PlacementEditor: NSViewController {
                     guard let projectURL = visuals.projectURL else { return }
                     var track = visuals.track
                     var source = clip
-                    source.assetID = track.register(url: url, projectURL: projectURL, kind: kind)
+                    if let url { source.assetID = track.register(url: url, projectURL: projectURL, kind: kind) }
                     try insertImageCopy(source, in: track, at: timeline.currentTime, slot: timeline.selectedSlot)
                 case nil: break
                 }
@@ -308,14 +308,19 @@ final class PlacementEditor: NSViewController {
         let source = ClipClipboard.read(from: pasteboard)
         switch source {
         case .lyrics where !visualMode: return source
-        case let .visual(_, url, _) where visualMode && visuals.projectURL != nil && url.isFileURL: return source
+        case let .visual(_, url, _) where visualMode && visuals.projectURL != nil && (url?.isFileURL ?? true): return source
         default: return nil
         }
     }
 
     private func copySelection(to pasteboard: NSPasteboard) throws -> Bool {
         if visualMode {
-            guard let clip = selectedImage, let asset = visuals.track.asset(clip.assetID) else { return false }
+            guard let clip = selectedImage else { return false }
+            if clip.assetID == nil {
+                try ClipClipboard.visual(clip, assetURL: nil).write(to: pasteboard)
+                return true
+            }
+            guard let asset = visuals.track.asset(clip.assetID) else { return false }
             let url: URL
             if let projectURL = visuals.projectURL {
                 url = asset.reference.resolve(projectURL: projectURL)

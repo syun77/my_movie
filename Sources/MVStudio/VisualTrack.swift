@@ -59,7 +59,7 @@ struct VisualAsset: Codable, Sendable, Equatable, Identifiable {
 
 struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     var id = UUID()
-    var assetID: UUID
+    var assetID: UUID?
     var start: Double
     var end: Double
     var content: VisualContent = .still
@@ -86,7 +86,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
     var assets: [VisualAsset] = []
     var layers: [VisualLayer] = (1...3).map { VisualLayer(slot: $0) }
     var clips: [VisualClip] { layers.flatMap(\.clips) }
-    func asset(_ id: UUID) -> VisualAsset? { assets.first { $0.id == id } }
+    func asset(_ id: UUID?) -> VisualAsset? { assets.first { $0.id == id } }
     func clip(_ id: UUID?) -> VisualClip? { clips.first { $0.id == id } }
     func slot(of id: UUID) -> Int? { layers.first { $0.clips.contains { $0.id == id } }?.slot }
     func active(at time: Double) -> [VisualClip] {
@@ -105,17 +105,17 @@ struct VisualTrack: Codable, Sendable, Equatable {
             guard ids.insert(layer.id).inserted else { throw StudioError.message("素材レイヤーのIDが重複しています。") }
             var previousEnd = 0.0
             for clip in layer.clips {
-                guard ids.insert(clip.id).inserted, assetIDs.contains(clip.assetID),
+                guard ids.insert(clip.id).inserted, (clip.assetID.map { assetIDs.contains($0) } ?? (clip.content == .still)),
                       clip.start.isFinite, clip.end.isFinite, clip.start >= previousEnd,
                       clip.end - clip.start >= 1.0 / 30 - 1e-9,
                       duration.map({ clip.end <= $0 + 1e-9 }) ?? true else {
                     throw StudioError.message("素材の区間は曲内で、同じレイヤー内では重ならないようにしてください（最小1フレーム）。")
                 }
-                guard let asset = asset(clip.assetID) else { throw StudioError.message("素材が見つかりません。") }
-                switch (asset.kind, clip.content) {
+                switch (asset(clip.assetID)?.kind, clip.content) {
+                case (nil, .still) where clip.assetID == nil: break
                 case (.still, .still): break
                 case let (.spine(descriptor), .spine):
-                    guard descriptor.isValid, asset.kind.accepts(clip.content) else { throw StudioError.message("Spineの設定が不正です。") }
+                    guard descriptor.isValid, VisualAssetKind.spine(descriptor).accepts(clip.content) else { throw StudioError.message("Spineの設定が不正です。") }
                 case let (.video(length), .video(sourceIn, speed)):
                     guard sourceIn.isFinite, sourceIn >= 0, speed.isFinite, VisualClip.playbackSpeedRange.contains(speed), clip.sourceEnd <= length + 1e-9 else {
                         throw StudioError.message("動画の速度は0.1〜16倍で、参照区間が素材の長さを超えないようにしてください。")
@@ -196,6 +196,12 @@ struct VisualTrack: Codable, Sendable, Equatable {
         if let descriptor = asset.kind.spineDescriptor { content = .spine(SpinePlayback(animationName: descriptor.animations[0].name)) }
         var clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
         if content.sourceIn != nil { clip.audioModulations = [:] }
+        return (try inserting(clip, slot: slot, duration: duration), clip)
+    }
+
+    func addingEmpty(at time: Double, slot: Int, duration: Double, grid: TimelineSnapGrid) throws -> (track: VisualTrack, clip: VisualClip) {
+        let range = try placement(at: time, slot: slot, duration: duration, grid: grid)
+        let clip = VisualClip(assetID: nil, start: range.start, end: range.end, effects: ImageEffects(solidBackground: .init()))
         return (try inserting(clip, slot: slot, duration: duration), clip)
     }
 

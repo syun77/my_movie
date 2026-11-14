@@ -1,6 +1,8 @@
 import Foundation
 
 enum ImageParameter: String, CaseIterable, Codable, Sendable {
+    case shapeWidth, shapeHeight, shapeX, shapeY, shapeRotation, shapeInnerRatio, shapeOpacity
+    case maskWidth, maskHeight, maskX, maskY, maskRotation, maskInnerRatio, maskFeather, maskStrength
     case x, y, scale, rotation, opacity
     case blurRadius, bloomThreshold, bloomRadius, bloomIntensity
     case particlesCount, particlesDiameter, particlesSpeed, particlesCurveStrength, particlesOpacity

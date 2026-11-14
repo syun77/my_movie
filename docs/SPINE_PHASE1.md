@@ -156,4 +156,4 @@ arm64の開発ビルドで提供モデル3段・1080pの9時刻を測定し、CP
 
 最終回帰検証は全90テスト成功（SpineTests 6件を含む）。GPU・AppKit・メディアサービスへアクセスできる環境で実施した。
 
-アニメーションの切替/ポーズブレンドのオートメーションは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) として追加実装済み。現在の保存形式はversion 9で、SpinePlaybackは再生モード・専用キーを含む。上記の初期単一再生はsingleモードとして維持する。
+アニメーションの切替/ポーズブレンドのオートメーションは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) として追加実装済み。現在の保存形式はversion 10で、SpinePlaybackは再生モード・専用キーを含む。上記の初期単一再生はsingleモードとして維持する。

@@ -1,3 +1,92 @@
+# 図形演出とマスクの実装（完了）
+
+- 最終更新: 2026-11-14 JST。要件: docs/SHAPES_AND_MASKS.mdの設計を実装。図形4種、独立マスク、自画像/直下固定段、数値オートメーション、保存version10。
+- 現在: 実装・整理・検証・最新app生成を完了。既存の未コミット変更は保持。
+- 方針: ShapeGeometryを共有し、下段対象はslotを描画層へ渡して解決。対象クリップは透明中間面へ描画し、加算粒子の背景透過率を保って合成する。
+- 採用仕様: 長方形/三角形/楕円/星、図形と独立したマスク、直下固定段への適用、粒子の対象範囲、15数値のキー/音楽同期、version10。
+- 完了単位: 共通形状/モデル/15数値の自動化、図形とマスクUI、slot付き描画層、Metal形状/マスク、選択中の輪郭ガイド、version10を実装。中間面は段ごとに再利用し描画責務を整理。
+- 検証: 新規ShapeTests 4件成功（/tmp/my-movie-shapes-tests-unrestricted.log）。4形状/回転/座標/反転/ぼかし/強さ/粒子の対象範囲/直下段/不透明度/保存/実カラーパネル通知を確認。制限環境のMetal不可は制限外実行で解消。
+- 全体検証: 全109テスト成功・外部Spineサンプル1件スキップ（/tmp/my-movie-shapes-full-tests.log）。図形/マスクを含む実MP4のPTS/画素比較成功。最終追加の関連検証はShapeTests+UndoTests 8件成功（/tmp/my-movie-shapes-qa-tests.log）、コピー関連2件も成功（/tmp/my-movie-shapes-final-tests.log）。履歴fixtureに図形を追加したため旧nil期待値を保持期待へ更新済み。
+- 整理: drawClipに素材/粒子描画を集約、マスク対象の中間テクスチャを段ごとに再利用、固定の頂点数にはオートメーションメニューを出さない。素材配列が同じでも段変更でプレビューを再取得する。
+- 追加検証: 半解像度・輪郭ガイドの動画除外・2つの下段マスクの独立性・動くマスクの再シークを確認。3段1080p/マスク/粒子の9時刻はエンコードCPU最大約0.60ms/GPU最大約5.58ms（継続性能の保証ではない）。星PNGを目視確認。UIキャッシュ画像 /tmp/my-movie-mask-inspector.png は配置を確認したが、オフスクリーンの標準ボタン描画は不完全。
+- 変更: ShapeGeometry.swift/ShapeRenderer.swift/ShapeTests.swift新規、ImageEffects/EffectAutomation/ImageAnimation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal/VisualRenderLayer/VisualFrameProvider/VisualEditor/PreviewView/App/ProjectFile/RGBColor、保存・コピー・出力・履歴の関連テスト、README/docs/AGENTS/PROGRESS。既存変更は保持。
+- 最終確認: 保存した画像モードの起動時復元でも輪郭ガイドを有効にした。文書リンク検査・git diff --check成功。
+- 最終検証: 起動/配置/終了のAppLifecycleTests 2件成功（/tmp/my-movie-shapes-lifecycle-tests.log）。署名検証成功。app内実行ファイルとreleaseのMach-O UUID一致、同梱Metalシェーダーはソースと一致。署名で実行ファイル自体のバイト列は変わるため単純cmpは使用しない。
+- ビルド: 制限環境のdsymutil拒否で初回失敗（/tmp/my-movie-shapes-build.log）。制限外の ./scripts/build-app.sh 成功（/tmp/my-movie-shapes-build-unrestricted.log）、最新 dist/MV Studio.app生成済み。
+- 未解決障害・実行中処理なし。外部Spineサンプルの任意試験は環境変数未指定でスキップ。ユーザーの実プロジェクトを使う手動GUI操作は未実施。
+- 次: 最新appを再起動し、追加演出から図形/マスクを利用する。v9以前のプロジェクトは設計どおり対応外で、既存のバックアップして新規作成UIを使う。
+
+# 図形演出とマスクの設計（設計完了・未実装）
+
+- 最終更新: 2026-11-14 JST。目的: 長方形・三角形・楕円・星のサイズ/色指定、画像または下レイヤーへのマスク適用。今回は設計のみ。
+- 確認: 現行ImageEffects、VisualTrackの段順、MetalSceneRendererの素材/粒子/前景合成、空クリップと単色背景。既存のコード・文書変更を保持。
+- 完了: docs/SHAPES_AND_MASKS.mdにUI・共通形状・座標・対象解決・合成・オートメーション・保存version10案・実装順・受入条件を記録。
+- 提案: 図形とマスクは独立。下は直下固定段で空段を飛ばさない。自画像は粒子対象外、下段は粒子込み。所有クリップの不透明度で下向きマスクを解除。ユーザー確定仕様とは区別。
+- 整理: 形状定義の共有、対象解決と素材取得の分離、マスクとクリップ描画の責務、加算光の中間合成検証を明示。現行の直接合成では対象限定ができない点を記録。
+- 変更: docs/SHAPES_AND_MASKS.md新規、docs/ARCHITECTURE.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 文書リンク検査・git diff --check成功。文書のみでコードテスト/アプリ再生成は対象外。
+- 未解決: 提案部分は未確定。実装・性能/画素検証は未着手。実行中処理・障害なし。
+- 次: ユーザーの仕様調整を反映する。実装依頼時は共通形状と図形演出から着手し、自画像・下段マスクへ進む。
+
+# ファイル名からのBPM読込み（完了）
+
+- 最終更新: 2026-11-14 JST。要件: 音声名のbpm### / ###bpmを読込み時に反映。
+- 方針: 新規音声のみ適用し保存済み設定を優先。大小文字・小数に対応、20〜300内の最初の有効指定を使用。
+- 実装・整理: AudioFilenameへ抽出を分離し、新規読込みを既存restoreSceneSettingsへ接続。README/AGENTS更新。既存変更を保持。
+- 検証: AudioFilenameTests 2件成功（/tmp/my-movie-filename-bpm-tests.log）。大小文字・小数・範囲境界・複数指定・桁の誤認・ディレクトリ除外を確認。git diff --check成功。
+- 変更: App.swift、AudioFilename.swift、AudioFilenameTests.swift、README.md、AGENTS.md、PROGRESS.md。
+- 生成: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成済み（/tmp/my-movie-filename-bpm-build.log）。制限環境のdsymutil拒否は制限外実行で解消。署名検証成功。
+- 次: 最新appを再起動し、bpm指定のある新規音声を選択する。実音声のGUI読込みは今回未実施。
+- 実行中処理・障害なし。
+
+# Spineオートメーション削除後の通常選択復帰（完了）
+
+- 最終更新: 2026-11-14 JST。要件: アニメーションのオートメーション削除後は詳細パネルを通常のアニメーション選択へ戻す。
+- 原因: removeLaneがブレンドをautomated=falseの固定混合として保持していた。
+- 方針: 削除時はsingleへ戻す。切替は現在名、ブレンドは現在w<0.5ならA・それ以外B。sourceIn/loop/配置は維持し、既存commitでUI/保存/Undoへ反映。
+- 修正・整理: removeLaneをsingleへ統一し、既存の詳細パネル更新を再利用。表示だけの例外処理は追加せず、固定混合の保持処理を削除。README/仕様/AGENTSを現仕様へ更新。
+- 検証: 関連7テスト成功（/tmp/my-movie-spine-remove-tests.log）。A/B境界50%、通常選択への復帰、A/B欄と混合率欄の非表示、元のブレンド状態/削除状態のUI復元、sourceIn/loop/再生位置保持を確認。git diff --check成功。
+- 変更: SpineAnimationAutomation.swift、SpineAutomationTests.swift、README.md、docs/SPINE_AUTOMATION.md、AGENTS.md、PROGRESS.md。前作業の変更を保持。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-spine-remove-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 実行中処理・未解決障害なし。次: 最新アプリを再起動し、Spineのレーン削除を利用する。
+
+# 単色背景と雪の併用時の色変更修正（完了）
+
+- 最終更新: 2026-11-14 JST。要件: 色欄だけ変化しプレビューに反映されず、再選択で元に戻る現象を修正。雪併用を含めて調査する。
+- 再現: 実NSColorPanel.colorの変更で色欄は赤、モデルは黒のまま。再選択すると黒へ戻る（/tmp/my-movie-color-repro.log）。雪ありで再現。
+- 原因: ImageEffectsEditorのNSColorWell.isContinuous=falseでパネルの色変更がモデルへ通知されない。単色背景と粒子の両色欄を連続通知へ修正。
+- 修正確認: 同じ再現テストが成功（/tmp/my-movie-color-fixed.log）。
+- 整理: 単色背景と粒子の色欄設定を共通ループへ集約し、通知設定の差異を防止。
+- 検証: 全103テスト、1件スキップ・失敗0（/tmp/my-movie-color-full-tests.log）。NSColorPanel経由の赤変更、別クリップ選択、戻って青へ変更、onChange通知、雪設定保持、JSON復元を確認。
+- 変更: ImageEffectsEditor.swift、EmptyClipTests.swift、AGENTS.md、PROGRESS.md。前作業の変更を保持。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-color-fix-build.log）。最新dist/MV Studio.app生成済み。署名検証（codesign --verify --deep --strict）・git diff --check成功。
+- 未解決障害・実行中処理なし。手動での実プロジェクト操作は未実施。実NSColorPanel通知は統合テストで再現・解消確認。
+- 次: 最新appを再起動し、雪併用クリップで単色背景の色変更を利用する。
+
+# 単色背景の追加（完了）
+
+- 最終更新: 2026-11-14 JST。要件: 色指定で塗りつぶす追加演出「単色背景」、空クリップに初期割当。
+- 方針: クリップの背面を映像全体に単色で塗り、画像と粒子を重ねる。既存の不透明度・保存・Undo/Redoに接続。初期色は黒。
+- 実装済み: SolidBackgroundモデル、演出追加/有効/削除/色選択、空クリップの初期割当、Metal共通描画。
+- 整理: 既存の線形sRGB変換を共有し、両色欄の終了処理を共通化。背景色を描画キャッシュキーへ追加。
+- 検証: 全102テスト、1件スキップ・失敗0（/tmp/my-movie-solid-full-tests.log）。単色背景のUI追加・色変更・保存・不正色拒否・空クリップ初期値、全面のRGB画素・変形済み素材との重ね合わせ・無効/削除/不透明度・キャッシュ更新を確認。
+- 変更: ImageEffects.swift、ImageEffectsEditor.swift、MetalSceneRenderer.swift、VisualTrack.swift、EmptyClipTests.swift、ImageEffectsTests.swift、docs/IMAGE_EFFECTS.md、docs/IMAGE_TIMELINE.md、AGENTS.md、PROGRESS.md（前作業を保持）。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-solid-build.log）。最新dist/MV Studio.app生成、codesign --verify --deep --strict・git diff --check成功。
+- 未解決障害・実行中処理なし。実アプリの手動操作は未実施（AppKit・Metalの統合テストで検証）。
+- 次: 最新appを再起動。追加演出から「単色背景」を選び色を指定する。新規空クリップには黒で自動割当される。
+
+# 空の画像クリップ作成（完了）
+
+- 最終更新: 2026-11-14 JST。要件: オートメーションレーンの空白右クリックで画像未設定のクリップを作成し、後で画像を設定可能にする。
+- 方針: 素材IDを任意とし、未設定stillのみ許可。既存の配置検証・保存・履歴を共有。コピーと描画・出力も対応する。
+- 実装済み: nil素材IDのstill、空白メニュー、透明描画・素材検証、画像設定、コピー。関連21テスト成功（/tmp/my-movie-empty-tests.log）。
+- 整理: 透明画像の共有キャッシュ化、メニューの強制unwrap除去、描画キャッシュIDの計算を集約。
+- 検証: アクセス可能な環境で全101テスト実行、1件スキップ・失敗0（/tmp/my-movie-empty-full-tests-unrestricted.log）。新規4件で作成メニュー・再生位置維持・保存復元・透明描画/出力検証・コピー・非同期画像設定とカーブ保持を確認。制限環境の失敗はクリップボード/エンコーダ等へのアクセス制限による。
+- 変更ファイル: VisualTrack/VisualEditor/TimelineView、ClipClipboard/PlacementEditor、ImageAssetStore/MetalSceneRenderer/VisualAssetLoader/SpinePoseProvider、EmptyClipTests、docs/IMAGE_TIMELINE.md、AGENTS.md、PROGRESS.md。
+- 生成: ./scripts/build-app.sh成功（/tmp/my-movie-empty-build-unrestricted.log）。最新dist/MV Studio.appを生成。制限環境のdsymutil拒否は制限外の実行で解消。codesign --verify --deep --strict、git diff --check成功。
+- 未解決障害・実行中処理なし。実アプリでの手動操作は未実施（AppKitイベント統合テストで確認）。
+- 次: 最新appを再起動し、画像・演出の空白右クリック→「空のクリップを作成」。後で「素材を変更…」から画像を設定する。
+
 # Spineアニメーション・オートメーション（完了）
 
 - 最終更新: 2026-11-14 JST。要件: 名前への縦スナップ/固定hold切替、左欄右クリックのA/Bブレンド、single既定。ユーザー確定: クリップ共通時計を継続し、切替で再開始しない。

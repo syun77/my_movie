@@ -19,7 +19,7 @@ actor VisualAssetLoader {
     }
 
     func validateUsed(track: VisualTrack, projectURL: URL, cancellation: ExportCancellation? = nil, includeSpine: Bool = true) async throws {
-        for id in Set(track.clips.map(\.assetID)) {
+        for id in Set(track.clips.compactMap(\.assetID)) {
             try Task.checkCancellation(); try cancellation?.check()
             guard let asset = track.asset(id) else { throw StudioError.message("素材が見つかりません。") }
             if !includeSpine, asset.kind.spineDescriptor != nil { continue }

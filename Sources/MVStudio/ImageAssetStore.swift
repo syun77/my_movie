@@ -6,6 +6,7 @@ actor ImageAssetStore {
         let image: CGImage
         init(_ image: CGImage) { self.image = image }
     }
+    private var emptyImage: CGImage?
     private let cache = NSCache<NSString, Entry>()
     init() { cache.totalCostLimit = 128 * 1024 * 1024; cache.countLimit = 32 }
 
@@ -29,6 +30,15 @@ actor ImageAssetStore {
 
     func layers(track: VisualTrack, projectURL: URL, time: Double, allowMissing: Bool) throws -> [VisualRenderLayer] {
         try track.active(at: time).filter { $0.content == .still }.compactMap { clip in
+            if clip.assetID == nil {
+                if emptyImage == nil {
+                    guard let context = CGContext(data: nil, width: 1920, height: 1080, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                          let image = context.makeImage() else { throw StudioError.message("空の画像を作成できません。") }
+                    emptyImage = image
+                }
+                return emptyImage.map { VisualRenderLayer(clip: clip, image: $0) }
+            }
             guard let asset = track.asset(clip.assetID) else { throw StudioError.message("画像の参照が不正です。") }
             do { return VisualRenderLayer(clip: clip, image: try image(at: asset.reference.resolve(projectURL: projectURL))) }
             catch { if allowMissing { return nil }; throw StudioError.message("画像を確認してください: \(asset.name)（素材管理から置き換え可能）") }
