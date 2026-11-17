@@ -131,7 +131,7 @@
 
 - 色調補正はImageEffects.ColorCorrectionに色相±180°・明度±100%・彩度0〜200%（初期0/0/100）を保存し、共通オートメーションに対応する。MetalSceneRendererのCore Image処理で素材だけに色相→明度/彩度→ブラー→ブルームの順で適用する。粒子・歌詞・スペクトラムは補正対象外。
 
-- 項目別音楽同期の現仕様は `docs/AUDIO_AUTOMATION.md`。AudioModulationをVisualClip.audioModulationsへ保存し、ParameterEvaluatorが手動値→加算/相対同期→物理範囲→個数丸めをプレビュー・出力・合成線で共有する。新規画像の拡大縮小は全帯域トランジェント・相対8%、動画は未設定。ProjectFile version 10で旧versionはバックアップして新規作成するUIへ送る。
+- 項目別音楽同期の現仕様は `docs/AUDIO_AUTOMATION.md`。AudioModulationをVisualClip.audioModulationsへ保存し、ParameterEvaluatorが手動値→加算/相対同期→物理範囲→個数丸めをプレビュー・出力・合成線で共有する。新規画像・動画は音楽同期・オートメーション・追加演出なしで配置する。ProjectFile version 10で旧versionはバックアップして新規作成するUIへ送る。
 - 拍同期は音符分母1〜16の全整数・周期240/(BPM×N)秒・拍開始共通原点。スナップの5択とは独立。トランジェント帯域は全/低/中/高/カスタムHzを項目ごとに指定する。同期だけのレーンはキーを作らず表示し、表示範囲は手動カーブがあればそちら、なければautomationRangesへ一意に保持する。
 
 - Live2D再生を検討する場合、ユーザーが任意モデルを追加できる公開アプリはSDKの「拡張性アプリケーション」に該当する可能性がある。通常の小規模事業者向け免除を前提にせず、公開前に公式の審査・契約条件を確認する（https://www.live2d.com/sdk/license/expandable/）。採用は未確定。
@@ -156,3 +156,29 @@
 - 新規音声のBPMはAudioFilename.bpmで拡張子を除いたファイル名のbpm数値/数値bpmから抽出する。大小文字・小数対応、20〜300内の先頭指定を採用。保存済みプロジェクトの設定を優先し、既存restoreSceneSettings経由でUI・スナップ・同期へ反映する。
 
 - 図形演出とマスクは `docs/SHAPES_AND_MASKS.md` の仕様を実装。共通ShapeGeometryからMetalで4形状を描画し、画面座標で配置する。自画像マスクは粒子対象外、下向きマスクは直下固定段のクリップ全体（粒子込み）が対象。所有クリップ不透明度0で下向きマスクは無作用。VisualRenderLayer.slotで空段を飛ばさず解決する。下段の中間面は段ごとに再利用し、加算粒子は中間面のアルファを増やさず背景透過率を保持する。選択中の輪郭はプレビュー専用。保存version10、v9以前はバックアップして新規作成する経路を使う。
+
+- 集中線は `docs/FOCUS_LINES.md` の仕様を実装。ImageEffects.focusLinesへ設定・seed・位相をversion10で保存。画面座標の先細り線を粒子の後にMetalで通常合成し、中央楕円は透明。9数値はキー/音楽同期、更新頻度のみ固定（0で静止）。コマ番号は相対時刻と位相から評価し、左トリムで位相を保持。自画像マスク対象外、上段からの下段マスクには含む。
+
+- 八芒星はImageEffects.octgramsに保存し、提供Octgramsの反復距離場をMetalで99ステップ描画する。速度/拡大率/明るさ/不透明度は共通自動化。速度は相対時刻＋位相への倍率で、左トリムは位相加算。全画面通常合成で、素材変形と自画像マスクには追従しない。
+
+- プレビューの尺/演出編集はPreviewFrameReuseで同じ静止素材のVisualFrameを再利用し最新clip/slotを同期反映する。動画/Spineの非同期取得とシークは直前の完成フレームを保持し、最新revisionの結果で一括置換する。displayedPreviewKeyは表示済み素材の出自を保持し、要求中のlastPreviewKeyと区別する。素材再読込・プロジェクト読込時は表示素材の識別を無効化する。編集時に一度visualsを空にすると背景フレームが提示されMetalの素材/加工キャッシュも失われるため避ける。
+
+- 集中線２はImageEffects.radialFocusとして提供GLSLの放射状4層ノイズをMetalへ移植。10Hzの時刻量子化と固定青/水色パレット、速度/拡大率/明るさ/不透明度の共通自動化を持つ。画面座標で加算し中間面アルファを保持。自画像マスク対象外、下段マスクには含む。速度は相対時刻＋位相への倍率で、左トリムは位相加算。保存version10。
+
+- 拡大ループはImageEffects.zoomLoopへ保存。加工済み配置素材をMetalのzoomLoopImageで座標変換し、約3.33秒の拡大/回転/クロスフェードを適用する。人物描画は持たない。6数値は共通自動化、中心X/Yは1080p左上原点。不透明度0は元画像。素材外は透明、自画像/下段マスク対象、粒子は別描画。左トリムで位相を保持する。
+
+- ワープ航行はImageEffects.warpFlightへ保存し、提供Warp Speed 2をMetalの100×10反復で描画する。4数値は共通自動化、左トリムはphaseOffsetで連続性を維持。通常の全画面合成でプレビュー/出力を共有する。
+
+- VignetteはImageEffects.vignetteに強さ/範囲/ぼかしを保存する。VignetteRendererの光学風1/(1+t²)²カーネルで、画面中央と半幅/半高さで正規化した楕円距離を基準に変形/色調補正後・ブラー前のリニアRGBだけを減光しアルファは維持する。共通オートメーションと描画キャッシュへ接続する。
+
+- 色収差はImageEffects.ChromaticAberrationに係数px（初期96）・角度・phaseOffsetを保存する。ChromaticAberrationRendererで6/16/19/27rad毎秒の積を3乗してずれと減光を評価する。クリップ相対時計で左トリムの位相を保持し、評価結果を描画キャッシュキーへ含める。Core Imageで赤/青のサンプルを逆方向へずらし、premultiplied RGBを減光、最大alphaで透明素材を維持する。
+
+- ワープ航行は元の蓄積光量を青〜紫の固定パレットへ変換する。明るさはパレット乗算前の強度へ適用し、黄色・緑や白への色抜けを防ぐ。
+
+- クロスグレアはImageEffects.crossGlareへ保存し、5数値を共通自動化する。CrossGlareRendererが高輝度抽出から独立2軸の正規化多段畳み込みを生成し、ブルームと共通素材面から独立評価、拡大ループ/マスク/不透明度へ接続する。仕様と最大3段での性能制約は `docs/CROSS_GLARE.md`。
+
+- Vignette品質改善の仕様と判断は `docs/VIGNETTE_QUALITY.md`。最終outputColorはsRGB/Rec.709変換後、8bit量子化直前に最大±0.5階調の固定画素ノイズをRGB共通で加える。黒白では振幅を抑え、時間を使わず全画面へ一度だけ適用する。ACESやレンズ演出との連動は別設計。
+
+- レンズフレアはImageEffects.LensFlareへ光源X/Y・大きさ・強さを保存し、Scene.metalで固定ノイズの光源と色分離ゴーストを生成する。画面座標の線形加算合成で、共通オートメーション・音楽同期に対応。
+
+- レンズフレアの自動移動は初期OFF。LensFlare.sourcePositionがクリップ相対時計＋phaseOffsetから元シェーダーの軌道を評価し、左トリムで位相を保持する。ON時はX/Yの設定と自動化を保持して無視し、入力を無効化する。

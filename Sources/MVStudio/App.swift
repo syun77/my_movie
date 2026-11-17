@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let projectURL: URL
         let time: Double
         let revision: Int
+        let key: PreviewKey
     }
     private var previewFrameTask: Task<Void, Never>?
     private var previewRevision = 0
@@ -165,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.visuals.onProcessing = { [weak self] value in self?.imageProcessing = value; self?.refreshControls() }
         placementEditor.visuals.onAssetsReload = { [weak self] in
             guard let self else { return }
-            self.lastPreviewKey = nil; self.previewRevision += 1
+            self.lastPreviewKey = nil; self.displayedPreviewKey = nil; self.previewRevision += 1
             Task { await self.previewFrames.invalidate(); self.refreshPreviewFrames() }
         }
         placementEditor.visuals.onBeginEdit = { [weak self] in _ = self?.lyricsEditor.onCapturePlaybackTime?() }
@@ -325,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 lyricsEditor.load(preview.lyrics); placementEditor.duration = features.duration
                 seek.maxValue = features.duration; seek.doubleValue = 0; updateTime()
                 audioName.stringValue = "音声: " + url.lastPathComponent
-                previewRevision += 1; lastPreviewKey = nil; preview.visuals = []
+                previewRevision += 1; lastPreviewKey = nil; displayedPreviewKey = nil; preview.visuals = []
                 editHistory.reset(EditSnapshot(lyrics: preview.lyrics, visuals: visualTrack, settings: preview.settings)); endHistoryGroup()
                 prepareTransients()
                 _ = saveProject(); refreshPreviewFrames()
@@ -469,7 +470,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private func scrub() {
         previewRevision += 1; lastPreviewKey = nil
         player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue
-        preview.visuals = []; preview.renderedTime = preview.time
         updateTime()
     }
     private func tick() {
@@ -495,6 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let assets: [VisualAsset]
     }
     private var lastPreviewKey: PreviewKey?
+    private var displayedPreviewKey: PreviewKey?
     private func refreshPreviewFrames() {
         guard let projectURL else { return }
         let track = previewTrack, time = preview.time
@@ -503,14 +504,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let dynamic = active.contains { $0.content.sourceIn != nil }
         if key != lastPreviewKey {
             previewRevision += 1; lastPreviewKey = key
-            preview.visuals = []; preview.renderedTime = time
-            preview.frameStatus = dynamic ? "映像を準備しています…" : nil
-            preview.invalidateFrame()
+            if let displayedPreviewKey, displayedPreviewKey.projectURL == key.projectURL,
+               displayedPreviewKey.assets == key.assets,
+               let layers = PreviewFrameReuse.stills(preview.visuals, track: track, time: time) {
+                pendingFrame = nil
+                preview.visuals = layers; preview.renderedTime = time
+                preview.frameFailure = false; preview.frameStatus = nil
+                preview.invalidateFrame()
+                return
+            }
+            if displayedPreviewKey?.projectURL != key.projectURL || active.isEmpty {
+                preview.visuals = []; preview.renderedTime = time
+                preview.invalidateFrame()
+            }
+            preview.frameStatus = dynamic && preview.visuals.isEmpty ? "映像を準備しています…" : nil
         } else if preview.frameFailure { return
         } else if previewFrameTask == nil, !dynamic || (preview.renderedTime == time && !preview.visuals.isEmpty) {
             preview.renderedTime = time; preview.invalidateFrame(); return
         }
-        pendingFrame = FrameRequest(track: track, projectURL: projectURL, time: time, revision: previewRevision)
+        pendingFrame = FrameRequest(track: track, projectURL: projectURL, time: time, revision: previewRevision, key: key)
         guard previewFrameTask == nil else { return }
         previewFrameTask = Task { [weak self] in
             guard let self else { return }
@@ -527,6 +539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                         self.status.stringValue = "素材の描画準備が再生に追従できません。一時停止しました。"
                         continue
                     }
+                    self.displayedPreviewKey = request.key
                     self.preview.visuals = layers
                     self.preview.renderedTime = request.time
                     self.preview.frameFailure = false; self.preview.frameStatus = nil

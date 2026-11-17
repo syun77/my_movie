@@ -10,7 +10,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     var onCommit: ((ImageEffects) -> Void)?
     var onPreview: ((ImageEffects?) -> Void)?
     private enum Kind: Int, CaseIterable {
-        case blur, bloom, particles, embers, snow, orbs, shake, colorCorrection, solidBackground, shape, mask
+        case lensFlare, crossGlare, chromaticAberration, vignette, warpFlight, radialFocus, zoomLoop, octgrams, blur, bloom, particles, embers, snow, orbs, focusLines, shake, colorCorrection, solidBackground, shape, mask
 
         var title: String {
             switch self {
@@ -18,13 +18,22 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .mask: return "マスク"
             case .solidBackground: return "単色背景"
             case .blur: return "ガウスブラー"
+            case .lensFlare: return "レンズフレア"
+            case .crossGlare: return "クロスグレア"
             case .bloom: return "ブルーム"
             case .particles: return "光の粒子"
             case .embers: return "舞い上がる火の粉"
             case .snow: return "雪"
-            case .orbs: return "光の粒子2"
+            case .radialFocus: return "集中線２"
+            case .zoomLoop: return "拡大ループ"
+            case .octgrams: return "八芒星"
+            case .warpFlight: return "ワープ航行"
+        case .orbs: return "光の粒子2"
+            case .focusLines: return "集中線"
             case .shake: return "シェイク"
-            case .colorCorrection: return "色調補正"
+            case .chromaticAberration: return "色収差"
+            case .vignette: return "Vignette（周辺減光）"
+        case .colorCorrection: return "色調補正"
             }
         }
 
@@ -34,13 +43,22 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             case .mask: return effects.mask != nil
             case .solidBackground: return effects.solidBackground != nil
             case .blur: return effects.blur != nil
+            case .lensFlare: return effects.lensFlare != nil
+            case .crossGlare: return effects.crossGlare != nil
             case .bloom: return effects.bloom != nil
             case .particles: return effects.particles != nil
             case .embers: return effects.embers != nil
             case .snow: return effects.snow != nil
-            case .orbs: return effects.orbs != nil
+            case .radialFocus: return effects.radialFocus != nil
+            case .zoomLoop: return effects.zoomLoop != nil
+            case .octgrams: return effects.octgrams != nil
+            case .warpFlight: return effects.warpFlight != nil
+        case .orbs: return effects.orbs != nil
+            case .focusLines: return effects.focusLines != nil
             case .shake: return effects.shake != nil
-            case .colorCorrection: return effects.colorCorrection != nil
+            case .chromaticAberration: return effects.chromaticAberration != nil
+            case .vignette: return effects.vignette != nil
+        case .colorCorrection: return effects.colorCorrection != nil
             }
         }
     }
@@ -58,10 +76,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private let selection = NSPopUpButton()
     private let enabled = NSButton(checkboxWithTitle: "有効", target: nil, action: nil)
     private let remove = NSButton(title: "削除", target: nil, action: nil)
+    private let focusColor = NSColorWell()
     private let shapeColor = NSColorWell()
     private let shapeKind = NSPopUpButton()
     private let maskKind = NSPopUpButton()
     private let maskTarget = NSPopUpButton()
+    private let flareAutomatic = NSButton(checkboxWithTitle: "自動移動", target: nil, action: nil)
     private let maskInverted = NSButton(checkboxWithTitle: "反転", target: nil, action: nil)
     private let maskStatus = NSTextField(wrappingLabelWithString: "")
     private let backgroundNotice = NSButton(checkboxWithTitle: "単色背景が有効", target: nil, action: nil)
@@ -109,7 +129,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         remove.target = self; remove.action = #selector(removeEffect)
         for (well, action, label) in [(color, #selector(changeColor), "光の粒子の色"),
                                       (backgroundColor, #selector(changeBackgroundColor), "単色背景の色"),
-                                      (shapeColor, #selector(changeShapeColor), "図形の色")] {
+                                      (shapeColor, #selector(changeShapeColor), "図形の色"),
+                                      (focusColor, #selector(changeFocusColor), "集中線の色")] {
             well.target = self; well.action = action
             well.colorWellStyle = .minimal
             well.isContinuous = true
@@ -127,6 +148,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         removeEmitter.setAccessibilityLabel("発生源を削除")
         removeEmitter.target = self; removeEmitter.action = #selector(deleteEmitter)
 
+        typealias Chromatic = ImageEffects.ChromaticAberration
+        contents[.chromaticAberration] = row(number("ずれ量 px", .chromaticAmount, \.chromaticAberration, \.amount, Chromatic().amount, Chromatic.amountRange)
+            + number("角度 °", .chromaticAngle, \.chromaticAberration, \.angle, Chromatic().angle, Chromatic.angleRange))
+        contents[.vignette] = row(number("強さ %", .vignetteStrength, \.vignette, \.strength, 70, 0...100)
+            + number("範囲 %", .vignetteSize, \.vignette, \.size, 70, 0...100)
+            + number("ぼかし %", .vignetteSoftness, \.vignette, \.softness, 60, 0...100))
         typealias Correction = ImageEffects.ColorCorrection
         contents[.colorCorrection] = row(number("色相 °", .colorHue, \.colorCorrection, \.hue, Correction().hue, Correction.hueRange)
             + number("明度 %", .colorBrightness, \.colorCorrection, \.brightness, Correction().brightness, Correction.brightnessRange)
@@ -140,6 +167,11 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         typealias Particles = ImageEffects.Particles
         typealias Embers = ImageEffects.Embers
         contents[.blur] = row(number("半径 px", .blurRadius, \.blur, \.radius, Blur().radius, Blur.radiusRange))
+        flareAutomatic.target = self
+        flareAutomatic.action = #selector(changeFlareAutomatic)
+        flareAutomatic.identifier = NSUserInterfaceItemIdentifier("visuals.flare.automatic")
+        contents[.lensFlare] = NSStackView(views: [flareAutomatic] + ImageEffects.LensFlare.parameters.map { row(numeric($0)) })
+        contents[.crossGlare] = NSStackView(views: ImageEffects.CrossGlare.parameters.map { row(numeric($0)) })
         contents[.bloom] = row(number("しきい値 %", .bloomThreshold, \.bloom, \.threshold, Bloom().threshold, Bloom.thresholdRange)
             + number("半径 px", .bloomRadius, \.bloom, \.radius, Bloom().radius, Bloom.radiusRange)
             + number("強さ %", .bloomIntensity, \.bloom, \.intensity, Bloom().intensity, Bloom.intensityRange))
@@ -181,8 +213,13 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             row(number("速度 %", .orbsSpeed, \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
                 + number("不透明度 %", .orbsOpacity, \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
         ])
+        contents[.radialFocus] = NSStackView(views: ImageEffects.RadialFocus.parameters.map { row(numeric($0)) })
+        contents[.zoomLoop] = NSStackView(views: ImageEffects.ZoomLoop.parameters.map { row(numeric($0)) })
+        contents[.octgrams] = NSStackView(views: ImageEffects.Octgrams.parameters.map { row(numeric($0)) })
+        contents[.warpFlight] = NSStackView(views: ImageEffects.WarpFlight.parameters.map { row(numeric($0)) })
+        buildFocusControls()
         buildShapeControls()
-        for kind in [Kind.particles, .embers, .snow, .orbs, .shape, .mask] {
+        for kind in [Kind.lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .shape, .mask] {
             contents[kind]?.orientation = .vertical
             contents[kind]?.alignment = .leading
             contents[kind]?.spacing = 4
@@ -323,24 +360,38 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .mask: enabled.state = effects.mask?.isEnabled == true ? .on : .off
         case .solidBackground: enabled.state = effects.solidBackground?.isEnabled == true ? .on : .off
         case .blur: enabled.state = effects.blur?.isEnabled == true ? .on : .off
+        case .lensFlare: enabled.state = effects.lensFlare?.isEnabled == true ? .on : .off
+        case .crossGlare: enabled.state = effects.crossGlare?.isEnabled == true ? .on : .off
         case .bloom: enabled.state = effects.bloom?.isEnabled == true ? .on : .off
         case .particles: enabled.state = effects.particles?.isEnabled == true ? .on : .off
         case .embers: enabled.state = effects.embers?.isEnabled == true ? .on : .off
         case .snow: enabled.state = effects.snow?.isEnabled == true ? .on : .off
         case .shake: enabled.state = effects.shake?.isEnabled == true ? .on : .off
+        case .chromaticAberration: enabled.state = effects.chromaticAberration?.isEnabled == true ? .on : .off
+        case .vignette: enabled.state = effects.vignette?.isEnabled == true ? .on : .off
         case .colorCorrection: enabled.state = effects.colorCorrection?.isEnabled == true ? .on : .off
+        case .focusLines: enabled.state = effects.focusLines?.isEnabled == true ? .on : .off
+        case .radialFocus: enabled.state = effects.radialFocus?.isEnabled == true ? .on : .off
+        case .zoomLoop: enabled.state = effects.zoomLoop?.isEnabled == true ? .on : .off
+        case .octgrams: enabled.state = effects.octgrams?.isEnabled == true ? .on : .off
+        case .warpFlight: enabled.state = effects.warpFlight?.isEnabled == true ? .on : .off
         case .orbs: enabled.state = effects.orbs?.isEnabled == true ? .on : .off
         case nil: enabled.state = .off
         }
         if let particles = effects.particles, !color.isActive { color.color = particles.color.nsColor }
         color.isEnabled = editable
+        if let focus = effects.focusLines, !focusColor.isActive { focusColor.color = focus.color.nsColor }
+        focusColor.isEnabled = editable
         if let background = effects.solidBackground, !backgroundColor.isActive { backgroundColor.color = background.color.nsColor }
         backgroundColor.isEnabled = editable
+        flareAutomatic.state = effects.lensFlare?.automaticMotion == true ? .on : .off
+        flareAutomatic.isEnabled = editable && effects.lensFlare != nil
         updateShapeControls()
         updateEmitterControls()
         for input in numbers {
             let value = input.read(effects)
-            input.field.isEnabled = editable && value != nil
+            let automaticPosition = effects.lensFlare?.automaticMotion == true && input.parameter().map { [ImageParameter.flareX, .flareY].contains($0) } == true
+            input.field.isEnabled = editable && value != nil && !automaticPosition
             input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }
             input.field.hasMusic = input.parameter().flatMap { shownClip?.audioModulations[$0] } != nil
             input.field.hasAutomation = input.parameter().flatMap { shownClip?.curve($0) } != nil
@@ -417,12 +468,21 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .mask: result.mask = .init()
         case .solidBackground: result.solidBackground = .init()
         case .blur: result.blur = .init()
+        case .lensFlare: result.lensFlare = .init()
+        case .crossGlare: result.crossGlare = .init()
         case .bloom: result.bloom = .init()
         case .particles: result.particles = .init()
         case .embers: result.embers = .init()
         case .snow: result.snow = .init()
         case .shake: result.shake = .init()
+        case .chromaticAberration: result.chromaticAberration = .init()
+        case .vignette: result.vignette = .init()
         case .colorCorrection: result.colorCorrection = .init()
+        case .focusLines: result.focusLines = .init()
+        case .radialFocus: result.radialFocus = .init()
+        case .zoomLoop: result.zoomLoop = .init()
+        case .octgrams: result.octgrams = .init()
+        case .warpFlight: result.warpFlight = .init()
         case .orbs: result.orbs = .init()
         }
         selected = kind
@@ -438,12 +498,21 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .mask: result.mask?.isEnabled = isEnabled
         case .solidBackground: result.solidBackground?.isEnabled = isEnabled
         case .blur: result.blur?.isEnabled = isEnabled
+        case .lensFlare: result.lensFlare?.isEnabled = isEnabled
+        case .crossGlare: result.crossGlare?.isEnabled = isEnabled
         case .bloom: result.bloom?.isEnabled = isEnabled
         case .particles: result.particles?.isEnabled = isEnabled
         case .embers: result.embers?.isEnabled = isEnabled
         case .snow: result.snow?.isEnabled = isEnabled
         case .shake: result.shake?.isEnabled = isEnabled
+        case .chromaticAberration: result.chromaticAberration?.isEnabled = isEnabled
+        case .vignette: result.vignette?.isEnabled = isEnabled
         case .colorCorrection: result.colorCorrection?.isEnabled = isEnabled
+        case .focusLines: result.focusLines?.isEnabled = isEnabled
+        case .radialFocus: result.radialFocus?.isEnabled = isEnabled
+        case .zoomLoop: result.zoomLoop?.isEnabled = isEnabled
+        case .octgrams: result.octgrams?.isEnabled = isEnabled
+        case .warpFlight: result.warpFlight?.isEnabled = isEnabled
         case .orbs: result.orbs?.isEnabled = isEnabled
         case nil: return
         }
@@ -459,12 +528,21 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .mask: result.mask = nil
         case .solidBackground: result.solidBackground = nil
         case .blur: result.blur = nil
+        case .lensFlare: result.lensFlare = nil
+        case .crossGlare: result.crossGlare = nil
         case .bloom: result.bloom = nil
         case .particles: result.particles = nil
         case .embers: result.embers = nil
         case .snow: result.snow = nil
         case .shake: result.shake = nil
+        case .chromaticAberration: result.chromaticAberration = nil
+        case .vignette: result.vignette = nil
         case .colorCorrection: result.colorCorrection = nil
+        case .focusLines: result.focusLines = nil
+        case .radialFocus: result.radialFocus = nil
+        case .zoomLoop: result.zoomLoop = nil
+        case .octgrams: result.octgrams = nil
+        case .warpFlight: result.warpFlight = nil
         case .orbs: result.orbs = nil
         case nil: return
         }
@@ -472,9 +550,18 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     }
 
     private func deactivateColors() {
+        focusColor.deactivate()
         shapeColor.deactivate()
         color.deactivate()
         backgroundColor.deactivate()
+    }
+
+    @objc private func changeFlareAutomatic() {
+        guard editable, effects.lensFlare != nil, window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag()
+        var result = effects
+        result.lensFlare?.automaticMotion = flareAutomatic.state == .on
+        onCommit?(result)
     }
 
     @objc private func changeBackgroundColor() {
@@ -490,6 +577,37 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         result.particles?.color = RGBColor(color.color)
         onCommit?(result)
     }
+    @objc private func changeFocusColor() {
+        guard editable, selected == .focusLines else { return }
+        var result = effects
+        result.focusLines?.color = RGBColor(focusColor.color)
+        onCommit?(result)
+    }
+
+    private func numeric(_ parameter: ImageParameter) -> [NSView] {
+        let effect = parameter.effect!
+        return number(effect.title, initial: effect.initial, range: effect.range, parameter: { parameter },
+                      read: effect.read, update: effect.write)
+    }
+
+    private func buildFocusControls() {
+        let frequency = number("更新頻度 回/秒", initial: 12, range: 0...30, parameter: { nil },
+                               read: { $0.focusLines?.frequency }, update: { effects, value in
+            var result = effects
+            result.focusLines?.frequency = value
+            return result
+        })
+        focusColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.focusColor")
+        contents[.focusLines] = NSStackView(views: [
+            row(numeric(.focusX) + numeric(.focusY)),
+            row(numeric(.focusWidth) + numeric(.focusHeight)),
+            row(numeric(.focusCount) + numeric(.focusThickness)),
+            row(numeric(.focusLength) + numeric(.focusVariation)),
+            row(frequency + numeric(.focusOpacity)),
+            row([NSTextField(labelWithString: "色"), focusColor])
+        ])
+    }
+
     private func buildShapeControls() {
         for (picker, label) in [(shapeKind, "図形の種類"), (maskKind, "マスクの種類")] {
             picker.addItems(withTitles: ShapeGeometry.Kind.allCases.map(\.title))
@@ -504,11 +622,6 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         backgroundNotice.target = self; backgroundNotice.action = #selector(toggleBackgroundNotice)
         copyShape.target = self; copyShape.action = #selector(copyShapeToMask)
         shapeColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.shapeColor")
-        func numeric(_ parameter: ImageParameter) -> [NSView] {
-            let effect = parameter.effect!
-            return number(effect.title, initial: effect.initial, range: effect.range, parameter: { parameter },
-                          read: effect.read, update: effect.write)
-        }
         func geometryRows(_ isMask: Bool) -> [NSView] {
             let parameters: [ImageParameter] = isMask
                 ? [.maskWidth, .maskHeight, .maskX, .maskY, .maskRotation, .maskInnerRatio]

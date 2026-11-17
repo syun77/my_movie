@@ -1,3 +1,213 @@
+# レンズフレア自動移動（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 自動移動をON可能にする。有効中の位置オートメーションは不要。
+- 方針: 初期OFF、元のsin(t)/sin(0.913t)軌道をクリップ時計で評価。左トリムの位相を保持、X/Y入力は無効化し設定は保持。
+- 実装: LensFlare/MetalSceneRenderer/ImageAnimation/ImageEffectsEditor、LensFlareTests、docs/IMAGE_EFFECTS/AGENTS。初期OFFを保持し、ON時も大きさ・強さの自動化は利用可能。
+- 整理: 元シェーダー座標への変換と時計をLensFlare.sourcePositionへ集約、UIは既存の編集確定経路を利用。
+- 検証: フレア6件成功（/tmp/my-movie-flare-auto-test.log）。式一致・保存・既存設定のOFF読込・UI切替・描画変化・シーク再現・左トリム位相・自動移動ONのMP4を確認。git diff --check成功。
+- テスト開始時に既存VignetteTestsの括弧不足でコンパイル失敗。欠けた閉じ括弧1つを補って検証を再開した。他の作業内容は保持。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-flare-auto-build.log）。署名検証・git diff --check成功。実行中処理・障害なし。
+- 次: 最新appを再起動し、追加演出→レンズフレア→自動移動をONにする。
+- 未検証: 実ユーザー素材による手動GUI操作。
+
+# Vignetteの画面比率対応（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 解像度の縦横比に沿った形状にする。既存変更を保持。
+- 方針: キャンバスの半幅/半高さで座標を正規化し、画面と同じ縦横比の楕円へ変更。四隅の相対距離と3数値/光学風曲線は維持。
+- 現状確認: 楕円正規化のコード/文書/横長・縦長・正方形の参照テストまで反映済み。既存6件成功ログ /tmp/my-movie-vignette-aspect-tests.log を確認。
+- 整理: 半幅/半高さの正規化と最小遷移幅の解像度依存性を確認。共通のVignetteRendererを維持し、制約コメントを現仕様へ更新。
+- 検証: 横/縦の同じ割合で減光が一致する統合描画試験を追加。関連7件（3比率/倍率/透明/余白/MP4/UI/保存）成功、ログ /tmp/my-movie-vignette-aspect-final.log。PNG /tmp/my-movie-vignette-preview.pngで横長楕円を目視確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-vignette-aspect-build.log）。署名検証・git diff --check成功。
+- 変更: VignetteRenderer/VignetteTests、docs/IMAGE_EFFECTS/VIGNETTE_QUALITY/AGENTS/PROGRESS。他の変更を保持。
+- 障害・実行中処理なし。実ユーザー素材の手動GUI操作は未検証。次: 最新appを再起動して楕円形状を利用する。
+
+# 色収差の時間変動改善（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 提供シェーダーの4周波数の積・3乗によるずれと減光を再現。
+- 方針: ずれ量は1080p基準pxの係数、初期96px（画面幅の5%）。角度を維持。クリップ相対時刻と左トリム位相で評価し、評価結果をキャッシュに含める。透明度を維持する。
+- 実装: 時間波形/減光/サンプル方向/左トリム位相/保存を接続。整理で評価結果とCI処理をChromaticAberrationRendererへ分離し、静的処理から時間依存のSampleキャッシュへ変更。
+- 検証: 関連4テスト成功（/tmp/my-movie-chromatic-pulse-tests.log）。式一致/シーク/左トリム/保存/0/無効/UIを確認。減光画素検証を含む全156テスト・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-chromatic-pulse-full.log）。
+- 変更: ImageEffects/ImageAnimation/MetalSceneRenderer、ChromaticAberrationRenderer新規、ChromaticAberrationTests、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-chromatic-pulse-build.log）。署名・git diff --check成功。描画PNGを目視確認。
+- 制約: 実ユーザー素材での手動GUI操作は未検証。実行中処理・障害なし。
+- 次: 最新appを再起動し、時間変動する色収差を利用する。
+
+# レンズフレア実装（完了）
+
+- 最終更新: 2026-11-18 JST。提供シェーダーを参考に追加演出を実装。既存未コミット変更を保持。
+- 方針: 光源X/Y・大きさ・強さ、固定ノイズ、画面座標の加算合成。保存・キー・音楽同期・共通出力へ接続。
+- 実装済み: LensFlare.swift、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal。README/docs/IMAGE_EFFECTS/AGENTS更新。
+- 整理: パラメーター定義と数値UIは共通経路を利用し、ゴースト計算をシェーダー関数へ集約。未使用の参照コードと背景減算は含めない。
+- 検証: 全154件・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-flare-full.log）。追加MP4を含むフレア4件も成功（/tmp/my-movie-flare-final.log）。描画PNG /tmp/my-movie-lens-flare-preview.png を目視確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-flare-build.log）。署名・同梱シェーダー一致・git diff --check成功。実行中処理・障害なし。
+- 次: 最新appを再起動し、追加演出→レンズフレアを利用する。
+- 制約: ユーザー素材による手動GUI操作は未検証。
+
+# Vignette品質改善（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 検討書に沿って品質改善を実装する。既存未コミット変更は保持。
+- 方針: 3数値の操作を維持し、専用CIカーネルで連続する光学風減衰へ変更。最終sRGB/Rec.709変換後に固定画素ノイズを加え8bit量子化の縞を緩和。
+- 実装: VignetteRendererへ1/(1+t²)²のリニアRGB減衰を分離。既存3数値/保存/自動化を維持し、Scene.metalの最終出力にRGB共通・静止ディザを追加。
+- 検証: 出力ディザの平均/最大量子化誤差/中立色/黒白/再現、減衰/シーク/UI/MP4テスト成功。参照画像の色空間とbitmapの上下方向を修正後、透明度/全色/倍率/余白のCPU参照比較成功（/tmp/my-movie-vignette-quality-reference.log）。
+- 整理: 減衰を独立した責務へ移し旧マスク/色行列合成とforce unwrapを削除。範囲外で減衰を切らず連続性を維持。実装仕様をdocs/IMAGE_EFFECTS/VIGNETTE_QUALITY・AGENTSへ反映。
+- 全体検証: 全151テスト・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-vignette-quality-full.log）。PNG /tmp/my-movie-vignette-preview.png と /tmp/my-movie-vignette-quality-dark.pngを目視確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-vignette-quality-build.log）。署名・同梱Scene.metal一致・git diff --check成功。
+- 未検証: 実ユーザー素材での手動GUI操作・写真素材による主観比較。動画圧縮後のバンディング完全除去は保証しない。障害・実行中処理なし。
+- 次: 最新appを再起動しVignetteを利用。既存の設定も新曲線で描画されるため見た目は変化する。
+- 変更: VignetteRenderer.swift/OutputDitherTests.swift新規、MetalSceneRenderer/Scene.metal/VignetteTests、README/docs/IMAGE_EFFECTS/VIGNETTE_QUALITY/AGENTS/PROGRESS。既存の他変更を保持。
+
+# Vignette品質改善の検討（完了・未実装）
+
+- 最終更新: 2026-11-18 JST。要件: 提供された光学減衰/色空間/ディザ/レンズ演出案を検討する。
+- 完了: 現行実装を確認しdocs/VIGNETTE_QUALITY.mdに改善優先度、数式、出力ディザ、色管理、検証基準を記録。現状はlinear sRGB/RGBAh/rgba16Float、ブルーム前適用。ACES・放射状色収差・周辺ブラーは別途検討。
+- 整理: 光学式と演出用の近似、ヴィネット処理と最終出力品質機能を分離。既存のクロスグレアなどの作業は変更しない。
+- 検証: 文書参照・git diff --check。コード未変更のためテストとapp再生成は対象外。画質/性能の改善は未検証。
+- 次: 実装依頼時にカーブの比較画像から式/既定値を確定し、専用カーネル→出力ディザ→検証→app生成。今回の実行中処理・障害なし。
+
+# クロスグレア実装（完了）
+
+- 最終更新: 2026-11-18 JST。設計案の実装を依頼。既存変更を保持しモデル/UI/自動化/GPU生成/共通合成を接続する。
+- 実装: モデル/5数値/共通UI/キー/音楽同期、Metal方向別畳み込み、素材/拡大ループ共通合成、キャッシュへ接続。整理で数値UIの定義を共通numericへ集約。
+- 検証: 新規4テスト成功（/tmp/my-movie-cross-tests.log）。PNGを目視確認。制限内のMetal不可は権限付き実行で解消。
+- 検証追加: CPU参照全画素比較/透明RGB漏れ/最大3段/MP4を含む全146テスト成功（外部Spineサンプル1件スキップ、/tmp/my-movie-cross-full.log）。最大3段GPU初回235〜259ms/再描画148〜162msで30fpsは未達。フル解像度の画質を維持し制約を文書化。
+- 整理: UI数値を共通numericへ集約、強さを生成キーから分離、実テクスチャ寸法で保持メモリ計算、演出消失/cache破棄時の作業面解放を追加。
+- 最終検証: 全147テスト成功、外部Spineサンプル1件スキップ（/tmp/my-movie-cross-full-final.log）。クロスグレア8件はMP4/CPU参照/合成/シーク/UI/保存を含む。最終最大設定初回GPU14.5秒の遅延（原因未特定）、再描画170msを観測し文書に追記。
+- ビルド: 制限内dsymutil拒否後、権限付き ./scripts/build-app.sh 成功。最新dist/MV Studio.app生成済み（/tmp/my-movie-cross-build-final.log）。署名検証/同梱Scene.metal一致/git diff --check成功。
+- 変更: CrossGlareRenderer/CrossGlareTests新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、docs/CROSS_GLARE/IMAGE_EFFECTS、README/AGENTS/PROGRESS。
+- 未検証: 実ユーザープロジェクトの手動GUI操作と動画/Spineを用いた演出専用の画素比較。最大設定3段の再生負荷は仕様書へ記録。実行中処理・ビルド障害なし。
+- 次: 最新appを再起動し、追加演出→クロスグレアを利用する。
+
+# クロスグレア設計（完了・未実装）
+
+- 最終更新: 2026-11-18 JST。要件: クロスグレア演出を実装する設計を考える。今回は文書のみ。
+- 完了: 既存ブルーム/素材加工/合成/自動化を調査。docs/CROSS_GLARE.mdへ対象、5数値の提案、固定描画順、方向別GPU畳み込み、透明合成、マスク、キャッシュ/メモリ、保存/UI、自動化、実装順と受入検証を記録。
+- 変更: docs/CROSS_GLARE.md新規、docs/IMAGE_EFFECTS.mdに参照、AGENTS.mdへ設計の所在を追記。本項目以外の既存変更は保持。
+- 整理: ブルームとの抽出規約共有、方向ごとの独立処理、光量正規化、生成条件と合成強さのキャッシュ分離を設計へ反映。
+- 検証: 文書参照とgit diff --check成功。コード未変更のためテスト・app再生成は対象外。描画品質・性能は未測定。
+- 未解決: 数値/対象/方式は提案段階。実装は未着手。障害・実行中処理なし。
+- 次: 実装依頼時は設計書に沿ってモデル/UI/自動化、GPU生成/合成、整理、受入検証、app生成を行う。
+
+# 色収差追加（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 色収差演出を追加。既存変更を保持。
+- 方針: 赤/青を逆方向に分離。ずれ量0〜100px（1080p基準、初期8）、角度±180°（初期0）。保存・共通数値UI・自動化・共通出力へ接続。
+- 実装: モデル/2数値UI/自動化/キャッシュ/共通描画を接続。整理で既存フィルター経路と数値定義を再利用。ドキュメント更新。
+- 検証: 全139テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-chromatic-full-final.log）。新規3件で保存/自動化/入力検証/UI/描画/角度/0px/無効/キャッシュ更新を確認。PNG /tmp/my-movie-chromatic-preview.pngを目視確認。初回画素テストの座標と背景色期待値を修正済み。
+- 変更: ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer、ChromaticAberrationTests、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- ビルド: 制限内dsymutil拒否後、権限付き./scripts/build-app.sh成功。最新dist/MV Studio.app生成（/tmp/my-movie-chromatic-build-final.log）。署名検証・git diff --check成功。
+- 次: 最新appを再起動し、追加演出→色収差を利用する。
+- 未検証: 実ユーザープロジェクトでの手動GUI操作。
+- 障害・実行中処理なし。
+
+# Vignette追加（完了）
+
+- 最終更新: 2026-11-18 JST。要件: Vignette演出を追加。既存変更を保持。
+- 方針: クリップの変形後、色調補正後・ブラー前に中心基準の周辺減光。強さ/範囲/ぼかし、共通数値UI・自動化・保存・出力へ接続。
+- 実装: モデル/3数値UI/自動化/描画/キャッシュを接続。整理でフィルター判定をImageKey.needsFilteringへ共通化。README/docs/AGENTSを更新。
+- 初回検証: 保存/自動化成功、描画は制限内Metal不可。制限外で全テスト実行中（/tmp/my-movie-vignette-full.log）。
+- 変更: ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer、VignetteTests、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- 検証: 全136テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-vignette-full.log）。3新規テストで保存/自動化/検証/UI/強さ変更/キャッシュ/透明重ね合わせを確認。PNG /tmp/my-movie-vignette-preview.pngを目視確認。初回描画テストのID重複を解消。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成。ログ /tmp/my-movie-vignette-build.log。署名検証・git diff --check成功。
+- 未検証: 実ユーザープロジェクトでの手動GUI操作。障害・実行中処理なし。
+- 次: 最新appを再起動し、追加演出→Vignette（周辺減光）を利用する。
+
+# ワープ航行の実装（完了）
+
+- 最終更新: 2026-11-18 JST。提供Warp Speed 2をMetalへ移植。速度・拡大率・明るさ・不透明度、保存/自動化/左トリム/共通出力に対応。既存変更を保持。
+- 実装済み: WarpFlight、4数値の共通UI/自動化、保存/トリム/Metal合成。整理でuniform設定は既存drawFullscreenEffectを再利用し、未使用入力を追加せずパラメーターを集約。
+- 検証: 全132テスト成功（外部Spineサンプル1件スキップ）、ログ /tmp/my-movie-warp-full.log。追加UIを含む最終3テスト成功（/tmp/my-movie-warp-final.log）。PNG /tmp/my-movie-warp-preview.png を目視確認。制限環境のMetal不可は権限付き実行で解消。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-warp-build.log）。署名検証・同梱Scene.metal一致を確認。
+- 変更: WarpFlight.swift/WarpFlightTests.swift新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- 未検証: 実プロジェクトの手動GUI操作、1080p長時間性能。障害・実行中処理なし。
+- 次: 最新appを再起動し、追加演出「ワープ航行」を利用する。
+
+# 拡大ループの素材適用（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 人物描画を削除し、現在の配置画像へ拡大/回転/クロスフェードを適用。
+- 方針: 加工済み素材のサンプル座標を変換し、通常素材描画を置き換える。不透明度0は元画像、中心X/Yは1080p座標で指定。
+- 実装: 人物シェーダーを全削除。通常素材描画をzoomLoopImageへ切替、6数値（中心X/Y追加）を共通自動化/UIへ接続。不透明度0で元画像へ戻す。マスクは変換後へ適用。
+- 整理: 元画像と拡大画像の読み取り（ブルーム含む）をsampleImageLayerへ共通化し、素材外を透明に統一。処理済み素材キャッシュは時刻と独立に再利用。
+- 検証: 新規/更新5テスト成功（/tmp/my-movie-zoom-source-tests.log）。素材の色/向き・中心変更・時刻変化/シーク・左トリム・元画像復帰・空素材・自画像マスク・6数値UI/保存/キー・画像素材付きMP4を確認。PNGを目視確認。
+- 全体: 全130テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-zoom-source-full.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-zoom-source-build.log）、最新dist/MV Studio.app生成。署名検証・同梱Scene.metal一致・git diff --check成功。
+- 変更: ZoomLoop/ImageAnimation/EffectAutomation/MetalSceneRenderer/Scene.metal、ZoomLoopTests、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。既存の他変更は保持。
+- 未検証: 実ユーザープロジェクトでの手動GUI操作・長時間性能。障害・実行中処理なし。
+- 次: 最新アプリを再起動し、画像クリップの追加演出「拡大ループ」を利用する。
+
+# 拡大ループの実装（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 添付の人物描画・拡大ループGLSLを追加演出へ移植。
+- 方針: 原画と拡大/回転/クロスフェードをMetalで再現。4数値、保存、キー/同期、トリム、共通プレビュー/出力へ接続。既存変更は保持。
+- 実装済み: ZoomLoopモデル・4数値自動化/UI・Metal人物描画・通常合成・トリム位相・保存。
+- 整理: イラスト関数を専用structへ分離し未使用処理/uniformを除外。ハイライト中心のゼロ除算を防止。
+- 初回検証: 新規2テスト成功（/tmp/my-movie-zoom-loop-tests.log）。保存/キー/トリム/描画再現/時刻変化/透明化。初回のキャッシュ権限制限と生成したkey path名の誤りは解消済み。
+- 全体検証: 全129テスト・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-zoom-loop-full.log）。追加4件はUI追加/有効/削除/数値、MP4のPTSと人物画素を含む。PNG /tmp/my-movie-zoom-loop-preview.pngを目視確認。
+- 整理後: 全画面シェーダーのuniform設定を共通化。関連9テスト成功（/tmp/my-movie-zoom-loop-final.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-zoom-loop-build.log）。最新dist/MV Studio.app生成、署名検証・同梱Scene.metal一致・git diff --check成功。
+- 変更: ZoomLoop.swift/ZoomLoopTests.swift新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。既存変更を保持。
+- 未検証: 実プロジェクトの手動GUI操作、長時間性能。障害・実行中処理なし。
+- 次: 最新appを再起動し「追加演出」→「拡大ループ」を利用する。
+
+# 集中線２の実装（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 提供された放射状PerlinノイズのGLSLを追加演出「集中線２」として実装。
+- 方針: ノイズ4層・10Hz時刻量子化・青/水色パレットをMetalへ移植。背景を保つ加算光として合成。速度/拡大率/明るさ/不透明度を共通編集/自動化へ接続。
+- 実装: RadialFocusモデル・4数値の共通自動化/編集UI・有効/削除・Metal放射ノイズ・加算合成・phaseOffsetトリムを接続。保存version10。
+- 全体検証: 全125テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-radial-focus-full.log）。新規5件で保存/キー/トリム/10Hz再現/静止/非表示/UI/マスク/加算/MP4フレーム時刻と青い画素を確認。PNG /tmp/my-movie-radial-focus-preview.png を目視確認。
+- 整理: 未使用のShadertoy uniformと行列を持たず、ノイズ/パレット関数と描画設定を分離。UIは共通numericとパラメーター一覧を再利用。
+- 最終関連検証: 整理後コードで8テスト成功（/tmp/my-movie-radial-focus-final.log）。UndoTestsの4数値ドラッグ・自動保存/Undo/Redoも成功。
+- 変更: RadialFocus.swift/RadialFocusTests.swift新規、EffectAutomation/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、UndoTests、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。既存未コミット変更を保持。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-radial-focus-build.log）。最新dist/MV Studio.app生成済み。署名検証・release/appのMach-O UUID一致・同梱Scene.metal一致・git diff --check成功。
+- 次: 最新appを再起動し「追加演出」→「集中線２」を利用する。
+- 障害・実行中処理なし。実プロジェクトの手動操作・長時間性能は未検証。
+
+# 編集時プレビューちらつき修正（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 尺・演出変更のちらつきを解消する。
+- 方針: 非同期取得前の全段消去を廃止し完成フレームを保持。同一静止素材は最新clip/slotへ同期更新。区間外/削除とプロジェクト切替は保持対象外。
+- 実装: Appの編集/シーク時の空配列化を廃止。PreviewFrameReuseへ静止素材の再利用とclip/slot再結合を分離。表示済み素材のキーを別管理し、素材変更/再読込時の誤再利用を防止。動画/Spineは完成済みフレームを保持して最新世代のみ一括反映。
+- 整理: 素材取得要求と表示中素材の識別を区別し、共通再利用判定を専用型へ集約。既存の世代照合/キャッシュを維持。
+- 検証: 全120テスト成功、外部Spineサンプル1件スキップ（/tmp/my-movie-flicker-full-unrestricted.log）。新規単体2件と実App統合1件で素材同一性・最新値・段移動・30回連続変更・編集開始・シーク・削除・新素材の再取得判定を確認。制限内のMetal/メディア/ペーストボード失敗は制限外で解消。初回fixtureの未配置clip更新を修正。
+- ビルド: 制限内のdsymutil拒否（/tmp/my-movie-flicker-build.log）は制限外で解消。./scripts/build-app.sh成功、最新dist/MV Studio.app生成済み（/tmp/my-movie-flicker-build-unrestricted.log）。署名検証・同梱Metal一致・git diff --check成功。
+- 変更: App.swift、PreviewFrameReuse.swift、PreviewFrameReuseTests.swift、AGENTS.md、PROGRESS.md。既存変更を保持。
+- 実行中処理・障害なし。実ユーザープロジェクトの手動操作とちらつきの動画計測は未実施。次: 最新appを再起動して尺/演出編集を利用する。
+
+# 八芒星演出の実装（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 提供Octgramsシェーダーを追加演出「八芒星」として実装。
+- 実装: 99ステップの反復距離場をMetalへ移植。速度/拡大率/明るさ/不透明度の共通数値UI・キー・音楽同期、有効/削除、version10保存、左トリム位相、プレビュー/出力の共通描画。
+- 整理: UI生成は共通numericとパラメーター一覧を使用。モデル検証は共通範囲に集約。既存未コミット変更を保持。
+- 変更: Octgrams.swift/OctgramsTests.swift新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、README/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- 検証: 全117テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-oct-verified-tests.log）。新規2件でキー評価・保存・不正値・トリム・描画再現・時刻変化・非表示を確認。PNG /tmp/my-movie-oct-preview.pngを目視確認。
+- 初回はテストのキー時刻と背景前提を修正して再実行。制限内Swiftキャッシュ書込失敗は一時キャッシュと制限外実行で解消。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-oct-build.log）。最新dist/MV Studio.app生成、署名検証・同梱シェーダー一致・git diff --check成功。
+- 未検証: 実プロジェクトの手動GUI操作、八芒星固有のMP4画素比較、1080p長時間性能。実行中処理・障害なし。
+- 次: 最新appを再起動し、画像・演出の追加演出から「八芒星」を選ぶ。
+
+# 集中線エフェクトの実装（完了）
+
+- 最終更新: 2026-11-17 JST。要件: docs/FOCUS_LINES.mdの仕様を実装し、検証・整理後にアプリ生成。
+- 実装: ImageEffects.focusLines、9数値のキー/音楽同期、更新頻度0〜30の固定数値、色、有効/削除、固定seedとコマ切替、位相トリム、Metal輪郭AA・楕円除外・通常合成。保存version10。
+- 整理: 集中線の描画を専用メソッドへ分離、数値UIの生成と描画テストのCanvasを共通化。無効/透明/長さ0は描画省略。GPUバッファ確保失敗は出力失敗へ伝播。
+- 検証: 全115テスト、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-focus-final-tests.log）。新規5テストで保存/同期/トリム/再現性/色/UI/マスク/半解像度/MP4のPTSと画素を確認。UndoTestsでドラッグ確定・自動保存・Undo/Redo・seed維持を検証。
+- 描画確認: /tmp/my-movie-focus-preview.pngを目視確認。短時間の描画サンプルGPU最大約2.61ms（継続性能保証ではない）。
+- 初回試験: 制限内はMetal/ペーストボード不可。制限外で解消。MP4テストの0サンプルバッファ処理を修正。EmptyClipTestsは既定同期に依存せずテスト内でレーンを作るfixtureへ修正して成功。
+- 変更: FocusLines.swift、EffectAutomation/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、新規FocusLinesTestsと共通EffectTestCanvas、ShapeTests/EmptyClipTests/UndoTests、README/docs/AGENTS/PROGRESS。既存の他変更は保持。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-focus-build.log）。最新dist/MV Studio.app生成済み。署名検証、release/appのMach-O UUID一致、同梱Scene.metal一致、文書リンクとgit diff --checkを確認。
+- 障害・実行中処理なし。ユーザーの実プロジェクトでの手動操作・長時間性能検証は未実施。
+- 次: 最新appを再起動し「追加演出」→「集中線」を利用する。空クリップで透明に重ねる場合は単色背景を無効にする。
+
+# 集中線エフェクトの仕様検討（設計完了・未実装）
+
+- 最終更新: 2026-11-17 JST。要件: 漫画のような集中線を追加演出として表示する仕様を考える。今回は設計のみ。
+- 完了: docs/FOCUS_LINES.mdへ見た目、設定値、コマ切替、音楽同期、合成・マスク、保存・トリム、実装構成・受入条件を記録。
+- 提案: 中央に楕円の空白、先細り線、黒色・100本・12回/秒。固定seedと時刻で再現。更新頻度のみ固定、ほか9数値は共通キー・同期に接続。数値・方式はユーザー確定要件とは区別。
+- 整理・確認: 素材変形と画面座標の分離、通常アルファ合成、空クリップの既定黒背景、自画像/下段マスクの対象を明記。更新頻度の可変時計を初期スコープから外して責務を整理。
+- 変更: docs/FOCUS_LINES.md新規、docs/IMAGE_EFFECTS.md、docs/ARCHITECTURE.md、AGENTS.md、PROGRESS.md。
+- 検証: 仕様案の相対リンク存在確認・git diff --check成功。文書のみのためコードテスト・アプリ再生成は対象外。
+- 未解決: 仕様は提案段階。実装・画素検証・性能測定は未着手。障害・実行中処理なし。
+- 次: ユーザーの仕様調整を反映する。実装依頼時はモデルと共通評価、静止描画から着手する。
+
 # 図形演出とマスクの実装（完了）
 
 - 最終更新: 2026-11-14 JST。要件: docs/SHAPES_AND_MASKS.mdの設計を実装。図形4種、独立マスク、自画像/直下固定段、数値オートメーション、保存version10。

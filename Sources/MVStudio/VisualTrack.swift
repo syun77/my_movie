@@ -63,7 +63,7 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     var start: Double
     var end: Double
     var content: VisualContent = .still
-    var audioModulations: [ImageParameter: AudioModulation] = [.scale: .initial(for: .scale)]
+    var audioModulations: [ImageParameter: AudioModulation] = [:]
     var automationRanges: [ImageParameter: DisplayRange] = [:]
     var fixedValues: [ImageParameter: Double] = [:]
     var curves: [ImageCurve] = []
@@ -194,8 +194,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
             content = .video(sourceIn: 0)
         }
         if let descriptor = asset.kind.spineDescriptor { content = .spine(SpinePlayback(animationName: descriptor.animations[0].name)) }
-        var clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
-        if content.sourceIn != nil { clip.audioModulations = [:] }
+        let clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
         return (try inserting(clip, slot: slot, duration: duration), clip)
     }
 

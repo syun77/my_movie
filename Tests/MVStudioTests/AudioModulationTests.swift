@@ -52,7 +52,7 @@ final class AudioModulationTests: XCTestCase {
     func testKeysTrimmingRangesAndPersistence() throws {
         let settings = SceneSettings(bpm: 120, beatOffset: 0)
         var clip = VisualClip(assetID: UUID(), start: 1, end: 4)
-        clip.audioModulations[.scale]?.source = .beat
+        clip.audioModulations[.scale] = AudioModulation(source: .beat, blend: .relative, amount: 8)
         clip.audioModulations[.scale]?.beatNoteDenominator = 12
         clip.automationRanges[.scale] = .init(lower: 50, upper: 150)
         XCTAssertNil(clip.curve(.scale))
@@ -177,6 +177,9 @@ final class AudioModulationTests: XCTestCase {
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/sync.png"), projectURL: projectURL)
         let added = try track.adding(assetID: asset, at: 0, slot: 1, duration: 10, grid: TimelineSnapGrid())
         track = added.track
+        var configured = added.clip
+        configured.audioModulations[.scale] = .initial(for: .scale)
+        track = try track.updating(configured, slot: 1, duration: 10)
         editor.duration = 10; editor.load(track, projectURL: projectURL); editor.setAvailable(true)
         timeline.onImageSelect?(added.clip.id, 1)
         XCTAssertNotNil(editor.track.clip(added.clip.id)?.displayCurve(.scale))

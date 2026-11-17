@@ -13,6 +13,10 @@ final class VisualTrackTests: XCTestCase {
     }
     func testPlacementLayerConstraintsAndSnapping() throws {
         let (visuals, id) = try sample()
+        let initial = try XCTUnwrap(visuals.clips.first)
+        XCTAssertTrue(initial.audioModulations.isEmpty)
+        XCTAssertTrue(initial.curves.isEmpty)
+        XCTAssertNil(initial.effects)
         XCTAssertThrowsError(try visuals.adding(assetID: id, at: 2, slot: 1, duration: 10, grid: TimelineSnapGrid()))
         let overlap = try visuals.adding(assetID: id, at: 2, slot: 2, duration: 10, grid: TimelineSnapGrid())
         XCTAssertEqual(overlap.track.active(at: 2.5).count, 2)

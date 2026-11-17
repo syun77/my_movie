@@ -464,7 +464,7 @@ final class ImageAnimationTests: XCTestCase {
 
     func testInterpolationPulseAndTrimmingPreserveTheCurve() throws {
         var (track, clip) = try fixture()
-        clip.audioModulations[.scale]?.source = .beat
+        clip.audioModulations[.scale] = AudioModulation(source: .beat, blend: .relative, amount: 8)
         let first = clip.setKey(.scale, at: 1, value: 100)
         let last = clip.setKey(.scale, at: 3, value: 140)
         XCTAssertEqual(clip.setKey(.scale, at: 3 + 1e-8, value: 140), last)
@@ -568,8 +568,8 @@ final class ImageAnimationTests: XCTestCase {
         let shifted = try XCTUnwrap(editor.track.clip(clip.id))
         XCTAssertEqual(shifted.baseValue(.scale), 135)
         XCTAssertEqual(shifted.curve(.scale)?.keys.first?.value, 135)
-        XCTAssertEqual(shifted.curve(.scale)?.minimum, 45)
-        XCTAssertEqual(shifted.curve(.scale)?.maximum, 235)
+        XCTAssertEqual(shifted.curve(.scale)?.minimum, 25)
+        XCTAssertEqual(shifted.curve(.scale)?.maximum, 215)
         XCTAssertEqual(commits, 3)
 
         let minimum = try XCTUnwrap(control("visuals.graph.minimum", in: editor.view) as DragValueField?)
@@ -579,8 +579,8 @@ final class ImageAnimationTests: XCTestCase {
             bound.mouseDragged(with: event(.leftMouseDragged, x: 110))
             bound.mouseUp(with: event(.leftMouseUp, x: 110))
         }
-        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 55)
-        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.maximum, 245)
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 35)
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.maximum, 225)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.value, 135)
 
         let middle = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .otherMouseDown,
@@ -589,8 +589,8 @@ final class ImageAnimationTests: XCTestCase {
         field.otherMouseDown(with: reset)
         XCTAssertEqual(editor.track.clip(clip.id)?.baseValue(.scale), 100)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.value, 100)
-        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 20)
-        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.maximum, 210)
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.minimum, 10)
+        XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.maximum, 190)
         maximum.mouseDown(with: event(.leftMouseDown))
         maximum.mouseDragged(with: event(.leftMouseDragged, x: 115))
         maximum.mouseUp(with: event(.leftMouseUp, x: 115))

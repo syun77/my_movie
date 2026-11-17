@@ -189,6 +189,9 @@ final class EmptyClipTests: XCTestCase {
         XCTAssertNil(clip.assetID)
         XCTAssertEqual(timeline.currentTime, 0.5)
         XCTAssertNil(try menu(time: 1.5, y: 65)?.item(withTitle: "空のクリップを作成"))
+        var automated = clip
+        _ = automated.setKey(.x, at: clip.start, value: 0)
+        editor.restore(try editor.track.updating(automated, slot: 3, duration: 10))
         timeline.revealAutomation(in: 3)
         let laneItem = try XCTUnwrap(menu(time: 5, y: 120)?.item(withTitle: "空のクリップを作成"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(laneItem.action), to: laneItem.target, from: laneItem))

@@ -4,13 +4,22 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case shapeWidth, shapeHeight, shapeX, shapeY, shapeRotation, shapeInnerRatio, shapeOpacity
     case maskWidth, maskHeight, maskX, maskY, maskRotation, maskInnerRatio, maskFeather, maskStrength
     case x, y, scale, rotation, opacity
+    case flareX, flareY, flareSize, flareIntensity
+    case glareThreshold, glareIntensity, glareLength, glareWidth, glareAngle
     case blurRadius, bloomThreshold, bloomRadius, bloomIntensity
     case particlesCount, particlesDiameter, particlesSpeed, particlesCurveStrength, particlesOpacity
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
     case snowCount, snowDiameter, snowFallSpeed, snowWind, snowOpacity
+    case vignetteStrength, vignetteSize, vignetteSoftness
+    case chromaticAmount, chromaticAngle
     case colorHue, colorBrightness, colorSaturation
     case shakeX, shakeY, shakeStrength
+    case radialSpeed, radialZoom, radialBrightness, radialOpacity
+    case zoomLoopSpeed, zoomLoopZoom, zoomLoopBrightness, zoomLoopOpacity, zoomLoopCenterX, zoomLoopCenterY
+    case octSpeed, octZoom, octBrightness, octOpacity
+    case warpSpeed, warpZoom, warpBrightness, warpOpacity
     case orbsCount, orbsSaturation, orbsSpeed, orbsOpacity
+    case focusX, focusY, focusWidth, focusHeight, focusCount, focusThickness, focusLength, focusVariation, focusOpacity
     case emitter0X, emitter0Y, emitter1X, emitter1Y, emitter2X, emitter2Y, emitter3X, emitter3Y
 
     var title: String {
@@ -208,10 +217,17 @@ extension VisualClip {
         for index in curves.indices {
             for keyIndex in curves[index].keys.indices { curves[index].keys[keyIndex].time -= delta }
         }
+        effects?.lensFlare?.phaseOffset += delta
         effects?.particles?.phaseOffset += delta
         effects?.embers?.phaseOffset += delta
         effects?.snow?.phaseOffset += delta
         effects?.orbs?.phaseOffset += delta
+        effects?.focusLines?.phaseOffset += delta
+        effects?.zoomLoop?.phaseOffset += delta
+        effects?.octgrams?.phaseOffset += delta
+        effects?.warpFlight?.phaseOffset += delta
+        effects?.radialFocus?.phaseOffset += delta
+        effects?.chromaticAberration?.phaseOffset += delta
         effects?.shake?.phaseOffset += delta
         start = time
     }

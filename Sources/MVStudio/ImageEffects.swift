@@ -6,17 +6,90 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var mask: Mask?
     var solidBackground: SolidBackground?
     var blur: Blur?
+    var crossGlare: CrossGlare?
     var bloom: Bloom?
     var particles: Particles?
     var embers: Embers?
     var snow: Snow?
     var orbs: Orbs?
+    var zoomLoop: ZoomLoop?
+    var octgrams: Octgrams?
+    var warpFlight: WarpFlight?
+    var radialFocus: RadialFocus?
+    var focusLines: FocusLines?
     var shake: Shake?
     var colorCorrection: ColorCorrection?
+    var chromaticAberration: ChromaticAberration?
+    var lensFlare: LensFlare?
+    var vignette: Vignette?
+
+    struct CrossGlare: Codable, Equatable, Sendable {
+        var isEnabled = true
+        static let parameters: [ImageParameter] = [.glareThreshold, .glareIntensity, .glareLength, .glareWidth, .glareAngle]
+        var threshold = 75.0
+        var intensity = 60.0
+        var length = 160.0
+        var width = 2.0
+        var angle = 45.0
+        static let thresholdRange = 0.0...100
+        static let intensityRange = 0.0...200
+        static let lengthRange = 0.0...600
+        static let widthRange = 1.0...20
+        static let angleRange = -180.0...180
+        var isValid: Bool {
+            Self.thresholdRange.contains(threshold) && Self.intensityRange.contains(intensity)
+                && Self.lengthRange.contains(length) && Self.widthRange.contains(width) && Self.angleRange.contains(angle)
+        }
+        var isActive: Bool { isEnabled && threshold < 100 && intensity > 0 && length > 0 }
+    }
 
     struct SolidBackground: Codable, Equatable, Sendable {
         var isEnabled = true
         var color = RGBColor.black
+    }
+
+    struct ChromaticAberration: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var amount = 96.0
+        var angle = 0.0
+        static let amountRange = 0.0...100
+        static let angleRange = -180.0...180
+        var phaseOffset = 0.0
+        var isValid: Bool {
+            Self.amountRange.contains(amount) && Self.angleRange.contains(angle)
+                && phaseOffset.isFinite && abs(phaseOffset) < 1e12
+        }
+
+        func displacement(at localTime: Double) -> Double {
+            guard isEnabled else { return 0 }
+            let t = localTime + phaseOffset
+            var pulse = (1 + sin(t * 6)) * 0.5
+            for frequency in [16.0, 19, 27] { pulse *= 1 + sin(t * frequency) * 0.5 }
+            return amount * pulse * pulse * pulse
+        }
+
+        private enum CodingKeys: String, CodingKey { case isEnabled, amount, angle, phaseOffset }
+        init(isEnabled: Bool = true, amount: Double = 96, angle: Double = 0, phaseOffset: Double = 0) {
+            self.isEnabled = isEnabled; self.amount = amount; self.angle = angle; self.phaseOffset = phaseOffset
+        }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            isEnabled = try values.decode(Bool.self, forKey: .isEnabled)
+            amount = try values.decode(Double.self, forKey: .amount)
+            angle = try values.decode(Double.self, forKey: .angle)
+            phaseOffset = try values.decodeIfPresent(Double.self, forKey: .phaseOffset) ?? 0
+        }
+    }
+
+    struct Vignette: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var strength = 70.0
+        var size = 70.0
+        var softness = 60.0
+        static let percentRange = 0.0...100
+        var isValid: Bool {
+            [strength, size, softness].allSatisfy { Self.percentRange.contains($0) }
+        }
     }
 
     struct ColorCorrection: Codable, Equatable, Sendable {
@@ -376,7 +449,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
         }
     }
 
-    private static func random(seed: UInt32, index: Int, channel: UInt32) -> Double {
+    static func random(seed: UInt32, index: Int, channel: UInt32) -> Double {
         var value = seed &+ UInt32(truncatingIfNeeded: index) &* 0x9E3779B9 &+ channel &* 0x85EBCA6B
         value ^= value >> 16
         value &*= 0x7FEB352D
@@ -404,7 +477,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+        return lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
     }
 }
 

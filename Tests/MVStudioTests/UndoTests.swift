@@ -373,6 +373,43 @@ final class UndoTests: XCTestCase {
         delegate.undoEdit()
         XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
 
+        let addFocus = try XCTUnwrap(addEffect.item(withTitle: "集中線"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addFocus.action), to: addFocus.target, from: addFocus))
+        let focusSeed = try XCTUnwrap(editor.visuals.track.clip(movedClip.id)?.effects?.focusLines?.seed)
+        let focusLength = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+            .first { $0.identifier?.rawValue == "visuals.value.focusLength" })
+        focusLength.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+        focusLength.mouseDragged(with: try mouse(.leftMouseDragged, x: 70))
+        focusLength.mouseUp(with: try mouse(.leftMouseUp, x: 70))
+        XCTAssertEqual(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects?.focusLines?.length, 70)
+        delegate.undoEdit()
+        XCTAssertEqual(focusLength.doubleValue, 100)
+        delegate.redoEdit()
+        XCTAssertEqual(focusLength.doubleValue, 70)
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects?.focusLines?.seed, focusSeed)
+        delegate.undoEdit()
+        delegate.undoEdit()
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
+
+        let addRadial = try XCTUnwrap(addEffect.item(withTitle: "集中線２"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addRadial.action), to: addRadial.target, from: addRadial))
+        for parameter in ImageEffects.RadialFocus.parameters {
+            let field = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? DragValueField }
+                .first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
+            field.mouseDown(with: try mouse(.leftMouseDown, x: 100))
+            field.mouseDragged(with: try mouse(.leftMouseDragged, x: 70))
+            field.mouseUp(with: try mouse(.leftMouseUp, x: 70))
+            let saved = try XCTUnwrap(try storage.read(from: projectURL).visuals.clip(movedClip.id)?.effects)
+            XCTAssertEqual(parameter.effect?.read(saved), 70)
+            delegate.undoEdit()
+            XCTAssertEqual(field.doubleValue, 100)
+            delegate.redoEdit()
+            XCTAssertEqual(field.doubleValue, 70)
+            delegate.undoEdit()
+        }
+        delegate.undoEdit()
+        XCTAssertEqual(editor.visuals.track.clip(movedClip.id)?.effects, movedClip.effects)
+
         let addParticles = try XCTUnwrap(addEffect.item(withTitle: "光の粒子"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addParticles.action), to: addParticles.target, from: addParticles))
         let addSource = try XCTUnwrap(editor.visuals.view.subviewsRecursive.compactMap { $0 as? NSButton }
