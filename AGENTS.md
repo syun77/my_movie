@@ -182,3 +182,21 @@
 - レンズフレアはImageEffects.LensFlareへ光源X/Y・大きさ・強さを保存し、Scene.metalで固定ノイズの光源と色分離ゴーストを生成する。画面座標の線形加算合成で、共通オートメーション・音楽同期に対応。
 
 - レンズフレアの自動移動は初期OFF。LensFlare.sourcePositionがクリップ相対時計＋phaseOffsetから元シェーダーの軌道を評価し、左トリムで位相を保持する。ON時はX/Yの設定と自動化を保持して無視し、入力を無効化する。
+
+- 放射ブラーはImageEffects.radialBlurへ強さ/最大サンプル回数/中心X/Yを保存する。専用RadialBlurRendererとMetal computeが、中心越えを抑制した固定区間を1px目標・上限256の適応密度で中点積分する。疎な場合は時刻非依存の固定ペアジッターを適用。中心は1080p左上原点、線形premultiplied RGBAを積分し、ガウスブラー前に適用する。既存サンプル回数は上限として保持、新規256。
+
+- 放射ブラーの品質評価は `docs/RADIAL_BLUR_QUALITY.md`。CPU高密度参照・1080p細線・固定区間・3段合成・シーク・MP4試験を持つ。長い軌跡の上限到達時の誤差とGPU負荷は残り、多重解像度は細部のぼけを避けるため未採用。
+
+- 集中線３は `docs/SHARP_FOCUS_LINES.md` を実装。ImageEffects.sharpFocusへ一定幅・短い尖端・線ごとの不透明度ばらつきとseed/位相を保存し、11数値は共通自動化。更新頻度は固定。FocusLineGeometryで既存集中線と時計・交点処理を共有し、Metalで通常合成する。内端は分布幅/高さの範囲で中心寄りに偏らせ、一律の中央空白は設けない。外端は必ず画面外まで伸ばす。保存名toneVariation/sharpToneVariationは不透明度ばらつきを表し、RGBの明度は変更せずpremultiplied alphaへ掛ける。
+
+- 直線効果線は `docs/STRAIGHT_LINES.md` を実装。ImageEffects.straightLinesへ11数値・RGB色・seed・位相をversion10で保存。画面座標の平行線を固定候補と周期コピーで循環させ、芯は通常合成・発光はアルファを増やさず加算する。全数値はキー/音楽同期、太さは0.5px刻み。速度は時計への乗算。左トリムは位相を保持し、配置を変更ボタンはseedを再抽選する。
+
+- 直線効果線の速度インスペクターは10px/秒単位（初期160、0〜800）、長さは10px単位（初期80、1〜384）。ImageEffectsEditor.numericの読書き境界で10倍変換し、保存・キー・音楽同期・描画は速度px/秒・長さpxを維持する。
+
+- 直線効果線のtoneVariation/straightToneVariationは線ごとの不透明度ばらつき。芯のalphaと発光光量へ同じ倍率を掛け、指定RGB色は変えない。描画データ名はopacityScaleで統一する。
+
+- 放射光線は `docs/RADIAL_RAYS.md` を実装。ImageEffects.radialRaysへ14数値・色・更新頻度・seed・位相を保存し、共通キー/音楽同期へ接続。単位円から長さ（長半径1〜7680px）/潰れ具合（−99〜99%、0正円・正は横長・負は縦長）で楕円へ変換した光線と、coreSizeの直径による常に正円の中心光/光輪をMetalインスタンスで加算し、alphaを保持する。保存はlength/squash、キーはraysLength/raysSquash。潰れ具合は0.25%刻み、初期1440px/43.75%。画面比率合わせは長さを維持した一度の編集。左トリムで位相を保持し、更新頻度0で静止する。
+
+- 放射光線の中心からの長さはインスペクターで10px単位（初期144、0.1〜768）。ImageEffectsEditor.numericで表示/入力を10倍変換し、保存・キー・同期・描画のpx値を維持する。
+
+- 放射光線の形状ばらつきは、コマごとに共通の最大±180°回転と線ごとの最大±8°変動を同率で適用する。回転は楕円変換の前、固定seedと専用乱数で評価。更新頻度で切替、形状ばらつき0で回転なし、頻度0で静止。

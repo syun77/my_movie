@@ -326,6 +326,35 @@ fragment float4 focusInk(FocusVertex in [[stage_in]], constant float4 &ink [[buf
     return float4(linearFromSRGB(ink.rgb) * alpha, alpha);
 }
 
+struct SharpLine { float4 axis; float4 shape; float4 opacityScale; };
+struct SharpVertex {
+    float4 position [[position]];
+    float2 local;
+    float4 shape [[flat]];
+    float opacityScale [[flat]];
+};
+vertex SharpVertex sharpQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                            const device SharpLine *lines [[buffer(0)]], constant float4 &viewport [[buffer(1)]]) {
+    SharpLine line = lines[instanceID];
+    float padding = 2 / viewport.z;
+    float2 uv = corners[vertexID];
+    float2 local = float2(mix(line.shape.x - padding, line.shape.y + padding, uv.x),
+                          mix(-line.shape.z - padding, line.shape.z + padding, uv.y));
+    float2 direction = line.axis.zw;
+    float2 point = (line.axis.xy + direction * local.x + float2(-direction.y, direction.x) * local.y) * viewport.z;
+    return {float4(point.x / viewport.x * 2 - 1, 1 - point.y / viewport.y * 2, 0, 1), local, line.shape, line.opacityScale.x};
+}
+fragment float4 sharpInk(SharpVertex in [[stage_in]], constant float4 &ink [[buffer(0)]]) {
+    float tip = max(in.shape.w, 0.0001);
+    float side = min(in.shape.z - abs(in.local.y),
+                     ((in.local.x - in.shape.x) * in.shape.z - abs(in.local.y) * tip) / sqrt(tip * tip + in.shape.z * in.shape.z));
+    if (in.shape.w == 0) side = in.shape.z - abs(in.local.y);
+    float distance = min(side, min(in.local.x - in.shape.x, in.shape.y - in.local.x));
+    float coverage = smoothstep(-0.5 * fwidth(distance), max(0.5 * fwidth(distance), 0.0001), distance);
+    float alpha = ink.a * coverage * in.opacityScale;
+    return float4(linearFromSRGB(ink.rgb) * alpha, alpha);
+}
+
 // Octgrams: repeated intersecting box fields, accumulated along a moving ray.
 float2 octRotate(float2 p, float angle) {
     float c = cos(angle), s = sin(angle);
@@ -489,4 +518,118 @@ fragment float4 lensFlare(Quad in [[stage_in]], constant float4 &values [[buffer
     float w = c.r + c.g + c.b;
     c = mix(c, float3(w * 0.5), saturate(w * 0.1));
     return float4(linearFromSRGB(c) * values.w, 0);
+}
+
+struct RadialBlurUniforms {
+    float4 canvas; // width, height, padding, strength
+    float4 quality; // normalized center x/y, sample limit, jitter
+};
+
+kernel void radialBlur(texture2d<float, access::sample> source [[texture(0)]],
+                       texture2d<half, access::write> target [[texture(1)]],
+                       constant RadialBlurUniforms &u [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= target.get_width() || gid.y >= target.get_height()) return;
+    constexpr sampler sampling(coord::pixel, address::clamp_to_zero, filter::linear);
+    float2 point = float2(gid) + 0.5;
+    float2 deltaUV = (point - u.canvas.z) / u.canvas.xy - u.quality.xy;
+    float amount = min(1.0f, u.canvas.w * length(deltaUV));
+    float2 travel = deltaUV * u.canvas.xy * amount;
+    float distance = length(travel);
+    // Even stratified pairs preserve the first moment of the interval with or without jitter.
+    uint limit = max(2u, uint(u.quality.z) / 2u * 2u);
+    uint count = min(limit, max(2u, uint(ceil(distance * 0.5f)) * 2u));
+    float jitter = u.quality.w * smoothstep(1.0f, 2.0f, distance / float(count));
+    float4 sum = 0;
+    for (uint i = 0; i < count; i += 2) {
+        uint hash = gid.x * 1973u + gid.y * 9277u + (i / 2u) * 26699u + 911u;
+        hash = (hash ^ (hash >> 16u)) * 2246822519u;
+        hash = (hash ^ (hash >> 13u)) * 3266489917u;
+        hash ^= hash >> 16u;
+        float offset = (float(hash & 65535u) / 65535.0f - 0.5f) * jitter;
+        float t0 = (float(i) + 0.5f + offset) / float(count);
+        float t1 = (float(i) + 1.5f - offset) / float(count);
+        sum += source.sample(sampling, point - travel * t0);
+        sum += source.sample(sampling, point - travel * t1);
+    }
+    target.write(half4(sum / float(count)), gid);
+}
+
+struct StraightLine { float4 axis; float4 shape; float4 opacityScale; };
+struct StraightVertex {
+    float4 position [[position]];
+    float2 local;
+    float4 shape [[flat]];
+    float opacityScale [[flat]];
+};
+vertex StraightVertex straightQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                                  const device StraightLine *lines [[buffer(0)]], constant float4 &viewport [[buffer(1)]]) {
+    StraightLine line = lines[instanceID];
+    float padding = line.shape.w + 2 / viewport.z;
+    float2 local = (corners[vertexID] * 2 - 1) * (line.shape.xy + padding);
+    float2 direction = line.axis.zw;
+    float2 point = (line.axis.xy + direction * local.x + float2(-direction.y, direction.x) * local.y) * viewport.z;
+    return {float4(point.x / viewport.x * 2 - 1, 1 - point.y / viewport.y * 2, 0, 1), local, line.shape, line.opacityScale.x};
+}
+float straightFade(StraightVertex in) {
+    return in.shape.z > 0 ? smoothstep(0.0, in.shape.z, in.shape.x - abs(in.local.x)) : 1.0;
+}
+fragment float4 straightInk(StraightVertex in [[stage_in]], constant float4 &ink [[buffer(0)]]) {
+    float distance = min(in.shape.x - abs(in.local.x), in.shape.y - abs(in.local.y));
+    float aa = max(fwidth(distance), 0.0001);
+    float alpha = smoothstep(-aa * 0.5, aa * 0.5, distance) * straightFade(in) * ink.a * in.opacityScale;
+    return float4(linearFromSRGB(ink.rgb) * alpha, alpha);
+}
+fragment float4 straightGlow(StraightVertex in [[stage_in]], constant float4 &ink [[buffer(0)]],
+                             constant float &strength [[buffer(1)]]) {
+    float outside = max(abs(in.local.y) - in.shape.y, 0.0);
+    float halo = exp(-4 * outside * outside / (in.shape.w * in.shape.w));
+    halo *= 1 - smoothstep(in.shape.w * 0.75, in.shape.w, outside);
+    float end = 1 - smoothstep(in.shape.x, in.shape.x + in.shape.w, abs(in.local.x));
+    float fade = in.shape.z > 0 ? smoothstep(-in.shape.w, in.shape.z, in.shape.x - abs(in.local.x)) : end;
+    return float4(linearFromSRGB(ink.rgb) * ink.a * in.opacityScale * strength * halo * end * fade, 0);
+}
+
+struct RaysInstance { float4 axis; float4 bounds; float4 triangle; float4 style; };
+struct RaysVertex {
+    float4 position [[position]];
+    float2 local;
+    float4 triangle [[flat]];
+    float4 style [[flat]];
+};
+vertex RaysVertex raysQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                           const device RaysInstance *instances [[buffer(0)]], constant float4 &viewport [[buffer(1)]]) {
+    RaysInstance ray = instances[instanceID];
+    float2 local = mix(ray.bounds.xz, ray.bounds.yw, corners[vertexID]);
+    float2 direction = ray.axis.zw;
+    float2 point = (ray.axis.xy + direction * local.x + float2(-direction.y, direction.x) * local.y) * viewport.z;
+    return {float4(point.x / viewport.x * 2 - 1, 1 - point.y / viewport.y * 2, 0, 1), local, ray.triangle, ray.style};
+}
+float raysCross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
+float raysEdge(float2 a, float2 b, float2 p) {
+    return raysCross(b - a, p - a) / max(length(b - a), 0.00001);
+}
+fragment float4 raysLight(RaysVertex in [[stage_in]], constant float4 &ink [[buffer(0)]]) {
+    float3 color = linearFromSRGB(ink.rgb);
+    float light;
+    if (in.style.z > 0 && in.style.w > 0) {
+        float radius = length(in.local / in.style.zw);
+        float aa = max(fwidth(radius), 0.0001);
+        float core = 1 - smoothstep(0.65 - aa, 1.0 + aa, radius);
+        float halo = exp(-3 * radius * radius) * (1 - smoothstep(1.5, 2.0, radius));
+        color = mix(color, float3(1), 1 - smoothstep(0.2, 0.8, radius));
+        light = core + 0.6 * halo;
+    } else {
+        float2 b = in.triangle.xy, c = in.triangle.zw;
+        float distance = min(raysEdge(float2(0), b, in.local), min(raysEdge(b, c, in.local), raysEdge(c, float2(0), in.local)));
+        float aa = max(fwidth(distance), 0.0001);
+        float core = smoothstep(-aa * 0.5, aa * 0.5, distance);
+        float outside = max(-distance, 0.0);
+        float halo = in.style.x > 0 ? exp(-4 * outside * outside / max(in.style.x * in.style.x, 0.0001))
+            * (1 - smoothstep(in.style.x * 0.75, in.style.x, outside)) : 0;
+        // Fade the outer tip without detaching the ray from the origin.
+        float end = max(b.x, c.x);
+        float fade = 1 - smoothstep(end * 0.94, end, in.local.x);
+        light = (core + 0.35 * halo) * fade;
+    }
+    return float4(color * light * in.style.y * ink.a, 0);
 }

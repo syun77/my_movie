@@ -6,6 +6,7 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case x, y, scale, rotation, opacity
     case flareX, flareY, flareSize, flareIntensity
     case glareThreshold, glareIntensity, glareLength, glareWidth, glareAngle
+    case radialBlurStrength, radialBlurSampleCount, radialBlurX, radialBlurY
     case blurRadius, bloomThreshold, bloomRadius, bloomIntensity
     case particlesCount, particlesDiameter, particlesSpeed, particlesCurveStrength, particlesOpacity
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
@@ -20,6 +21,9 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case warpSpeed, warpZoom, warpBrightness, warpOpacity
     case orbsCount, orbsSaturation, orbsSpeed, orbsOpacity
     case focusX, focusY, focusWidth, focusHeight, focusCount, focusThickness, focusLength, focusVariation, focusOpacity
+    case raysX, raysY, raysLength, raysSquash, raysCount, raysThickness, raysLengthVariation, raysVariation, raysFlicker, raysIntensity, raysGlow, raysCoreSize, raysCoreIntensity, raysOpacity
+    case straightAngle, straightCount, straightLength, straightThickness, straightSpeed, straightLengthVariation, straightThicknessVariation, straightToneVariation, straightFade, straightGlow, straightOpacity
+    case sharpX, sharpY, sharpWidth, sharpHeight, sharpCount, sharpThickness, sharpLength, sharpVariation, sharpOpacity, sharpTipLength, sharpToneVariation
     case emitter0X, emitter0Y, emitter1X, emitter1Y, emitter2X, emitter2Y, emitter3X, emitter3Y
 
     var title: String {
@@ -222,6 +226,9 @@ extension VisualClip {
         effects?.embers?.phaseOffset += delta
         effects?.snow?.phaseOffset += delta
         effects?.orbs?.phaseOffset += delta
+        effects?.radialRays?.phaseOffset += delta
+        effects?.straightLines?.phaseOffset += delta
+        effects?.sharpFocus?.phaseOffset += delta
         effects?.focusLines?.phaseOffset += delta
         effects?.zoomLoop?.phaseOffset += delta
         effects?.octgrams?.phaseOffset += delta

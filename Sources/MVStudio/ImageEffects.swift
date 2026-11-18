@@ -6,6 +6,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var mask: Mask?
     var solidBackground: SolidBackground?
     var blur: Blur?
+    var radialBlur: RadialBlur?
     var crossGlare: CrossGlare?
     var bloom: Bloom?
     var particles: Particles?
@@ -16,6 +17,9 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var octgrams: Octgrams?
     var warpFlight: WarpFlight?
     var radialFocus: RadialFocus?
+    var radialRays: RadialRays?
+    var straightLines: StraightLines?
+    var sharpFocus: SharpFocus?
     var focusLines: FocusLines?
     var shake: Shake?
     var colorCorrection: ColorCorrection?
@@ -129,6 +133,20 @@ struct ImageEffects: Codable, Equatable, Sendable {
             let horizontal = (sin(t * 71) + sin(t * 113 + 1.7)) / 2
             let vertical = (sin(t * 89 + 0.8) + sin(t * 137 + 2.4)) / 2
             return SIMD2(horizontal * x, vertical * y) * (strength / 100)
+        }
+    }
+
+    struct RadialBlur: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var strength = 0.0
+        var sampleCount = 256.0
+        var centerX = 960.0
+        var centerY = 540.0
+        static let parameters: [ImageParameter] = [.radialBlurStrength, .radialBlurSampleCount, .radialBlurX, .radialBlurY]
+        var samples: Int { max(2, min(256, Int(sampleCount.rounded()))) }
+        var isValid: Bool {
+            (0...100).contains(strength) && (2...256).contains(sampleCount)
+                && (0...1920).contains(centerX) && (0...1080).contains(centerY)
         }
     }
 
@@ -467,6 +485,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
     var isValid: Bool {
         if shape?.isValid == false || mask?.isValid == false { return false }
         if let solidBackground, !solidBackground.color.isValid { return false }
+        if radialBlur?.isValid == false { return false }
         if let blur, !Blur.radiusRange.contains(blur.radius) { return false }
         if let bloom, !(Bloom.thresholdRange.contains(bloom.threshold) && Bloom.radiusRange.contains(bloom.radius)
                         && Bloom.intensityRange.contains(bloom.intensity)) { return false }
@@ -477,7 +496,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+        return radialRays?.isValid != false && straightLines?.isValid != false && sharpFocus?.isValid != false && lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
     }
 }
 

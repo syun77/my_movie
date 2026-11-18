@@ -1,5 +1,7 @@
 # 集中線エフェクト
 
+一定幅・白/グレーの線を描く独立演出「集中線３」は [集中線３](SHARP_FOCUS_LINES.md) を参照。実装済み。
+
 作成日: 2026-11-17。仕様承認を受けて実装済み。漫画のような集中線を追加演出として表示する。既存の演出仕様は [IMAGE_EFFECTS.md](IMAGE_EFFECTS.md)、音楽同期は [AUDIO_AUTOMATION.md](AUDIO_AUTOMATION.md)、マスクは [SHAPES_AND_MASKS.md](SHAPES_AND_MASKS.md) を参照。
 
 ## 見た目と用途

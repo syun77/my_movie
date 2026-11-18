@@ -1,3 +1,203 @@
+# 放射光線の回転方向のばらつき（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 光線の向きが回転するようなばらつきを発生させる。
+- 方針: 形状のばらつきで、コマごとの全体回転（最大±180°）と既存の線ごとの角度変動を制御。更新頻度で切替、0%では回転なし、頻度0では静止。固定seed/シーク/トリムを維持。
+- 実装・整理: 共通形状生成に全体回転を追加。専用乱数の評価はループ外で1回、既存の線別乱数・楕円変換・中心光・時計を共有し、保存項目は増やさない。UI/README/設計/AGENTSを更新。
+- 検証: 関連7件成功（/tmp/my-movie-rays-rotation-test.log）。20コマの45°超の向き変化、共通回転、コマ内固定、0%/頻度0、再現性、トリム、保存/UI/Metal/MP4を確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-rays-rotation-build.log）。最新dist/MV Studio.app生成、署名検証成功。
+- 変更: RadialRays.swift、ImageEffectsEditor.swift、RadialRaysTests.swift、docs/RADIAL_RAYS.md、README.md、AGENTS.md、PROGRESS.md。生成PNGで形状を確認。
+- 次: 最新appを再起動し、形状のばらつきと更新頻度で回転方向の変化を調整する。実行中処理なし。
+- 既存未コミット変更を保持。未解決障害なし。
+
+# 放射光線の最大長を2倍（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 中心からの長さの最大を表示768/実寸7680pxへ拡大。
+- 方針: 共通パラメーター定義の上限を更新し、UI/検証/自動化に反映。初期値・10px単位・中心正円は維持。
+- 実装・整理: 上限はEffectAutomationの一箇所で定義し、既存のUI倍率変換・モデル検証・自動化範囲へ共通反映。関連文書の上限も更新。
+- 検証: 関連7件成功（/tmp/my-movie-rays-max-test.log）。7680px入力/超過制限/保存/自動化/MP4を確認。最大長・128本・3段・にじみ100px・1800フレームのGPU p95約30.08ms、最大約37.15ms（環境依存）。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-rays-max-build.log）。最新dist/MV Studio.app生成、署名検証とgit diff --check成功。
+- 変更: EffectAutomation.swift、RadialRaysTests.swift、docs/RADIAL_RAYS.md、AGENTS.md、PROGRESS.md。
+- 次: 最新appを再起動し、最大768（7680px）まで利用する。実行中処理なし。
+- 既存未コミット変更を保持。未解決障害なし。
+
+# 放射光線の長さ操作単位（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 中心からの長さを表示1/10、ドラッグの実寸変化10倍へ変更。
+- 方針: 既存ImageEffectsEditor.numericの10倍変換へraysLengthを追加。保存/キー/同期/描画のpx値は保持する。
+- 実装・整理: 既存numericの倍率指定を対象項目リストへ整理し、raysLengthも同じ読書き・初期値・範囲・単位表示の変換を再利用。表示144=1440px、3目盛り=30px。
+- 検証: 関連14件成功（/tmp/my-movie-rays-length-test.log）。表示144/入力200→2000px、3目盛り→30px、取消・初期化・共通項目・描画/MP4を確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-rays-length-build.log）。最新dist/MV Studio.app生成、署名検証成功。
+- 変更: ImageEffectsEditor.swift、RadialRaysTests.swift、docs/RADIAL_RAYS.md、AGENTS.md、PROGRESS.md。
+- 次: 最新appを再起動し、10px単位の長さ操作を利用する。実行中処理なし。
+- 既存未コミット変更を保持。未解決障害なし。
+
+# 放射光線の中心円を正円に固定（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 中心円を常に正円にする。
+- 方針: 光線だけに潰れ具合を適用し、中心光と光輪はcoreSize由来の等しいXY半径を使用する。
+- 完了・整理: 中心光のXY半径をcoreSize/2に統一。光線用axisScaleは光線の半径だけに使用し、中心光の形状計算から分離。仕様書/README/AGENTSを更新。
+- 検証: 関連6件成功（/tmp/my-movie-rays-circle-test.log）。潰れ具合−99/−50/0/50/99%で中心光のXY半径60pxと画素不変を確認。光線の楕円形、UI/保存/履歴/MP4も成功。60秒負荷試験は再実行せず。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-rays-circle-build.log）。最新dist/MV Studio.app生成、署名検証とgit diff --check成功。
+- 変更: RadialRays.swift、RadialRaysTests.swift、docs/RADIAL_RAYS.md、README.md、AGENTS.md、PROGRESS.md。生成PNGで中心が正円であることを目視確認。
+- 次: 最新appを再起動して利用する。実行中処理なし。
+- 既存未コミット変更を保持。未解決障害なし。
+
+# 放射光線の長さ・潰れ具合（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 広がりの幅/高さを、中心からの長さと正円からの潰れ具合へ置換。
+- 方針: lengthは長半径1〜3840px、squashは-99〜99%、0で正円、正で横長、負で縦長。初期1440px/43.75%で現状の初期形状を維持。互換処理は残さない。
+- 完了: モデル/14数値の自動化/UI/保存/文書/試験を新項目へ統一。画面比率合わせは長さを保持して潰れ具合だけを編集。
+- 整理: 軸倍率をRadialRays.axisScaleへ集約し、光線と中心光で共有。数値の編集刻みをswitchへ整理、潰れ具合は0.25%刻み。旧width/heightキーと自動化識別子を除去。
+- 検証: 関連7件成功（/tmp/my-movie-rays-shape-test.log）。正負の潰れ具合、長さと形状の独立性、描画画素、数値UI、保存/履歴、MP4、60秒分の最大負荷を確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-rays-shape-build.log）。最新dist/MV Studio.app生成、署名検証成功。
+- 次: 最新appを再起動し、中心からの長さと潰れ具合を利用する。実行中処理なし。
+- 既存未コミット変更は保持。未解決障害なし。
+
+# 放射光線の実装（完了）
+
+- 最終更新: 2026-11-19 JST。承認済みdocs/RADIAL_RAYS.mdを実装。
+- 要件・完了: 独立演出「放射光線」。楕円形の加算光線、白い中心光/にじみ、固定seedのコマ切替、14数値の共通キー/音楽同期、色、再抽選、画面比率合わせ、保存/履歴/削除/トリムを接続。
+- 変更: RadialRays.swift、RadialRaysTests.swift新規。ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、README/docs/RADIAL_RAYS/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。既存の未コミット変更を保持。
+- 整理: 形状/時計/比率調整をRadialRaysへ集約。UIはDragValueFieldと既存確定経路を再利用。最小1pxの比率合わせ、巨大な有限時刻の乗算前の時計縮約、画面距離によるにじみを確認。
+- 検証: 関連7件成功（/tmp/my-movie-rays-related.log）。最終全体187件、外部Spineサンプル1件スキップ、失敗0（/tmp/my-movie-rays-full.log）。モデル/保存/数値UI/色通知/自動化/削除と履歴/左トリム/縮小/マスク/MP4画素とPTSを確認。生成PNG /tmp/my-movie-rays-default.png を目視確認。
+- 負荷: 128本×3段、最大にじみ、1800フレーム（60秒分）の最終GPU p95約19.12ms、最大約22.53ms。環境依存。長時間MP4、実素材の手動GUI、長時間メモリ推移は未測定。
+- ビルド: 初回は制限環境のdsymutil拒否（/tmp/my-movie-rays-build.log）。アクセス可能な環境で ./scripts/build-app.sh 成功（/tmp/my-movie-rays-build-access.log）、最新dist/MV Studio.app生成。署名検証、同梱Scene.metal一致、git diff --check成功。
+- 実行中処理・未解決障害なし。次: 最新appを再起動し「画像・演出 → 追加演出 → 放射光線」で利用する。空クリップでは単色背景を無効にすると光だけを重ねられる。
+
+# 放射光線の設計（完了・未実装）
+
+- 最終更新: 2026-11-19 JST。
+- 目的・要件: 参考画像のように中心から激しく広がる光線を設計する。加算ブレンド、解像度に合わせた楕円形への拡張。今回は設計のみ。
+- 完了: docs/RADIAL_RAYS.mdに独立演出、楕円変換、中心光/にじみ、固定seedのコマ切替、14自動化数値、保存/履歴/合成、実装順と受入条件を記録。IMAGE_EFFECTSとAGENTSへ参照追加。
+- 整理: 確定要件と提案値、静止参考と動作案、論理座標と出力解像度、既存集中線２との責務を区別。既存未コミット変更を保持。
+- 変更: docs/RADIAL_RAYS.md新規、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。
+- 検証: 既存の加算pipeline・段描画・共通編集構成と設計を照合。文書参照先の存在、14項目の対応、git diff --check成功。
+- 未実施: 実装、描画比較、性能測定。コード変更なしのためテスト・app再生成は対象外。今回の実行中処理・障害なし。
+- 次: 実装依頼時にRadialRaysの固定seed形状生成と楕円/時刻評価テストから着手し、描画・共通編集へ接続する。
+
+# 直線効果線の長さ操作単位（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 長さの表示を1/10、同じドラッグ量で実寸変化を10倍にする。
+- 実装・整理: ImageEffectsEditor.numericで速度と長さの10倍変換・単位表示を共通化。長さ表示80=800px、範囲1〜384。保存/キー/描画のpx値は保持。
+- 検証: 関連8件成功（/tmp/my-movie-straight-length-test.log）。直接入力100→1000px、3目盛り→30px、取消・初期化、速度編集・描画・MP4を確認。git diff --check成功。
+- 変更: ImageEffectsEditor、StraightLinesTests、docs/STRAIGHT_LINES、AGENTS、PROGRESS。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-straight-length-build.log）。最新dist/MV Studio.app生成、署名検証成功。
+- 実行中処理・障害なし。次: appを再起動し直線効果線の長さノブを利用する。
+
+# 直線効果線の不透明度ばらつき（完了）
+
+- 最終更新: 2026-11-19 JST。要件: まばらな明度低下を不透明度低下へ変更。集中線３は対応済みのため、残る直線効果線を対象とする。
+- 実装: 直線効果線の芯のalphaと発光光量へ線ごとの倍率を乗算し、指定RGBを維持。UIは不透明度のばらつきへ変更。
+- 整理: Swift/Metalの描画属性名をopacityScaleへ統一し、仕様書・知見を更新。保存toneVariationとキー識別子は維持。既存変更を保持。
+- 検証: 関連19件成功（/tmp/my-movie-straight-alpha-test.log）。白背景上の黒/赤の透過画素、クリップ不透明度乗算、保存/キー/同期/トリム/UI/マスク/MP4、既存集中線2種類を確認。git diff --check成功。
+- 変更: StraightLines、Scene.metal、EffectAutomation、StraightLinesTests、docs/STRAIGHT_LINES、AGENTS、PROGRESS。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-straight-alpha-build.log）。最新dist/MV Studio.app生成、署名検証・同梱Scene.metal一致を確認。
+- 実行中処理・障害なし。次: 最新appを再起動して直線効果線を利用する。実ユーザー素材の手動GUIは未検証。
+
+# 直線効果線の速度操作単位（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 速度の表示を1/10、ドラッグの実速度変化を10倍へ変更。
+- 方針: インスペクターの表示/入力境界で10px/秒単位へ変換し、保存値・描画・キーのpx/秒を維持する。
+- 実装・整理: ImageEffectsEditor.numericで表示範囲・初期値・読書きの倍率変換を集約。表示初期160、範囲0〜800、1目盛りで10px/秒。共通の数値欄と保存経路を再利用。
+- 検証: StraightLinesTests/DragValueFieldTestsの7件成功（/tmp/my-movie-straight-speed-test.log）。直接入力200→2000px/秒、3目盛り→30px/秒、取消・中ボタン初期化、描画・MP4等を確認。git diff --check成功。
+- 変更: ImageEffectsEditor、StraightLinesTests、docs/STRAIGHT_LINES、AGENTS、PROGRESS。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-straight-speed-build.log）。最新dist/MV Studio.app生成、署名検証成功。
+- 実行中処理・障害なし。次: appを再起動し直線効果線の速度ノブを利用する。
+
+# 集中線３の不透明度ばらつき（完了）
+
+- 最終更新: 2026-11-19 JST。要件: 線ごとの明度低下を不透明度低下へ変更。
+- 方針: 色を維持して乱数倍率をalphaとpremultiplied RGBへ適用。既存保存/キーの識別子と値は継続使用し、UI説明を更新。
+- 実装・整理: shaderの乱数倍率をRGB明度からalphaへ移し、premultiplied RGBを同じalphaで生成。インスタンス名をopacityScaleへ揃えた。UIを「不透明度のばらつき」へ更新し黒色の旧制約説明を削除。保存toneVariation/sharpToneVariationは既存設定/キーの識別子として保持。
+- 変更: SharpFocus/Scene.metal/EffectAutomation/ImageEffectsEditor/SharpFocusTests、README/docs/SHARP_FOCUS_LINES/AGENTS/PROGRESS。
+- 検証: 関連13件成功（/tmp/my-movie-sharp-alpha-final-test.log）。黒/赤の背景透過と色維持をGPU画素で比較、クリップ不透明度乗算・保存・キー/同期・トリム・UI・マスク・MP4を確認。初回の新規テストでBGRAの赤チャンネル参照誤りを修正後に成功。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-sharp-alpha-build.log）。最新dist/MV Studio.app生成、署名・同梱shader一致・git diff --check成功。
+- 実行中処理・障害なし。次: 最新appを再起動して集中線３を利用。実ユーザー素材のGUIは未検証。既存変更を保持。
+
+# 直線効果線の実装（完了）
+
+- 最終更新: 2026-11-19 JST。承認済み仕様を実装。既存変更を保持し、11数値・色・再抽選・保存/履歴/同期・Metal描画を接続する。
+- 実装: StraightLines.swiftの決定的な循環、11項目の共通自動化、色/再抽選UI、芯と発光のMetalインスタンス合成、保存version10・位相トリムへ接続。
+- 整理: 属性/周期計算を専用モデルへ集約。共通数値欄の刻みを明示し、太さ0.5px編集を追加。既存集中線の描画を維持。
+- 関連検証: 新規5件成功（/tmp/my-movie-straight-related.log）、既存SharpFocus7件成功。MP4時刻/画素、色パネル通知、保存/キー/同期/トリム、縮小/発光/遮蔽を確認。/tmp/my-movie-straight-default.pngを目視確認。最大300本2段の試験GPU約2.4ms（環境依存）。
+- 全体検証: 178件、外部Spineサンプル1件スキップ、失敗0（/tmp/my-movie-straight-full.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-straight-build.log）。最新dist/MV Studio.app生成、codesign検証と同梱Scene.metal一致を確認。
+- 実行中処理・障害なし。次: 最新appを再起動し「追加演出 → 直線効果線」で利用する。
+- 変更: StraightLines/StraightLinesTests新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal、README/docs/STRAIGHT_LINES/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。実素材の手動GUI/長時間再生は未検証。
+
+# 集中線３の内外端調整（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 内端は中心付近へ不均一に寄せ、外端は画面端まで連続させる。
+- 方針: 中央の一律の空白をなくし、幅/高さを内端の分布範囲として使う。内端乱数は中心寄りに偏らせ、外端の短縮乱数を廃止。
+- 実装/整理: 内端乱数を2乗して中心寄りに偏らせ、固定中央マスクと不要なシェーダーデータを削除。外端は画面外まで伸長。分布範囲のUI名・仕様書・AGENTSを更新。既存変更は保持。
+- 変更: SharpFocus/EffectAutomation/MetalSceneRenderer/Scene.metal/SharpFocusTests、docs/SHARP_FOCUS_LINES/AGENTS/PROGRESS。
+- 検証: 関連12件成功（/tmp/my-movie-sharp-endpoints-final-test.log）。内端距離と中央/画面端の画素、複数中心/時刻/ばらつき、既存集中線、保存/同期/トリム/マスク/MP4を確認。git diff --check成功。生成PNG /tmp/my-movie-sharp-default.pngで内端が中心近くに散り外端が途切れないことを目視確認。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-sharp-endpoints-build.log）。署名検証・同梱シェーダー一致・git diff --check成功。
+- 実行中処理・障害なし。次: 最新appを再起動して集中線３を利用する。実ユーザー素材の手動GUIは未検証。
+
+# 直線効果線の仕様検討（完了・未実装）
+
+- 最終更新: 2026-11-18 JST。要件: 添付画像のような直線の効果線について角度・出現本数などを設定できる仕様を考える。今回は設計のみ。
+- 方針: 平行線が画面を横切る独立演出。静止画像で確認できる外観と、提案する動作・初期値を区別する。
+- 既存のコード・文書の未コミット変更は保持。前作業のapp生成状態は下記記録を保持し、今回の設計の完了とは分ける。
+- 完了: docs/STRAIGHT_LINES.mdに11数値の設定案、方向と本数の意味、決定的な循環、時計と自動化の制約、合成・保存案・受入条件を記録。IMAGE_EFFECTSへ参照、AGENTSへ知見を追加。
+- 整理・検証: 静止参考と動作案、ユーザー要件と提案値、表示候補数と見える本数を区別。11数値の対応と文書参照を確認、git diff --checkで検証。
+- 変更: docs/STRAIGHT_LINES.md、docs/IMAGE_EFFECTS.md、AGENTS.md、PROGRESS.md。コード変更なし、テスト・app再生成は対象外。実画比較・性能は未検証。
+- 次: 実装依頼時に固定seedの形状・循環のテストから着手し、共通編集/保存/描画へ接続する。今回の実行中処理・障害なし。
+
+# 集中線３の実装（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 設計を独立した「集中線３」として追加する。
+- 実装: sharpFocusモデル、一定幅本体/短い尖端/白グレー濃淡、11数値のキー/音楽同期、固定更新頻度、色、有効/削除、決定的なシークと左トリム、保存version10・既存履歴へ接続。
+- 整理: FocusLineGeometryへ既存集中線と共通の時計・画面端/楕円交点計算を抽出。形状生成と専用Metal被覆率を分離、既存演出を維持。
+- 変更: SharpFocus/FocusLineGeometry/SharpFocusTests新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer/Scene.metal/FocusLines、README/docs/FOCUS_LINES/docs/IMAGE_EFFECTS/docs/SHARP_FOCUS_LINES/AGENTS/PROGRESS。既存の放射ブラー等の未コミット変更を保持。
+- 検証: 関連11件成功。整理後の全172件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-sharp-full.log）。保存・キー/同期・トリム・UI色通知・中央空白/縮小/不透明度/マスク・MP4画素/時刻を確認。git diff --check成功。
+- 描画: /tmp/my-movie-sharp-default.pngで白/グレー、一定幅、尖端、中央空白を目視確認。最大本数2段の試験GPU最大約2ms（環境依存、保証値ではない）。実ユーザー素材の手動GUIと長時間再生の主観評価は未実施。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-sharp-build.log）。署名検証・同梱Scene.metal一致・git diff --check成功。
+- 実行中処理・障害なし。次: 最新appを再起動し「追加演出 → 集中線３」で利用する。
+
+# シャープな集中線の設計（完了・未実装）
+
+- 最終更新: 2026-11-18 JST。要件: 添付画像のような輪郭のはっきりした集中線を設計する。コード実装は今回の範囲外。
+- 完了: docs/SHARP_FOCUS_LINES.mdに、既存集中線へのシャープ形状追加案、一定幅の本体/短い尖端、内外端のばらつき、白/グレーの濃淡、設定値、決定的な時刻評価、合成/遮蔽、保存/履歴/自動化、受入条件を記録。
+- 整理: ユーザー要件と提案値、静止参考から分かる形状と提案する動き、既存の実装済み仕様と今回の未実装案を分離。既存未コミット変更は保持。
+- 変更ファイル: docs/SHARP_FOCUS_LINES.md新規、docs/FOCUS_LINES.md・docs/IMAGE_EFFECTS.mdへ参照追加、AGENTS.md・PROGRESS.mdへ記録。
+- 検証: 既存FocusLines/描画経路との整合、参照先の存在、git diff --check成功。描画比較・GPU測定は未実施。文書のみのためテスト・app再生成は不要。
+- 未解決の障害・実行中処理なし。次: 実装依頼時は形状モデルと固定seedの静止描画から実装し、共通編集/保存/MP4へ接続、整理・検証後にappを生成する。
+
+# 放射ブラー品質改善（完了）
+
+- 最終更新: 2026-11-18 JST。要件: docs/RADIAL_BLUR_QUALITY.mdの方法を実装。
+- 方針: 固定区間の中点積分、中心越え抑制、1px目標の適応密度、上限256、固定ペアジッター、専用Metal。最大回数は既存設定を保持し新規256。
+- 実装: 固定区間の中点積分・中心越え抑制・1px目標密度・上限256・固定ペアジッターを単一Metal pipelineへ集約。CI生成カーネルを削除。前処理がなければMetal配置面を直接読む。
+- 個別検証: 放射ブラー5件成功（/tmp/my-movie-radial-quality-final.log）。CPU4096/8192点参照、透明パディング、線形勾配、時間非依存を確認。1080p細線のRMSは64/128/256で0.008353/0.005640/0.002531、ジッターOFFは256で0.002806。GPUは単層約12/19/25ms（実行時環境、保証値ではない）。
+- 整理: 数式・uniformとMetal描画を専用責務へ集約。前処理不要時のCIコピーを除去、中間面の再利用と不要時解放を確認。
+- 全体検証: 全166件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-radial-quality-full.log）。複合フィルター・3段・シーク/キャッシュ破棄・MP4を確認。3段縮小プレビューGPU約5ms。生成PNG /tmp/my-movie-radial-quality-preview.pngを目視確認。
+- 多重解像度は横方向の細部をぼかさないため今回は未採用。強いブラーの残像・GPU負荷の制約をdocs/RADIAL_BLUR_QUALITY.mdへ記録。
+- 変更: RadialBlurRenderer/Scene.metal/MetalSceneRenderer/ImageEffects/EffectAutomation/RadialBlurTests、README/docs/IMAGE_EFFECTS/docs/RADIAL_BLUR_QUALITY/AGENTS/PROGRESS。既存の他変更は保持。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成（/tmp/my-movie-radial-quality-build.log）。署名・同梱Scene.metal一致・git diff --check成功。
+- 実行中処理・障害なし。実ユーザー素材での手動GUI比較は未実施。次: 最新appを再起動し、既存クリップは最大サンプル回数256で確認する。
+
+# 放射ブラー品質改善の検討（完了・未実装）
+
+- 最終更新: 2026-11-18 JST。要件: 品質向上の方法を検討する。今回は実装変更を行わず、現行式・描画経路・テストを調査して改善案を文書化する。
+- 確認: 固定2〜64点の等間隔平均、サンプル数依存の終端位置、UV距離による画面比依存、全面ROI、回数別CIカーネル生成。
+- 完了: docs/RADIAL_BLUR_QUALITY.mdへ区間独立化・適応密度・固定ジッター・Metal・多重解像度の優先順位、式の数値見積もり、受入確認と一次資料を記録。AGENTSへ参照を追加。
+- 整理: 元の見た目を変える仕様と積分精度改善、画質と性能対策、コード上の事実と未検証の提案を分離。
+- 検証: 文書と現行コードの整合・git diff --check成功。実画比較・GPU時間は未測定。文書のみのためテスト/appビルドは未実行。実行中処理・障害なし。
+- 次: 実装する場合は高密度参照と細線素材を用意し、区間独立化と64/128/256点の比較から開始する。
+
+# 放射ブラー追加（完了）
+
+- 最終更新: 2026-11-18 JST。要件: 提供シェーダーの距離依存放射ブラーを追加。
+- 方針: ガウスブラーと並ぶ追加演出。強さ0〜100%、サンプル2〜64（整数、初期16）、中心X/Yは1080p左上座標。保存・自動化・共通描画へ接続。
+- 実装・整理済み: radialBlurモデル/共通パラメーター/UI/描画キャッシュへ接続。専用RadialBlurRendererへ式を集約し、カーネルは必要時に生成・再利用。
+- 検証: 関連26件成功（/tmp/my-movie-radial-related.log）。2/16/64サンプルの提示式比較、透明部分、合成キャッシュ、保存、自動化、UI追加/無効/削除を確認。制限環境ではGPU結果が0になるためmacOSサービスへアクセスできる環境で再検証。
+- 変更: ImageEffects/EffectAutomation/ImageAnimation/ImageEffectsEditor/MetalSceneRenderer、RadialBlurRenderer/RadialBlurTests新規、docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- ビルド: 制限環境のdsymutil拒否後、システムアクセス可能な環境で./scripts/build-app.sh成功。最新dist/MV Studio.app生成（/tmp/my-movie-radial-build.log）。git diff --check・署名検証成功。
+- 実行中処理・障害なし。実ユーザー素材による手動GUI操作は未検証。次: appを再起動し追加演出→放射ブラーで強さを上げて利用する。
+- 既存作業は下記に保持。
+
 # レンズフレア自動移動（完了）
 
 - 最終更新: 2026-11-18 JST。要件: 自動移動をON可能にする。有効中の位置オートメーションは不要。

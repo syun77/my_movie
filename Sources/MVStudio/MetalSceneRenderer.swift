@@ -16,6 +16,7 @@ final class MetalSceneRenderer {
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let filters: CIContext
+    private let radialBlurRenderer: RadialBlurRenderer
     private let crossGlareRenderer: CrossGlareRenderer
     private let highlight: MTLComputePipelineState
     private let placementPipeline: MTLRenderPipelineState
@@ -31,6 +32,10 @@ final class MetalSceneRenderer {
     private let warpPipeline: MTLRenderPipelineState
     private let lensFlarePipeline: MTLRenderPipelineState
     private let radialFocusPipeline: MTLRenderPipelineState
+    private let raysPipeline: MTLRenderPipelineState
+    private let straightPipeline: MTLRenderPipelineState
+    private let straightGlowPipeline: MTLRenderPipelineState
+    private let sharpPipeline: MTLRenderPipelineState
     private let focusPipeline: MTLRenderPipelineState
     private let orbPipeline: MTLRenderPipelineState
     private let overlayPipeline: MTLRenderPipelineState
@@ -46,15 +51,16 @@ final class MetalSceneRenderer {
         let chromatic: ChromaticAberrationRenderer.Sample?
         let vignette: ImageEffects.Vignette?
         let correction: ImageEffects.ColorCorrection?
+        let radialBlur: ImageEffects.RadialBlur?
         let blur: Double
         let threshold: Double
         let glare: ImageEffects.CrossGlare?
         let glowRadius: Double
 
-        var needsFiltering: Bool { chromatic != nil || blur > 0 || correction != nil || vignette != nil }
+        var needsFiltering: Bool { radialBlur != nil || chromatic != nil || blur > 0 || correction != nil || vignette != nil }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.glare == rhs.glare && lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
+            lhs.radialBlur == rhs.radialBlur && lhs.glare == rhs.glare && lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
                 && lhs.chromatic == rhs.chromatic && lhs.shape == rhs.shape && lhs.background == rhs.background && lhs.vignette == rhs.vignette && lhs.correction == rhs.correction && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
         }
     }
@@ -90,6 +96,8 @@ final class MetalSceneRenderer {
     private var spectrumTarget: OverlayTarget?
     private var maskTargets: [Int: MTLTexture] = [:]
     private var transformScratch: MTLTexture?
+    private var radialInputScratch: MTLTexture?
+    private var radialOutputScratch: MTLTexture?
     private var bloomScratch: MTLTexture?
     private var lyricsCache: (text: String, style: LyricsStyle, image: Overlay)?
 
@@ -108,6 +116,7 @@ final class MetalSceneRenderer {
         let library = try SceneShaders.library(device: device)
         guard let bloomFunction = library.makeFunction(name: "bloomHighlights") else { throw Self.renderError }
         highlight = try device.makeComputePipelineState(function: bloomFunction)
+        radialBlurRenderer = try RadialBlurRenderer(device: device, library: library)
         crossGlareRenderer = try CrossGlareRenderer(device: device, library: library)
         func pipeline(_ vertex: String, _ fragment: String, format: MTLPixelFormat = .rgba16Float,
                       blending: Bool = true, additive: Bool = false) throws -> MTLRenderPipelineState {
@@ -136,6 +145,10 @@ final class MetalSceneRenderer {
         warpPipeline = try pipeline("fullscreen", "warpFlight")
         lensFlarePipeline = try pipeline("fullscreen", "lensFlare", additive: true)
         radialFocusPipeline = try pipeline("fullscreen", "radialFocus", additive: true)
+        raysPipeline = try pipeline("raysQuad", "raysLight", additive: true)
+        straightPipeline = try pipeline("straightQuad", "straightInk")
+        straightGlowPipeline = try pipeline("straightQuad", "straightGlow", additive: true)
+        sharpPipeline = try pipeline("sharpQuad", "sharpInk")
         focusPipeline = try pipeline("focusQuad", "focusInk")
         orbPipeline = try pipeline("particleQuad", "orbLight", additive: true)
         overlayPipeline = try pipeline("fullscreen", "artwork")
@@ -179,6 +192,7 @@ final class MetalSceneRenderer {
                                chromatic: clip.effects?.chromaticAberration.flatMap { ChromaticAberrationRenderer.sample($0, at: time - clip.start) },
                                vignette: clip.effects?.vignette.flatMap { $0.isEnabled && $0.strength > 0 ? $0 : nil },
                                correction: clip.effects?.colorCorrection.flatMap { $0.isEnabled ? $0 : nil },
+                               radialBlur: clip.effects?.radialBlur.flatMap { $0.isEnabled && $0.strength > 0 ? $0 : nil },
                                blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
                                threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
                                glare: glare,
@@ -196,6 +210,10 @@ final class MetalSceneRenderer {
             }
         }
         if !prepared.contains(where: { $0.image.glare != nil }) { crossGlareRenderer.discardCache() }
+        if !prepared.contains(where: { $0.image.key.radialBlur != nil }) {
+            radialInputScratch = nil
+            radialOutputScratch = nil
+        }
         let overlays = try foreground(features: features, settings: settings, lyrics: lyrics, time: time)
 
         let clear = MTLClearColor(red: Self.linear(0.025), green: Self.linear(0.035), blue: Self.linear(0.065), alpha: 1)
@@ -329,6 +347,15 @@ final class MetalSceneRenderer {
         if let focus = clip.effects?.focusLines, focus.isEnabled, opacity > 0 {
             try drawFocus(focus, at: localTime, opacity: opacity, encoder: encoder)
         }
+        if let sharp = clip.effects?.sharpFocus, sharp.isEnabled, opacity > 0 {
+            try drawSharp(sharp, at: localTime, opacity: opacity, encoder: encoder)
+        }
+        if let lines = clip.effects?.straightLines, lines.isEnabled, opacity > 0 {
+            try drawStraight(lines, at: localTime, opacity: opacity, encoder: encoder)
+        }
+        if let rays = clip.effects?.radialRays, rays.isEnabled, opacity > 0 {
+            try drawRays(rays, at: localTime, opacity: opacity, encoder: encoder)
+        }
     }
 
     private func drawFullscreenEffect(pipeline: MTLRenderPipelineState, time: Double, zoom: Double,
@@ -368,6 +395,61 @@ final class MetalSceneRenderer {
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: lines.count)
     }
 
+    private func drawStraight(_ effect: ImageEffects.StraightLines, at time: Double, opacity: Float,
+                              encoder: MTLRenderCommandEncoder) throws {
+        let lines = effect.lines(at: time)
+        guard !lines.isEmpty else { return }
+        guard let buffer = device.makeBuffer(bytes: lines, length: lines.count * MemoryLayout<ImageEffects.StraightLines.Line>.stride) else {
+            throw Self.renderError
+        }
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        var viewport = SIMD4(Float(size.width), Float(size.height), Float(scale), 0)
+        encoder.setVertexBytes(&viewport, length: MemoryLayout.size(ofValue: viewport), index: 1)
+        var ink = SIMD4(Float(effect.color.red), Float(effect.color.green), Float(effect.color.blue), Float(effect.opacity / 100) * opacity)
+        encoder.setFragmentBytes(&ink, length: MemoryLayout.size(ofValue: ink), index: 0)
+        encoder.setRenderPipelineState(straightPipeline)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: lines.count)
+        if effect.glow > 0 {
+            encoder.setRenderPipelineState(straightGlowPipeline)
+            var strength = Float(effect.glow / 100)
+            encoder.setFragmentBytes(&strength, length: MemoryLayout.size(ofValue: strength), index: 1)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: lines.count)
+        }
+    }
+
+    private func drawRays(_ effect: ImageEffects.RadialRays, at time: Double, opacity: Float,
+                          encoder: MTLRenderCommandEncoder) throws {
+        let instances = effect.instances(at: time)
+        guard !instances.isEmpty else { return }
+        guard let buffer = device.makeBuffer(bytes: instances, length: instances.count * MemoryLayout<ImageEffects.RadialRays.Instance>.stride) else {
+            throw Self.renderError
+        }
+        encoder.setRenderPipelineState(raysPipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        var viewport = SIMD4(Float(size.width), Float(size.height), Float(scale), 0)
+        encoder.setVertexBytes(&viewport, length: MemoryLayout.size(ofValue: viewport), index: 1)
+        var ink = SIMD4(Float(effect.color.red), Float(effect.color.green), Float(effect.color.blue),
+                        Float(effect.opacity / 100 * effect.intensity / 100) * opacity)
+        encoder.setFragmentBytes(&ink, length: MemoryLayout.size(ofValue: ink), index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
+    }
+
+    private func drawSharp(_ focus: ImageEffects.SharpFocus, at time: Double, opacity: Float,
+                           encoder: MTLRenderCommandEncoder) throws {
+        let lines = focus.lines(at: time)
+        guard !lines.isEmpty else { return }
+        guard let buffer = device.makeBuffer(bytes: lines, length: lines.count * MemoryLayout<ImageEffects.SharpFocus.Line>.stride) else {
+            throw Self.renderError
+        }
+        encoder.setRenderPipelineState(sharpPipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+        var viewport = SIMD4(Float(size.width), Float(size.height), Float(scale), 0)
+        encoder.setVertexBytes(&viewport, length: MemoryLayout.size(ofValue: viewport), index: 1)
+        var ink = SIMD4(Float(focus.color.red), Float(focus.color.green), Float(focus.color.blue), Float(focus.opacity / 100) * opacity)
+        encoder.setFragmentBytes(&ink, length: MemoryLayout.size(ofValue: ink), index: 0)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: lines.count)
+    }
+
     func discardCache() {
         spineRenderer.discardCache()
         crossGlareRenderer.discardCache()
@@ -377,6 +459,8 @@ final class MetalSceneRenderer {
         lyricsCache = nil
         spectrumTarget = nil
         bloomScratch = nil
+        radialInputScratch = nil
+        radialOutputScratch = nil
         transformScratch = nil
     }
 
@@ -440,9 +524,24 @@ final class MetalSceneRenderer {
             if let vignette = key.vignette {
                 filtered = try VignetteRenderer.apply(vignette, to: filtered, canvas: canvas, padding: padding, scale: scale)
             }
+            if let radial = key.radialBlur {
+                let input: MTLTexture
+                if key.correction != nil || key.chromatic != nil || key.vignette != nil {
+                    input = try render(filtered, bounds: bounds, reusing: radialInputScratch, commands: commands)
+                    radialInputScratch = input
+                } else { input = positioned }
+                rendered = try radialBlurRenderer.render(input, effect: radial, canvas: canvas.size, padding: padding,
+                                                        reusing: key.blur > 0 ? radialOutputScratch : previous?.image, commands: commands)
+                if key.blur > 0 {
+                    radialOutputScratch = rendered
+                    guard let image = CIImage(mtlTexture: rendered, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
+                    filtered = image
+                }
+            }
             if key.blur > 0 { filtered = filtered.applyingGaussianBlur(sigma: key.blur * scale) }
-            rendered = try render(filtered, bounds: bounds,
-                                  reusing: previous?.image, commands: commands)
+            if key.radialBlur == nil || key.blur > 0 {
+                rendered = try render(filtered, bounds: bounds, reusing: previous?.image, commands: commands)
+            }
         }
         let glow = key.glowRadius > 0 ? try bloom(rendered, key: key, bounds: bounds, reusing: previous?.glow, commands: commands) : nil
         let glare = try key.glare.map { try crossGlareRenderer.render(rendered, effect: $0, scale: scale, reusing: previous?.glare, commands: commands) }

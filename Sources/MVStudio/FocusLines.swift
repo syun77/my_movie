@@ -38,9 +38,7 @@ extension ImageEffects {
 
         func lines(at localTime: Double) -> [Line] {
             guard length > 0, opacity > 0 else { return [] }
-            let frame = frequency == 0 ? 0 : floor((localTime + phaseOffset) * frequency)
-            let frameBits = UInt32(truncatingIfNeeded: Int64(frame.truncatingRemainder(dividingBy: 4_294_967_296)))
-            let frameSeed = seed &+ frameBits &* 0xD1B54A35
+            let frameSeed = FocusLineGeometry.frameSeed(seed: seed, time: localTime + phaseOffset, frequency: frequency)
             let amount = variation / 100
             let center = SIMD2(x, y)
             return (0..<Int(count)).compactMap { index in
@@ -50,15 +48,9 @@ extension ImageEffects {
                 let fraction = (Double(index) * 0.6180339887498949).truncatingRemainder(dividingBy: 1)
                 let angle = (fraction + amount * (random(0) - 0.5) / 100) * 2 * .pi
                 let direction = SIMD2(cos(angle), sin(angle))
-                var edge = Double.infinity
-                for (origin, delta, limit) in [(x, direction.x, 1920.0), (y, direction.y, 1080.0)] {
-                    if abs(delta) > 1e-12 { edge = min(edge, ((delta > 0 ? limit : 0) - origin) / delta) }
-                }
+                let edge = FocusLineGeometry.edge(center: center, direction: direction)
                 guard edge > 0 else { return nil }
-                let radii = SIMD2(width / 2, height / 2)
-                let denominator = (radii.x > 0 ? pow(direction.x / radii.x, 2) : (abs(direction.x) > 1e-12 ? Double.infinity : 0))
-                    + (radii.y > 0 ? pow(direction.y / radii.y, 2) : (abs(direction.y) > 1e-12 ? Double.infinity : 0))
-                let inner = denominator > 0 ? 1 / sqrt(denominator) : 0
+                let inner = FocusLineGeometry.inner(direction: direction, width: width, height: height)
                 guard inner < edge else { return nil }
                 let reach = length / 100 * (1 - amount * random(1) * 0.45)
                 let tip = edge - (edge - inner) * reach
