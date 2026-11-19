@@ -8,7 +8,7 @@ enum SpineLaneAction { case selection, blend, remove }
         let track: VisualTrack
         let clip: VisualClip
         let descriptor: SpineAssetDescriptor
-        let slot: Int
+        let layerID: UUID
         let rect: CGRect
         let viewport: CGRect
         let geometry: TimelineGeometry
@@ -119,7 +119,7 @@ enum SpineLaneAction { case selection, blend, remove }
         var c = original
         if let draft = drag?.draft, let clip = draft.clip(original.clip.id) {
             c = Configuration(
-                track: draft, clip: clip, descriptor: original.descriptor, slot: original.slot, rect: original.rect,
+                track: draft, clip: clip, descriptor: original.descriptor, layerID: original.layerID, rect: original.rect,
                 viewport: original.viewport, geometry: original.geometry)
         }
         guard let playback = c.clip.content.spinePlayback else { return }
@@ -256,7 +256,7 @@ enum SpineLaneAction { case selection, blend, remove }
             }
             var clip = c.clip
             clip.content = .spine(playback)
-            drag.draft = try c.track.updating(clip, slot: c.slot, duration: duration)
+            drag.draft = try c.track.updating(clip, layerID: c.layerID, duration: duration)
         } catch {
             drag.draft = nil
             onError?(error)
@@ -314,7 +314,7 @@ enum SpineLaneAction { case selection, blend, remove }
         do {
             var clip = c.clip
             clip.content = .spine(playback)
-            let track = try c.track.updating(clip, slot: c.slot, duration: duration)
+            let track = try c.track.updating(clip, layerID: c.layerID, duration: duration)
             onCommit?(track, clip.id)
         } catch { onError?(error) }
     }

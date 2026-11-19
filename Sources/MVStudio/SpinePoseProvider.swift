@@ -227,11 +227,11 @@ actor SpinePoseProvider {
 
     func prepare(track: VisualTrack, projectURL: URL, cancellation: ExportCancellation?) throws {
         invalidate(); pinned = true
-        for id in Set(track.clips.compactMap(\.assetID)) {
+        for id in Set(track.visibleClips.compactMap(\.assetID)) {
             try cancellation?.check(); try Task.checkCancellation()
             guard let asset = track.asset(id), case let .spine(descriptor) = asset.kind else { continue }
             let value = try session(skeleton: asset.reference.resolve(projectURL: projectURL), atlas: descriptor.atlasReference.resolve(projectURL: projectURL), cancellation: cancellation)
-            for clip in track.uses(id) {
+            for clip in track.visibleClips where clip.assetID == id {
                 guard case let .spine(playback) = clip.content else { throw StudioError.message("Spineの配置が不正です。") }
                 _ = try value.packet(playback: playback, time: playback.sourceIn, bounds: descriptor.referenceBounds.rect)
             }
@@ -239,7 +239,14 @@ actor SpinePoseProvider {
     }
 
     func layers(track: VisualTrack, projectURL: URL, time: Double, cancellation: ExportCancellation?) throws -> [VisualRenderLayer] {
-        try track.active(at: time).compactMap { clip in
+        if !pinned {
+            let visible = Set(track.visibleClips.compactMap { clip -> String? in
+                guard let asset = track.asset(clip.assetID), let descriptor = asset.kind.spineDescriptor else { return nil }
+                return asset.reference.resolve(projectURL: projectURL).standardizedFileURL.path + "\n" + descriptor.atlasReference.resolve(projectURL: projectURL).standardizedFileURL.path
+            })
+            sessions = sessions.filter { visible.contains($0.key) }; order.removeAll { !visible.contains($0) }
+        }
+        return try track.active(at: time).compactMap { clip in
             try Task.checkCancellation(); try cancellation?.check()
             guard case let .spine(playback) = clip.content, let asset = track.asset(clip.assetID), case let .spine(descriptor) = asset.kind else { return nil }
             let value = try session(skeleton: asset.reference.resolve(projectURL: projectURL), atlas: descriptor.atlasReference.resolve(projectURL: projectURL), cancellation: cancellation)

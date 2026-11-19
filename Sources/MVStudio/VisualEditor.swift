@@ -30,7 +30,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var refreshing = false
     private var timingIsValid = true
     private var selectedID: UUID?
-    private var selectedSlot = 1
+    private var selectedLayerID = UUID()
     private let name = NSTextField(labelWithString: "素材行を選択し、画像・動画・Spineを配置してください")
     private let start = DragValueField(frame: .zero)
     private let end = DragValueField(frame: .zero)
@@ -46,13 +46,14 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let spineWeight = DragValueField(frame: .zero)
     private let spineAnimation = NSPopUpButton()
     private let spineLoop = NSButton(checkboxWithTitle: "ループ", target: nil, action: nil)
-    private let slot = NSPopUpButton()
+    private let layerID = NSPopUpButton()
     let musicEditor = AudioModulationEditor(frame: .zero)
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
     private let graphParameter = NSPopUpButton()
     private let minimum = DragValueField(frame: .zero)
     private let maximum = DragValueField(frame: .zero)
     private var valueFields: [ImageParameter: DragValueField] = [:]
+    private var handlePreview: VisualTrack?
     private var valueDrag: ValueDrag?
 
     private enum ValueTarget: Equatable {
@@ -112,6 +113,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var rangeParameter: ImageParameter?
     private let message = NSTextField(labelWithString: "画像・動画・Spineを空白へドロップするか、ボタンで配置できます")
     private var controls: [NSControl] = []
+    private weak var placementButton: NSButton?
     private var clipControls: [NSControl] = []
     private var manager: VisualAssetManager?
     private var importTask: Task<Void, Never>?
@@ -119,6 +121,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 6; view = root
         let add = NSButton(title: "＋素材を配置…", target: self, action: #selector(addImage))
+        placementButton = add
         let remove = NSButton(title: "配置を削除", target: self, action: #selector(removeClip))
         let manage = NSButton(title: "素材管理…", target: self, action: #selector(openManager))
         let replace = NSButton(title: "素材を変更…", target: self, action: #selector(changeImage))
@@ -162,8 +165,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
         for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 100).isActive = true }
-        slot.addItems(withTitles: ["素材1（最背面）", "素材2", "素材3（最前面）"])
-        slot.target = self; slot.action = #selector(changePlacement)
+
+        layerID.target = self; layerID.action = #selector(changePlacement)
         keySnap.state = .on
         keySnap.identifier = NSUserInterfaceItemIdentifier("visuals.keySnap")
         keySnap.target = self; keySnap.action = #selector(changeKeySnap)
@@ -183,7 +186,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         let selection = row([name, replace])
         let timing = NSStackView(views: [
             row([NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end]),
-            row([NSTextField(labelWithString: "レイヤー"), slot])
+            row([NSTextField(labelWithString: "レイヤー"), layerID])
         ])
         timing.orientation = .vertical
         timing.alignment = .leading
@@ -210,6 +213,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             guard let self, self.track.clip(self.selectedID)?.displayCurve(parameter) != nil else { return }
             self.timeline?.selectGraph(parameter, reveal: true)
         }
+        effectsEditor.onImportParticle = { [weak self] node, url in self?.importFile(url, particleNode: node) }
+        effectsEditor.handleTarget = { [weak self] parameter in self?.previewHandleTarget(for: parameter) }
         effectsEditor.onEditMusic = { [weak self] parameter in self?.editMusic(parameter) }
         effectsEditor.onRemoveMusic = { [weak self] parameter in self?.setMusic(parameter, modulation: nil, preview: false) }
         effectsEditor.onDeleteEmitter = { [weak self] effects, index in self?.applyEffects(effects, preview: false, deletedEmitter: index) }
@@ -221,14 +226,20 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, spineAutomation, spineMaximum, spineWeight, slot, graphParameter, minimum, maximum]
+        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, spineAutomation, spineMaximum, spineWeight, layerID, graphParameter, minimum, maximum]
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
     private func row(_ views: [NSView]) -> NSStackView { let row = NSStackView(views: views); row.spacing = 10; return row }
     private func connectTimeline() {
         timeline?.onSpineLaneAction = { [weak self] in self?.editSpineLane($0) }
-        timeline?.onImageSelect = { [weak self] id, slot in self?.select(id, slot: slot) }
+        timeline?.onLayerAction = { [weak self] in self?.performLayerAction($0, $1) }
+        timeline?.onLayerPreview = { [weak self] value in
+            guard let self else { return }
+            self.effectsEditor.updateLayerContext(value.clip(self.selectedID), track: value)
+        }
+        timeline?.onLayerCommit = { [weak self] in self?.commitLayers($0, selectedLayer: $1) }
+        timeline?.onImageSelect = { [weak self] id, layerID in self?.select(id, layerID: layerID) }
         timeline?.onImagePreview = { [weak self] value in self?.onPreview?(value) }
         timeline?.onImageCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
         timeline?.onGraphSelection = { [weak self] in
@@ -242,16 +253,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if field.isEnabled { field.selectText(nil) }
         }
         timeline?.keySnapEnabled = keySnap.state == .on
-        timeline?.onCreateEmptyClip = { [weak self] slot, time in
+        timeline?.onCreateEmptyClip = { [weak self] layerID, time in
             guard let self, self.available, self.finishEditing() else { return }
             do {
-                let result = try self.track.addingEmpty(at: time, slot: slot, duration: self.duration, grid: self.snapGrid)
+                let result = try self.track.addingEmpty(at: time, layerID: layerID, duration: self.duration, grid: self.snapGrid)
                 self.onBeginEdit?()
-                self.selectedSlot = slot
+                self.selectedLayerID = layerID
                 self.commit(result.track, selectedID: result.clip.id)
             } catch { self.report(error) }
         }
-        timeline?.onDropImage = { [weak self] url, slot, time in self?.importFile(url, placement: (slot, time)) }
+        timeline?.onDropImage = { [weak self] url, layerID, time in self?.importFile(url, placement: (layerID, time)) }
         timeline?.visuals = track
     }
     func load(_ value: VisualTrack, projectURL: URL?) {
@@ -262,17 +273,17 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         cancelValueDrag()
         generation = UUID(); importTask?.cancel(); processing = false; onProcessing?(false)
         drafts.removeAll()
-        track = value; self.projectURL = projectURL; selectedID = nil; selectedSlot = 1
-        thumbnails = [:]; missing = []; timeline?.visuals = value; timeline?.selectedImageID = nil; timeline?.selectedSlot = 1
+        track = value; self.projectURL = projectURL; selectedID = nil; selectedLayerID = value.layers[0].id
+        thumbnails = [:]; missing = []; timeline?.visuals = value; timeline?.selectedImageID = nil; timeline?.selectedLayerID = value.layers[0].id
         refreshSelection(); refreshAssets()
     }
     var managerWindow: NSWindow? { manager?.window }
     func restore(_ value: VisualTrack) {
-        let selection = selectedID ?? value.clips.first(where: { candidate in track.clip(candidate.id) == nil })?.id, slot = selectedSlot
+        let selection = selectedID ?? value.clips.first(where: { candidate in track.clip(candidate.id) == nil })?.id, layerID = selectedLayerID
         let parameter = timeline?.selectedParameter
         let key = timeline?.selectedKeyID
         replaceTrack(value, projectURL: projectURL)
-        selectedID = value.clip(selection)?.id; selectedSlot = selectedID.flatMap { value.slot(of: $0) } ?? slot
+        selectedID = value.clip(selection)?.id; selectedLayerID = selectedID.flatMap { value.layerID(of: $0) } ?? (value.layer(layerID) != nil ? layerID : value.layers[0].id)
         refreshSelection(); manager?.reload()
         if let parameter, let curve = value.clip(selectedID)?.displayCurve(parameter) {
             timeline?.selectGraph(parameter, key: curve.keys.first { $0.id == key }?.id, reveal: true)
@@ -283,13 +294,19 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         available = value
         refreshControls()
     }
+    private func syncParticleThumbnails() {
+        effectsEditor.particleThumbnails = thumbnails
+        effectsEditor.missingParticleImages = missing
+    }
     private func refreshControls() {
         onSelectionChange?(selectedID)
         controls.forEach { $0.isEnabled = available && !processing && manager == nil }
-        clipControls.forEach { $0.isEnabled = available && !processing && manager == nil && track.clip(selectedID) != nil }
+        placementButton?.isEnabled = available && !processing && manager == nil && track.canEdit(selectedLayerID)
+        clipControls.forEach { $0.isEnabled = available && !processing && manager == nil && track.clip(selectedID) != nil && track.canEdit(selectedLayerID) }
         timeline?.isEnabled = available && !processing && manager == nil
         refreshGraphControls()
-        effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil, track: track)
+        syncParticleThumbnails()
+        effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID), track: track)
         sourceRow.isHidden = track.clip(selectedID)?.content.sourceIn == nil
         sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
         speedRow.isHidden = track.clip(selectedID)?.content.isVideo != true
@@ -297,16 +314,22 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         spineRow.isHidden = track.clip(selectedID)?.content.spinePlayback == nil
         if case .blend = track.clip(selectedID)?.content.spinePlayback?.mode { spineBlendRow.isHidden = false }
         else { spineBlendRow.isHidden = true }
-        musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil)
+        musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID))
     }
     private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
         guard available, !processing, manager == nil, var clip = track.clip(selectedID),
-              let slot = track.slot(of: clip.id) else { return }
+              let layerID = track.layerID(of: clip.id) else { return }
         if let deletedEmitter {
             clip.removeEmitterAutomation(at: deletedEmitter)
         }
         let original = clip
-        clip.effects = effects == ImageEffects() ? nil : effects
+        var incoming = effects
+        for node in clip.effects?.allNodes ?? [] {
+            incoming.editNode(node.id) {
+                $0.curves = node.curves; $0.audioModulations = node.audioModulations; $0.automationRanges = node.automationRanges
+            }
+        }
+        clip.effects = incoming == ImageEffects() ? nil : incoming
         for parameter in ImageParameter.allCases {
             guard let effect = parameter.effect else { continue }
             guard let value = effect.read(effects) else {
@@ -320,27 +343,34 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             }
         }
         do {
-            let value = try track.updating(clip, slot: slot, duration: duration)
+            let value = try track.updating(clip, layerID: layerID, duration: duration)
             if preview { onPreview?(value) }
             else {
                 commit(value, selectedID: clip.id, refreshEditor: false)
+                syncParticleThumbnails()
                 effectsEditor.load(clip, editable: true, track: track)
                 refreshGraphControls(resetRange: true)
             }
         } catch { report(error) }
     }
 
-    private func select(_ id: UUID?, slot: Int) {
+    private func select(_ id: UUID?, layerID: UUID) {
         cancelValueDrag()
         drafts.removeAll()
-        selectedID = id; selectedSlot = slot; refreshSelection()
+        selectedID = id; selectedLayerID = layerID; refreshSelection()
     }
     private func refreshSelection() {
         timingIsValid = true
         refreshing = true; defer { refreshing = false }
-        timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
+        layerID.removeAllItems()
+        for (index, layer) in track.layers.reversed().enumerated() {
+            layerID.addItem(withTitle: "\(index + 1). \(layer.name)")
+            layerID.lastItem?.representedObject = layer.id
+            layerID.lastItem?.isEnabled = !layer.isLocked
+        }
+        timeline?.selectedImageID = selectedID; timeline?.selectedLayerID = selectedLayerID
         if let clip = track.clip(selectedID) {
-            name.stringValue = "\(track.asset(clip.assetID)?.kind.title ?? "素材")\(track.slot(of: clip.id) ?? selectedSlot) / \(track.asset(clip.assetID)?.name ?? "空のクリップ")"
+            name.stringValue = "\(track.layer(selectedLayerID)?.name ?? "レイヤー") / \(track.asset(clip.assetID)?.name ?? "空のクリップ")"
             start.stringValue = String(clip.start); end.stringValue = String(clip.end)
             sourceIn.stringValue = String(clip.content.sourceIn ?? 0)
             playbackSpeed.stringValue = String(clip.content.speed)
@@ -357,20 +387,22 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                     spineWeight.doubleValue = blend.baseWeight * 100
                 }
             }
-            slot.selectItem(at: (track.slot(of: clip.id) ?? 1) - 1)
-        } else { name.stringValue = "素材\(selectedSlot)：空白へ画像・動画・Spineを配置してください" }
+            layerID.selectItem(at: Array(track.layers.reversed()).firstIndex { $0.id == selectedLayerID } ?? 0)
+        } else { name.stringValue = "\(track.layer(selectedLayerID)?.name ?? "レイヤー")：空白へ画像・動画・Spineを配置してください" }
         refreshAnimationValues()
         refreshControls()
     }
     func commit(_ value: VisualTrack, selectedID: UUID? = nil, refreshEditor: Bool = true) {
         do {
             try value.validate(duration: duration)
+            try value.validateEditing(from: track)
             guard value != track else { message.stringValue = "変更は自動保存されます。"; return }
             let assetsChanged = track.assets != value.assets
             if refreshEditor || selectedID != self.selectedID { drafts.removeAll() }
             track = value; self.selectedID = selectedID
-            if let selectedID { selectedSlot = value.slot(of: selectedID) ?? selectedSlot }
-            timeline?.visuals = value; timeline?.selectedImageID = selectedID; timeline?.selectedSlot = selectedSlot
+            if value.layer(selectedLayerID) == nil { selectedLayerID = value.layers[0].id }
+            if let selectedID { selectedLayerID = value.layerID(of: selectedID) ?? selectedLayerID }
+            timeline?.visuals = value; timeline?.selectedImageID = selectedID; timeline?.selectedLayerID = selectedLayerID
             if refreshEditor { refreshSelection() }
             message.stringValue = "変更は自動保存されます。"
             onChange?(value)
@@ -476,6 +508,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
 
     @objc private func changePlacement() {
         guard available, !refreshing, !processing, var clip = track.clip(selectedID) else { return }
+        guard track.canEdit(selectedLayerID) else { timingIsValid = true; return }
         guard let begin = Double(start.stringValue), let finish = Double(end.stringValue),
               begin.isFinite, finish.isFinite, begin >= 0, finish <= duration else {
             timingIsValid = false; message.stringValue = "開始・終了を秒数で入力してください。"; return
@@ -499,17 +532,18 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             } else { clip.content.setSourceIn(value) }
         }
         do {
-            let value = try track.updating(clip, slot: slot.indexOfSelectedItem + 1, duration: duration)
+            let value = try track.updating(clip, layerID: (layerID.selectedItem?.representedObject as? UUID) ?? selectedLayerID, duration: duration)
             timingIsValid = true
             end.stringValue = String(clip.end)
             commit(value, selectedID: clip.id, refreshEditor: false)
+            syncParticleThumbnails()
             effectsEditor.load(clip, editable: true, track: track)
         } catch { timingIsValid = false; report(error) }
     }
 
     @objc private func changeSpine() {
         guard available, !processing, !refreshing, var clip = track.clip(selectedID), var playback = clip.content.spinePlayback,
-              let animation = spineAnimation.titleOfSelectedItem, let slot = track.slot(of: clip.id) else { return }
+              let animation = spineAnimation.titleOfSelectedItem, let layerID = track.layerID(of: clip.id) else { return }
         onBeginEdit?()
         if case var .blend(blend) = playback.mode {
             guard let maximum = spineMaximum.titleOfSelectedItem, maximum != animation else { report(StudioError.message("異なる2つのアニメーションを選んでください。")); refreshSelection(); return }
@@ -519,25 +553,25 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             playback.animationName = animation
         }
         playback.loop = spineLoop.state == .on; clip.content = .spine(playback)
-        do { commit(try track.updating(clip, slot: slot, duration: duration), selectedID: clip.id) }
+        do { commit(try track.updating(clip, layerID: layerID, duration: duration), selectedID: clip.id) }
         catch { report(error); refreshSelection() }
     }
 
     @objc private func createSpineAutomation() {
-        guard var playback = track.clip(selectedID)?.content.spinePlayback, let slot = track.slot(of: selectedID ?? UUID()) else { return }
+        guard var playback = track.clip(selectedID)?.content.spinePlayback, let layerID = track.layerID(of: selectedID ?? UUID()) else { return }
         if !playback.hasLane {
             if case var .blend(blend) = playback.mode { blend.automated = true; playback.mode = .blend(blend) }
             else { playback.createSelection() }
             commitSpinePlayback(playback)
         }
-        timeline?.revealAutomation(in: slot)
+        timeline?.revealAutomation(in: layerID)
     }
 
     private func commitSpinePlayback(_ playback: SpinePlayback, preview: Bool = false, editingWeight: Bool = false) {
-        guard var clip = track.clip(selectedID), let slot = track.slot(of: clip.id) else { return }
+        guard var clip = track.clip(selectedID), let layerID = track.layerID(of: clip.id) else { return }
         clip.content = .spine(playback)
         do {
-            let value = try track.updating(clip, slot: slot, duration: duration)
+            let value = try track.updating(clip, layerID: layerID, duration: duration)
             if preview { onPreview?(value) }
             else {
                 if !editingWeight { onBeginEdit?() }
@@ -600,7 +634,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             }
         }
         commitSpinePlayback(playback)
-        if playback.hasLane, let slot = track.slot(of: clip.id) { timeline?.revealAutomation(in: slot) }
+        if playback.hasLane, let layerID = track.layerID(of: clip.id) { timeline?.revealAutomation(in: layerID) }
     }
 
     @objc private func removeClip() {
@@ -612,7 +646,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         onBeginEdit?()
         chooseImage { [weak self] url in
             guard let self else { return }
-            self.importFile(url, placement: (self.selectedSlot, self.currentTime))
+            self.importFile(url, placement: (self.selectedLayerID, self.currentTime))
         }
     }
     @objc private func changeImage() {
@@ -637,8 +671,12 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json, .png, .jpeg, .tiff, .mpeg4Movie, .quickTimeMovie, .movie]; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url : nil
     }
-    func importFile(_ url: URL, placement: (slot: Int, time: Double)? = nil, replacingAsset: UUID? = nil, replacingClip: UUID? = nil) {
+    func importFile(_ url: URL, placement: (layerID: UUID, time: Double)? = nil, replacingAsset: UUID? = nil, replacingClip: UUID? = nil, particleNode: UUID? = nil) {
         guard available, !processing, let projectURL else { return }
+        let particleClipID = particleNode == nil ? nil : selectedID
+        if particleNode != nil {
+            guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) else { report(StudioError.message("粒子には静止画像を指定してください。")); return }
+        }
         let atlasURL: URL?
         if url.pathExtension.lowercased() == "json" {
             let existing = track.assets.first { $0.reference.resolve(projectURL: projectURL).standardizedFileURL == url.standardizedFileURL }
@@ -666,19 +704,26 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                 if let id = replacingAsset { value = try value.replacingAsset(id: id, url: url, projectURL: projectURL, kind: inspected.kind) }
                 else {
                     let assetID = value.register(url: url, projectURL: projectURL, kind: inspected.kind)
-                    if let placement {
-                        let result = try value.adding(assetID: assetID, at: placement.time, slot: placement.slot, duration: duration, grid: snapGrid)
+                    if let nodeID = particleNode {
+                        guard inspected.kind == .still, var clip = value.clip(particleClipID),
+                              let node = clip.effects?.nodes.first(where: { $0.id == nodeID }), node.kind.supportsParticleImage else { throw StudioError.message("粒子画像の適用先が見つかりません。") }
+                        var appearance = node.particleAppearance ?? ParticleAppearance()
+                        appearance.assetID = assetID; appearance.mode = .image
+                        clip.effects?.setAppearance(appearance, for: node.kind)
+                        value = try value.updating(clip, layerID: value.layerID(of: clip.id)!, duration: duration)
+                    } else if let placement {
+                        let result = try value.adding(assetID: assetID, at: placement.time, layerID: placement.layerID, duration: duration, grid: snapGrid)
                         value = result.track; selection = result.clip.id
                     } else if let replacingClip, var clip = value.clip(replacingClip) {
                         guard (clip.assetID == nil ? inspected.kind == .still : track.asset(clip.assetID)?.kind.sameType(as: inspected.kind) == true), inspected.kind.accepts(clip.content) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
-                        clip.assetID = assetID; value = try value.updating(clip, slot: value.slot(of: replacingClip)!, duration: duration)
+                        clip.assetID = assetID; value = try value.updating(clip, layerID: value.layerID(of: replacingClip)!, duration: duration)
                     } else if replacingClip != nil { throw StudioError.message("置き換える配置が見つかりません。") }
                 }
                 await store.invalidate()
                 guard generation == token else { return }
                 commit(value, selectedID: selection)
                 onAssetsReload?(); refreshAssets()
-                if let placement, let clip = value.clip(selection) { selectedSlot = placement.slot; onSeek?(clip.start) }
+                if let placement, let clip = value.clip(selection) { selectedLayerID = placement.layerID; onSeek?(clip.start) }
             } catch is CancellationError { }
             catch { if generation == token { report(error) } }
         }
@@ -709,6 +754,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             }
             guard generation == token, revision == assetRefreshRevision else { return }
             timeline?.missingAssets = missing; manager?.reload()
+            syncParticleThumbnails()
+            effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID), track: track)
         }
     }
     @objc func openManager() {
@@ -727,15 +774,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         catch { report(error) }
     }
     func usageDescription(_ id: UUID) -> String {
-        track.uses(id).map { "画像\(track.slot(of: $0.id) ?? 1)　\(TimelineGeometry.label($0.start))–\(TimelineGeometry.label($0.end))" }.joined(separator: "\n")
+        (track.particleUses(id).map { "粒子画像　画像\(track.layer(track.layerID(of: $0.id))?.name ?? "レイヤー")　\(TimelineGeometry.label($0.start))" } + track.uses(id).map { "画像\(track.layer(track.layerID(of: $0.id))?.name ?? "レイヤー")　\(TimelineGeometry.label($0.start))–\(TimelineGeometry.label($0.end))" }).joined(separator: "\n")
     }
 }
 
 private extension VisualEditor {
     private func parameterControls(_ parameter: ImageParameter) -> NSStackView {
-        let label = NSTextField(labelWithString: parameter.title)
-        label.widthAnchor.constraint(equalToConstant: 52).isActive = true
         let field = DragValueField(frame: .zero)
+        field.previewHandleProvider = { [weak self] in self?.previewHandleTarget(for: parameter) }
+        let label = PreviewHandleLabel(parameter.title, field: field)
+        label.widthAnchor.constraint(equalToConstant: 52).isActive = true
         field.stringValue = String(parameter.defaultValue)
         field.knobInitialValue = parameter.defaultValue
         field.knobRange = parameter.valueRange
@@ -765,16 +813,16 @@ private extension VisualEditor {
     }
 
     private func setMusic(_ parameter: ImageParameter, modulation: AudioModulation?, preview: Bool) {
-        guard available, !processing, manager == nil, var clip = track.clip(selectedID), let slot = track.slot(of: clip.id) else { return }
+        guard available, !processing, manager == nil, var clip = track.clip(selectedID), let layerID = track.layerID(of: clip.id) else { return }
         clip.audioModulations[parameter] = modulation
         if modulation == nil { clip.automationRanges[parameter] = nil }
         do {
-            let updated = try track.updating(clip, slot: slot, duration: duration)
+            let updated = try track.updating(clip, layerID: layerID, duration: duration)
             if preview { timeline?.automationPreview = updated; onPreview?(updated) }
             else {
                 onBeginEdit?()
                 commit(updated, selectedID: clip.id)
-                if modulation != nil { timeline?.revealAutomation(in: slot); timeline?.selectGraph(parameter, reveal: true) }
+                if modulation != nil { timeline?.revealAutomation(in: layerID); timeline?.selectGraph(parameter, reveal: true) }
             }
         } catch { report(error) }
     }
@@ -795,7 +843,7 @@ private extension VisualEditor {
     }
 
     private func refreshGraphControls(resetRange: Bool = false) {
-        let clip = (valueDrag?.preview ?? track).clip(selectedID)
+        let clip = (handlePreview ?? valueDrag?.preview ?? track).clip(selectedID)
         let parameters = ImageParameter.allCases.filter { clip?.displayCurve($0) != nil }
         if parameters != graphParameters {
             graphParameters = parameters
@@ -805,7 +853,7 @@ private extension VisualEditor {
         let active = timeline?.selectedParameter ?? parameters.first
         let curve = active.flatMap { clip?.displayCurve($0) }
         if let active { graphParameter.selectItem(withTitle: active.title) }
-        let enabled = available && !processing && manager == nil && clip != nil
+        let enabled = available && !processing && manager == nil && track.canEdit(selectedLayerID) && clip != nil
         graphParameter.isEnabled = enabled && !parameters.isEmpty
         for field in [minimum, maximum] { field.isEnabled = enabled && curve != nil }
         let minimumText = curve.map { String($0.minimum) } ?? ""
@@ -847,7 +895,7 @@ private extension VisualEditor {
         let id = clip.setKey(parameter, at: time, value: clip.manualValue(parameter, at: time))
         if commitAnimation(clip) {
             drafts[parameter] = nil
-            timeline?.revealAutomation(in: selectedSlot)
+            timeline?.revealAutomation(in: selectedLayerID)
             timeline?.selectGraph(parameter, key: id, reveal: true)
             let keyTime = clip.curve(parameter)?.keys.first { $0.id == id }.map { clip.start + $0.time }
             onSeek?(keyTime ?? time)
@@ -892,13 +940,13 @@ private extension VisualEditor {
     }
 
     private func updateValueDrag(_ distance: Double) {
-        guard var drag = valueDrag, let slot = track.slot(of: drag.original.id) else { return }
+        guard var drag = valueDrag, let layerID = track.layerID(of: drag.original.id) else { return }
         var clip = drag.original
         let parameter = drag.target.parameter
         let value = drag.initial + distance.rounded()
         guard parameter.accepts(value) else { return }
         drag.target.apply(value, to: &clip)
-        guard let preview = try? track.updating(clip, slot: slot, duration: duration) else { return }
+        guard let preview = try? track.updating(clip, layerID: layerID, duration: duration) else { return }
         drag.preview = preview
         valueDrag = drag
         drag.field.stringValue = String(value)
@@ -947,9 +995,108 @@ private extension VisualEditor {
     @discardableResult
     private func commitAnimation(_ clip: VisualClip, refreshEditor: Bool = true) -> Bool {
         do {
-            guard let slot = track.slot(of: clip.id) else { return false }
-            commit(try track.updating(clip, slot: slot, duration: duration), selectedID: clip.id, refreshEditor: refreshEditor)
+            guard let layerID = track.layerID(of: clip.id) else { return false }
+            commit(try track.updating(clip, layerID: layerID, duration: duration), selectedID: clip.id, refreshEditor: refreshEditor)
             return true
         } catch { report(error); return false }
     }
+}
+
+@MainActor
+extension VisualEditor {
+    func previewHandleTarget(for parameter: ImageParameter) -> PreviewHandleTarget? {
+        guard let pair = PreviewPositionPair.containing(parameter), let id = selectedID,
+              let clip = track.clip(id), track.canEdit(track.layerID(of: id)), available, !processing, manager == nil,
+              pair.enabled(clip.effects ?? ImageEffects()) else { return nil }
+        if pair.x == .flareX, clip.effects?.lensFlare?.automaticMotion == true { return nil }
+        let generation = self.generation
+        let valid: () -> Bool = { [weak self] in
+            guard let self, self.generation == generation, self.selectedID == id,
+                  self.available, !self.processing, self.manager == nil, self.track.canEdit(self.track.layerID(of: id)), let clip = self.track.clip(id) else { return false }
+            return pair.enabled(clip.effects ?? ImageEffects()) && !(pair.x == .flareX && clip.effects?.lensFlare?.automaticMotion == true)
+        }
+        return PreviewHandleTarget(id: id.uuidString + pair.x.rawValue, title: pair.title, coordinates: pair.coordinates,
+            isValid: valid, isVisible: { [weak self] in
+                guard valid(), let self, let clip = self.track.clip(id) else { return false }
+                return clip.start <= self.currentTime && self.currentTime < clip.end
+            }, position: { [weak self] in
+                guard let self, let clip = (self.handlePreview ?? self.track).clip(id) else { return .zero }
+                return pair.position(in: clip)
+            }, evaluatedPosition: { [weak self] in
+                guard let self, let clip = (self.handlePreview ?? self.track).clip(id) else { return .zero }
+                return pair.evaluatedPosition(in: clip, at: self.currentTime,
+                    settings: self.timeline?.sceneSettings ?? SceneSettings(), features: self.timeline?.audioFeatures)
+            }, begin: { [weak self] in
+                guard valid(), let self, let original = self.track.clip(id), let layerID = self.track.layerID(of: id) else { return nil }
+                self.cancelValueDrag()
+                let source = self.track
+                var draft = source
+                return PreviewHandleEdit(update: { [weak self] point in
+                    guard let self, valid() else { return }
+                    let clip = pair.moving(original, to: point)
+                    guard let value = try? source.updating(clip, layerID: layerID, duration: self.duration) else { return }
+                    draft = value; self.handlePreview = value
+                    self.timeline?.automationPreview = value
+                    self.showHandleValues(clip)
+                    self.onPreview?(value)
+                }, finish: { [weak self] commit in
+                    guard let self else { return }
+                    self.handlePreview = nil; self.timeline?.automationPreview = nil
+                    if commit, valid(), draft != source { self.commit(draft, selectedID: id) }
+                    else {
+                        if let clip = self.track.clip(self.selectedID) { self.showHandleValues(clip) }
+                        self.onPreview?(self.track)
+                    }
+                })
+            })
+    }
+
+    private func showHandleValues(_ clip: VisualClip) {
+        for (parameter, field) in valueFields where field.currentEditor() == nil { field.doubleValue = clip.baseValue(parameter) }
+        syncParticleThumbnails()
+        effectsEditor.load(clip, editable: available && !processing && manager == nil && track.canEdit(selectedLayerID), track: handlePreview ?? track)
+        refreshGraphControls(resetRange: true)
+    }
+    private func commitLayers(_ value: VisualTrack, selectedLayer: UUID) {
+        guard available, !processing, manager == nil, finishEditing() else { return }
+        onBeginEdit?()
+        selectedLayerID = selectedLayer
+        commit(value, selectedID: value.layerID(of: selectedID ?? UUID()) == selectedLayer ? selectedID : nil)
+        timeline?.revealLayer(selectedLayer)
+    }
+    func performLayerAction(_ id: UUID, _ action: VisualLayerAction) {
+        guard available, !processing, manager == nil, finishEditing(), let layer = track.layer(id) else { return }
+        do {
+            var value = track
+            var selection = selectedLayerID
+            switch action {
+            case .add(let above):
+                let result = try track.addingLayer(relativeTo: id, above: above)
+                value = result.track; selection = result.id
+            case .move(let forward):
+                let index = track.layers.firstIndex { $0.id == id }!
+                let target = index + (forward ? 1 : -1)
+                guard track.layers.indices.contains(target) else { return }
+                value = try track.movingLayer(id, relativeTo: track.layers[target].id, above: forward)
+            case .rename: timeline?.beginLayerRename(id); return
+            case .delete:
+                try track.requireEditable(id)
+                guard track.layers.count > 1 else { return }
+                if !layer.clips.isEmpty {
+                    let alert = NSAlert()
+                    alert.messageText = "「\(layer.name)」を削除しますか？"
+                    alert.informativeText = "\(layer.clips.count)個のクリップも削除します。素材ファイルは残ります。"
+                    alert.addButton(withTitle: "削除"); alert.addButton(withTitle: "キャンセル")
+                    guard alert.runModal() == .alertFirstButtonReturn else { return }
+                }
+                let index = track.layers.firstIndex { $0.id == id }!
+                if selection == id { selection = track.layers[index > 0 ? index - 1 : 1].id }
+                value = try track.removingLayer(id)
+            case .visibility: value = try track.editingLayer(id) { $0.isVisible.toggle() }
+            case .lock: value = try track.editingLayer(id) { $0.isLocked.toggle() }
+            }
+            commitLayers(value, selectedLayer: selection)
+        } catch { report(error) }
+    }
+
 }

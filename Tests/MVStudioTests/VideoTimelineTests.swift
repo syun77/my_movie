@@ -11,7 +11,7 @@ final class VideoTimelineTests: XCTestCase {
     @MainActor func testSourceMappingTrimBoundariesAndPersistence() throws {
         var track = VisualTrack()
         let id = track.register(url: URL(fileURLWithPath: "/tmp/video-test/clip.mov"), projectURL: project, kind: .video(duration: 8))
-        let result = try track.adding(assetID: id, at: 10, slot: 1, duration: 30, grid: TimelineSnapGrid())
+        let result = try track.adding(assetID: id, at: 10, layerID: track.layers[0].id, duration: 30, grid: TimelineSnapGrid())
         track = result.track
         XCTAssertEqual(result.clip.end, 18)
         XCTAssertTrue(result.clip.audioModulations.isEmpty)
@@ -27,7 +27,7 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(extended.clip(clip.id)?.start, 10)
         XCTAssertEqual(extended.clip(clip.id)?.content.sourceIn, 0)
         var invalid = clip; invalid.content = .video(sourceIn: 4)
-        XCTAssertThrowsError(try trimmed.updating(invalid, slot: 1, duration: 30))
+        XCTAssertThrowsError(try trimmed.updating(invalid, layerID: trimmed.layers[0].id, duration: 30))
         XCTAssertThrowsError(try trimmed.replacingAsset(id: id, url: URL(fileURLWithPath: "/tmp/short.mov"), projectURL: project, kind: .video(duration: 4)))
         XCTAssertThrowsError(try trimmed.replacingAsset(id: id, url: URL(fileURLWithPath: "/tmp/still.png"), projectURL: project))
         let file = ProjectFile(audioURL: project.deletingPathExtension(), visuals: moved, settings: SceneSettings(), projectURL: project)
@@ -58,10 +58,10 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(try track.dragging(id: clip.id, part: .end, delta: 100, duration: 30, grid: TimelineSnapGrid()).clip(clip.id)?.end, 13)
         for speed in [0, -1, 0.09, 16.01, Double.nan, .infinity, 3] {
             var invalid = clip; invalid.content = .video(sourceIn: 2, speed: speed)
-            XCTAssertThrowsError(try track.updating(invalid, slot: 1, duration: 30))
+            XCTAssertThrowsError(try track.updating(invalid, layerID: track.layers[0].id, duration: 30))
         }
         var slow = clip; slow.content = .video(sourceIn: 2, speed: 0.5); slow.end = 22
-        let slowTrack = try track.updating(slow, slot: 1, duration: 30)
+        let slowTrack = try track.updating(slow, layerID: track.layers[0].id, duration: 30)
         XCTAssertEqual(slow.sourceTime(at: 14), 4)
         XCTAssertEqual(try JSONDecoder().decode(VisualTrack.self, from: JSONEncoder().encode(slowTrack)), slowTrack)
         let legacy = Data(#"{"video":{"sourceIn":2}}"#.utf8)
@@ -151,7 +151,7 @@ final class VideoTimelineTests: XCTestCase {
         editor.duration = 10; editor.currentTime = 1
         editor.visuals.load(VisualTrack(), projectURL: project)
         editor.setAvailable(hasAudio: true, isBusy: false); editor.restoreTab(.visuals)
-        editor.visuals.importFile(url, placement: (2, 1))
+        editor.visuals.importFile(url, placement: (editor.visuals.track.layers[1].id, 1))
         for _ in 0..<1000 {
             if !editor.visuals.isProcessing { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -197,10 +197,10 @@ final class VideoTimelineTests: XCTestCase {
         XCTAssertEqual(copied.start, 5); XCTAssertEqual(copied.content.sourceIn, 0.5)
         XCTAssertEqual(copied.content.speed, 0.5)
         let beforeRejectedSlowdown = editor.visuals.track
-        editor.timeline.onImageSelect?(clip.id, 2)
+        editor.timeline.onImageSelect?(clip.id, editor.timeline.visuals.layers[1].id)
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
         XCTAssertEqual(editor.visuals.track, beforeRejectedSlowdown)
-        editor.timeline.onImageSelect?(copied.id, 2)
+        editor.timeline.onImageSelect?(copied.id, editor.timeline.visuals.layers[1].id)
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(quarter.action), to: quarter.target, from: quarter))
         XCTAssertEqual(editor.visuals.track, beforeRejectedSlowdown)
 
@@ -277,7 +277,7 @@ final class VideoTimelineTests: XCTestCase {
         delegate.window.contentView?.layoutSubtreeIfNeeded()
         let visuals = delegate.placementEditor.visuals
         let clipID = track.clips[0].id
-        delegate.placementEditor.timeline.onImageSelect?(clipID, 1)
+        delegate.placementEditor.timeline.onImageSelect?(clipID, delegate.placementEditor.timeline.visuals.layers[0].id)
         let speed = try XCTUnwrap(DragValueField.fields(in: visuals.view).first { $0.identifier?.rawValue == "visual.playbackSpeed" })
         speed.stringValue = "0.5"
         visuals.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: speed))

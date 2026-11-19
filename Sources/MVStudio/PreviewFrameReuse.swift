@@ -9,7 +9,9 @@ enum PreviewFrameReuse {
                   let layer = layers.first(where: { $0.clip.id == clip.id && $0.clip.assetID == clip.assetID && $0.clip.content == .still }),
                   let frame = layer.frame else { return nil }
             var updated = VisualRenderLayer(clip: clip, frame: frame)
-            updated.slot = track.slot(of: clip.id) ?? 1
+            guard layer.clip.activeParticleAssetIDs == clip.activeParticleAssetIDs else { return nil }
+            updated.particleImages = layer.particleImages
+            updated.updatePlacement(from: track)
             result.append(updated)
         }
         return result

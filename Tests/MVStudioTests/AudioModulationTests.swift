@@ -175,13 +175,13 @@ final class AudioModulationTests: XCTestCase {
         var track = VisualTrack()
         let projectURL = URL(fileURLWithPath: "/tmp/audio-modulation.mvproject")
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/sync.png"), projectURL: projectURL)
-        let added = try track.adding(assetID: asset, at: 0, slot: 1, duration: 10, grid: TimelineSnapGrid())
+        let added = try track.adding(assetID: asset, at: 0, layerID: track.layers[0].id, duration: 10, grid: TimelineSnapGrid())
         track = added.track
         var configured = added.clip
         configured.audioModulations[.scale] = .initial(for: .scale)
-        track = try track.updating(configured, slot: 1, duration: 10)
+        track = try track.updating(configured, layerID: track.layers[0].id, duration: 10)
         editor.duration = 10; editor.load(track, projectURL: projectURL); editor.setAvailable(true)
-        timeline.onImageSelect?(added.clip.id, 1)
+        timeline.onImageSelect?(added.clip.id, timeline.visuals.layers[0].id)
         XCTAssertNotNil(editor.track.clip(added.clip.id)?.displayCurve(.scale))
         let fields = DragValueField.fields(in: editor.view)
         let scale = try XCTUnwrap(fields.first { $0.identifier?.rawValue == "visuals.value.scale" })

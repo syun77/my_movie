@@ -18,22 +18,23 @@ final class PreviewFrameReuseTests: XCTestCase {
         edited.fixedValues[.opacity] = 35
         edited.effects = ImageEffects()
         edited.effects?.blur = .init()
-        track = try track.updating(edited, slot: 3, duration: 10)
+        track = try track.updating(edited, layerID: track.layers[2].id, duration: 10)
         let result = try XCTUnwrap(PreviewFrameReuse.stills([layer], track: track, time: 2))
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result[0].clip, edited)
-        XCTAssertEqual(result[0].slot, 3)
+        XCTAssertEqual(result[0].layerID, track.layers[2].id)
         XCTAssertTrue(result[0].frame === layer.frame)
         // Repeated edits preserve the exact decoded frame, including empty-clip sources.
         edited.end = 9
-        track = try track.updating(edited, slot: 3, duration: 10)
+        track = try track.updating(edited, layerID: track.layers[2].id, duration: 10)
         XCTAssertTrue(try XCTUnwrap(PreviewFrameReuse.stills(result, track: track, time: 2)).first?.frame === layer.frame)
         XCTAssertEqual(PreviewFrameReuse.stills(result, track: track, time: 9)?.count, 0)
         XCTAssertEqual(PreviewFrameReuse.stills(result, track: VisualTrack(), time: 2)?.count, 0)
     }
 
     func testNewOrChangedSourcesRequireAcquisition() throws {
-        let added = try VisualTrack().addingEmpty(at: 0, slot: 1, duration: 10, grid: TimelineSnapGrid(bpm: 120, origin: 0))
+        let base = VisualTrack()
+        let added = try base.addingEmpty(at: 0, layerID: base.layers[0].id, duration: 10, grid: TimelineSnapGrid(bpm: 120, origin: 0))
         XCTAssertNil(PreviewFrameReuse.stills([], track: added.track, time: 0.5))
         let context = try XCTUnwrap(CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8,
                                               bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -42,7 +43,7 @@ final class PreviewFrameReuseTests: XCTestCase {
         var track = added.track
         var clip = added.clip
         clip.assetID = track.register(url: URL(fileURLWithPath: "/tmp/replacement.png"), projectURL: URL(fileURLWithPath: "/tmp/song.mvproject"))
-        track = try track.updating(clip, slot: 1, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[0].id, duration: 10)
         XCTAssertNil(PreviewFrameReuse.stills([layer], track: track, time: 0.5))
         clip.content = .video(sourceIn: 0)
         track.layers[0].clips = [clip]
@@ -85,7 +86,8 @@ final class PreviewFrameReuseTests: XCTestCase {
             return view.subviews.lazy.compactMap { findPreview($0) }.first
         }
         let preview = try XCTUnwrap(findPreview(delegate.window.contentView!))
-        let added = try VisualTrack().addingEmpty(at: 0, slot: 1, duration: 10, grid: TimelineSnapGrid(bpm: 120, origin: 0))
+        let base = VisualTrack()
+        let added = try base.addingEmpty(at: 0, layerID: base.layers[0].id, duration: 10, grid: TimelineSnapGrid(bpm: 120, origin: 0))
         editor.visuals.commit(added.track, selectedID: added.clip.id)
         for _ in 0..<250 {
             if !preview.visuals.isEmpty { break }
@@ -98,11 +100,11 @@ final class PreviewFrameReuseTests: XCTestCase {
             var clip = added.clip
             clip.end = 4
             clip.fixedValues[.opacity] = Double(value)
-            let updated = try added.track.updating(clip, slot: 2, duration: 10)
+            let updated = try added.track.updating(clip, layerID: added.track.layers[1].id, duration: 10)
             editor.visuals.onPreview?(updated)
             XCTAssertEqual(preview.visuals.count, 1, "No empty frame may be published between updates")
             XCTAssertEqual(preview.visuals.first?.clip, clip)
-            XCTAssertEqual(preview.visuals.first?.slot, 2)
+            XCTAssertEqual(preview.visuals.first?.layerID, added.track.layers[1].id)
             XCTAssertTrue(preview.visuals.first?.frame === source)
         }
         editor.visuals.onSeek?(0.5)

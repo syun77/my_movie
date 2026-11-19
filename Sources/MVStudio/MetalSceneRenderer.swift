@@ -16,18 +16,25 @@ final class MetalSceneRenderer {
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let filters: CIContext
+    private let sobelChromaticRenderer: SobelChromaticRenderer
     private let radialBlurRenderer: RadialBlurRenderer
     private let crossGlareRenderer: CrossGlareRenderer
+    private let chainEmissionPipeline: MTLRenderPipelineState
+    private let chainCopyPipeline: MTLRenderPipelineState
+    private let chainMaskPipeline: MTLRenderPipelineState
+    private let chainLoopPipeline: MTLRenderPipelineState
     private let highlight: MTLComputePipelineState
     private let placementPipeline: MTLRenderPipelineState
     private let shapePipeline: MTLRenderPipelineState
     private let maskedClipPipeline: MTLRenderPipelineState
     private let guidePipeline: MTLRenderPipelineState
     private let imagePipeline: MTLRenderPipelineState
+    private let particleImagePipeline: MTLRenderPipelineState
+    private let particleImageAddPipeline: MTLRenderPipelineState
+    private var particleTextureCache: [UUID: SourceImage] = [:]
     private let particlePipeline: MTLRenderPipelineState
     private let emberPipeline: MTLRenderPipelineState
     private let snowPipeline: MTLRenderPipelineState
-    private let zoomLoopPipeline: MTLRenderPipelineState
     private let octPipeline: MTLRenderPipelineState
     private let warpPipeline: MTLRenderPipelineState
     private let lensFlarePipeline: MTLRenderPipelineState
@@ -45,32 +52,15 @@ final class MetalSceneRenderer {
 
     private struct ImageKey: Equatable {
         let source: VisualFrame
+        var particleImages: [UUID: VisualFrame] = [:]
         let transform: CGAffineTransform
-        let shape: ImageEffects.Shape?
-        let background: RGBColor?
-        let chromatic: ChromaticAberrationRenderer.Sample?
-        let vignette: ImageEffects.Vignette?
-        let correction: ImageEffects.ColorCorrection?
-        let radialBlur: ImageEffects.RadialBlur?
-        let blur: Double
-        let threshold: Double
-        let glare: ImageEffects.CrossGlare?
-        let glowRadius: Double
-
-        var needsFiltering: Bool { radialBlur != nil || chromatic != nil || blur > 0 || correction != nil || vignette != nil }
-
-        static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.radialBlur == rhs.radialBlur && lhs.glare == rhs.glare && lhs.source == rhs.source && lhs.transform == rhs.transform && lhs.blur == rhs.blur
-                && lhs.chromatic == rhs.chromatic && lhs.shape == rhs.shape && lhs.background == rhs.background && lhs.vignette == rhs.vignette && lhs.correction == rhs.correction && lhs.threshold == rhs.threshold && lhs.glowRadius == rhs.glowRadius
-        }
+        let chain: ImageEffects
+        let localTime: Double
     }
-
     private struct ProcessedImage {
         let key: ImageKey
         let image: MTLTexture
-        let glow: MTLTexture?
-        let glare: MTLTexture?
-        var cost: Int { [image, glow, glare].compactMap { $0 }.reduce(0) { $0 + $1.width * $1.height * 8 } }
+        var cost: Int { image.width * image.height * 8 }
     }
 
     private struct SourceImage {
@@ -94,10 +84,10 @@ final class MetalSceneRenderer {
     private var sourceCache: [UUID: SourceImage] = [:]
     private var imageCache: [UUID: ProcessedImage] = [:]
     private var spectrumTarget: OverlayTarget?
-    private var maskTargets: [Int: MTLTexture] = [:]
-    private var transformScratch: MTLTexture?
-    private var radialInputScratch: MTLTexture?
-    private var radialOutputScratch: MTLTexture?
+    private var maskTargets: [UUID: MTLTexture] = [:]
+    private var chainScratch: [MTLTexture] = []
+    private var generatorScratch: MTLTexture?
+    private var glowScratch: MTLTexture?
     private var bloomScratch: MTLTexture?
     private var lyricsCache: (text: String, style: LyricsStyle, image: Overlay)?
 
@@ -116,6 +106,7 @@ final class MetalSceneRenderer {
         let library = try SceneShaders.library(device: device)
         guard let bloomFunction = library.makeFunction(name: "bloomHighlights") else { throw Self.renderError }
         highlight = try device.makeComputePipelineState(function: bloomFunction)
+        sobelChromaticRenderer = try SobelChromaticRenderer(device: device, library: library)
         radialBlurRenderer = try RadialBlurRenderer(device: device, library: library)
         crossGlareRenderer = try CrossGlareRenderer(device: device, library: library)
         func pipeline(_ vertex: String, _ fragment: String, format: MTLPixelFormat = .rgba16Float,
@@ -132,15 +123,20 @@ final class MetalSceneRenderer {
             color.destinationAlphaBlendFactor = additive ? .one : .oneMinusSourceAlpha
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
+        chainEmissionPipeline = try pipeline("fullscreen", "chainCopy", additive: true)
+        chainCopyPipeline = try pipeline("fullscreen", "chainCopy")
+        chainMaskPipeline = try pipeline("fullscreen", "chainMask", blending: false)
+        chainLoopPipeline = try pipeline("fullscreen", "chainLoop", blending: false)
         placementPipeline = try pipeline("positionedImage", "sourceImage", blending: true)
         shapePipeline = try pipeline("fullscreen", "coloredShape")
         maskedClipPipeline = try pipeline("fullscreen", "maskedClip")
         guidePipeline = try pipeline("fullscreen", "maskGuide")
         imagePipeline = try pipeline("fullscreen", "imageLayer")
+        particleImagePipeline = try pipeline("imageParticleQuad", "imageParticle")
+        particleImageAddPipeline = try pipeline("imageParticleQuad", "imageParticle", additive: true)
         particlePipeline = try pipeline("particleQuad", "particleLight", additive: true)
         emberPipeline = try pipeline("particleQuad", "emberLight", additive: true)
         snowPipeline = try pipeline("particleQuad", "snowFlake")
-        zoomLoopPipeline = try pipeline("fullscreen", "zoomLoopImage")
         octPipeline = try pipeline("fullscreen", "octgrams")
         warpPipeline = try pipeline("fullscreen", "warpFlight")
         lensFlarePipeline = try pipeline("fullscreen", "lensFlare", additive: true)
@@ -167,7 +163,8 @@ final class MetalSceneRenderer {
         }
         framesSinceCleanup += 1
         guard let commands = queue.makeCommandBuffer() else { throw Self.renderError }
-        var prepared: [(clip: VisualClip, image: ProcessedImage, intensity: Float, slot: Int)] = []
+        var usedParticleTextures = Set<UUID>()
+        var prepared: [(clip: VisualClip, image: ProcessedImage, layerID: UUID, order: Int, maskOwnerID: UUID?)] = []
         var nextSources: [UUID: SourceImage] = [:]
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
@@ -181,68 +178,56 @@ final class MetalSceneRenderer {
             }
             var clip = layer.clip
             clip.effects = clip.evaluatedEffects(at: time, settings: settings, features: features)
-            let blur = clip.effects?.blur
-            let bloom = clip.effects?.bloom
-            let glows = bloom.map { $0.isEnabled && $0.intensity > 0 && $0.threshold < 100 } ?? false
-            var glare = clip.effects?.crossGlare.flatMap { $0.isActive ? $0 : nil }
-            glare?.intensity = 100
-            let key = ImageKey(source: frame, transform: transform(frame, clip: layer.clip, at: time, settings: settings, features: features, shake: clip.effects?.shake),
-                               shape: clip.effects?.shape.flatMap { $0.isEnabled ? $0 : nil },
-                               background: clip.effects?.solidBackground.flatMap { $0.isEnabled ? $0.color : nil },
-                               chromatic: clip.effects?.chromaticAberration.flatMap { ChromaticAberrationRenderer.sample($0, at: time - clip.start) },
-                               vignette: clip.effects?.vignette.flatMap { $0.isEnabled && $0.strength > 0 ? $0 : nil },
-                               correction: clip.effects?.colorCorrection.flatMap { $0.isEnabled ? $0 : nil },
-                               radialBlur: clip.effects?.radialBlur.flatMap { $0.isEnabled && $0.strength > 0 ? $0 : nil },
-                               blur: blur?.isEnabled == true ? blur?.radius ?? 0 : 0,
-                               threshold: glows ? (bloom?.threshold ?? 0) / 100 : 0,
-                               glare: glare,
-                               glowRadius: glows ? bloom?.radius ?? 0 : 0)
+            let chain = clip.effects ?? ImageEffects()
+            let key = ImageKey(source: frame, particleImages: layer.particleImages,
+                               transform: transform(frame, clip: layer.clip, at: time, settings: settings, features: features),
+                               chain: chain, localTime: chain.needsClock ? time - clip.start : 0)
             let sourceID = clip.assetID ?? clip.id
             let source = try sourceTexture(frame, cached: nextSources[sourceID] ?? sourceCache[sourceID], commands: commands)
             nextSources[sourceID] = source
+            for (id, frame) in layer.particleImages {
+                particleTextureCache[id] = try sourceTexture(frame, cached: particleTextureCache[id], commands: commands)
+                usedParticleTextures.insert(id)
+            }
             let previous = imageCache[clip.id]
             let image = try (previous?.key == key ? previous : nil)
                 ?? process(key, source: source.texture, reusing: previous, commands: commands)
-            prepared.append((clip, image, glows ? Float((bloom?.intensity ?? 0) / 100) : 0, layer.slot))
+            prepared.append((clip, image, layer.layerID, layer.order, layer.maskOwnerID))
             if cost + image.cost <= Self.cacheLimit {
                 nextCache[clip.id] = image
                 cost += image.cost
             }
         }
-        if !prepared.contains(where: { $0.image.glare != nil }) { crossGlareRenderer.discardCache() }
-        if !prepared.contains(where: { $0.image.key.radialBlur != nil }) {
-            radialInputScratch = nil
-            radialOutputScratch = nil
-        }
+        particleTextureCache = particleTextureCache.filter { usedParticleTextures.contains($0.key) }
         let overlays = try foreground(features: features, settings: settings, lyrics: lyrics, time: time)
 
         let clear = MTLClearColor(red: Self.linear(0.025), green: Self.linear(0.035), blue: Self.linear(0.065), alpha: 1)
         var composition = try encoder(commands, target: scene, clear: clear)
-        var intermediates: [Int: MTLTexture] = [:]
-        for item in prepared.sorted(by: { $0.slot < $1.slot }) {
-            let (clip, layer, intensity, slot) = item
-            let maskOwner = prepared.first { $0.slot == slot + 1 && $0.clip.effects?.mask?.isEnabled == true && $0.clip.effects?.mask?.target == .below }
+        var intermediates: [UUID: MTLTexture] = [:]
+        for item in prepared.sorted(by: { $0.order < $1.order }) {
+            let (clip, layer, layerID, _, maskOwnerID) = item
+            let maskOwner = prepared.first { $0.layerID == maskOwnerID && $0.clip.effects?.belowMask?.isEnabled == true }
             var intermediate: MTLTexture?
             if maskOwner != nil {
                 composition.endEncoding()
-                let texture = try filterTexture(bounds: canvas, reusing: maskTargets[slot])
+                let texture = try filterTexture(bounds: canvas, reusing: maskTargets[layerID])
                 intermediate = texture
-                intermediates[slot] = texture
+                intermediates[layerID] = texture
                 composition = try encoder(commands, target: texture, clear: MTLClearColorMake(0, 0, 0, 0))
             }
-            try drawClip(clip, image: layer, intensity: intensity, at: time, settings: settings, features: features, encoder: composition)
+            try drawClip(clip, image: layer, at: time, settings: settings, features: features, encoder: composition)
             if let intermediate, let maskOwner {
                 composition.endEncoding()
                 composition = try encoder(commands, target: scene, clear: clear, load: true)
                 let ownerOpacity = ParameterEvaluator.value(.opacity, clip: maskOwner.clip, at: time, settings: settings, features: features) / 100
-                var mask = ShapeRenderer.mask(maskOwner.clip.effects?.mask, opacity: ownerOpacity)
+                var mask = ShapeRenderer.mask(maskOwner.clip.effects?.belowMask, opacity: ownerOpacity)
                 composition.setRenderPipelineState(maskedClipPipeline)
                 composition.setFragmentTexture(intermediate, index: 0)
                 composition.setFragmentBytes(&mask, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
                 quad(composition)
             }
         }
-        if !video, let guide = prepared.first(where: { $0.clip.id == guideClipID }), let mask = guide.clip.effects?.mask, mask.isEnabled {
+        if !video, let guide = prepared.first(where: { $0.clip.id == guideClipID }), let mask = (guide.clip.effects?.mask ?? guide.clip.effects?.belowMask), mask.isEnabled {
             var uniforms = ShapeRenderer.uniforms(mask.geometry)
             composition.setRenderPipelineState(guidePipeline)
             composition.setFragmentBytes(&uniforms, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
@@ -276,29 +261,25 @@ final class MetalSceneRenderer {
         return commands
     }
 
-    private func drawClip(_ clip: VisualClip, image: ProcessedImage, intensity: Float, at time: Double,
+    private func drawClip(_ clip: VisualClip, image: ProcessedImage, at time: Double,
                           settings: SceneSettings, features: AudioFeatures?, encoder: MTLRenderCommandEncoder) throws {
-        let spriteSize = SIMD2<Double>(Self.videoSize.width, Self.videoSize.height)
-        let opacity = Float(min(100, max(0, ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features))) / 100)
-        let loop = clip.effects?.zoomLoop.flatMap { $0.isEnabled && $0.opacity > 0 ? $0 : nil }
-        encoder.setRenderPipelineState(loop == nil ? imagePipeline : zoomLoopPipeline)
+        let opacity = Float(ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features) / 100)
+        var values = SIMD4(Float(scene.width) / Float(image.image.width), Float(scene.height) / Float(image.image.height), 0, opacity)
+        encoder.setRenderPipelineState(imagePipeline)
         encoder.setFragmentTexture(image.image, index: 0)
-        encoder.setFragmentTexture(image.glow ?? image.image, index: 1)
-        encoder.setFragmentTexture(image.glare ?? image.image, index: 2)
-        var glareIntensity = image.glare == nil ? Float(0) : Float((clip.effects?.crossGlare?.intensity ?? 0) / 100)
-        encoder.setFragmentBytes(&glareIntensity, length: MemoryLayout<Float>.size, index: 4)
-        var values = SIMD4(Float(scene.width) / Float(image.image.width), Float(scene.height) / Float(image.image.height), intensity, opacity)
         encoder.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
-        var ownMask = ShapeRenderer.mask(clip.effects?.mask.flatMap { $0.target == .image ? $0 : nil })
-        encoder.setFragmentBytes(&ownMask, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 1)
-        if let loop {
-            var animation = SIMD4(Float(((time - clip.start + loop.phaseOffset) * loop.speed / 100).truncatingRemainder(dividingBy: 100000)),
-                                  Float(loop.zoom / 100), Float(loop.brightness / 100), Float(loop.opacity / 100))
-            var center = SIMD2(Float(loop.centerX / 1920), Float(loop.centerY / 1080))
-            encoder.setFragmentBytes(&animation, length: MemoryLayout.size(ofValue: animation), index: 2)
-            encoder.setFragmentBytes(&center, length: MemoryLayout.size(ofValue: center), index: 3)
-        }
         quad(encoder)
+    }
+
+    private func drawGenerated(_ clip: VisualClip, at time: Double, particleImages: [UUID: VisualFrame], encoder: MTLRenderCommandEncoder) throws {
+        if let node = clip.effects?.nodes.first, let appearance = node.particleAppearance, appearance.usesImage {
+            if let id = appearance.assetID, particleImages[id] != nil, let image = particleTextureCache[id] {
+                try drawImageParticles(node, texture: image.texture, at: time - clip.start, encoder: encoder)
+            }
+            return
+        }
+        let spriteSize = SIMD2<Double>(Self.videoSize.width, Self.videoSize.height)
+        let opacity: Float = 1
         if let flare = clip.effects?.lensFlare, flare.isEnabled, flare.intensity > 0, opacity > 0 {
             encoder.setRenderPipelineState(lensFlarePipeline)
             let position = flare.sourcePosition(at: time - clip.start)
@@ -451,27 +432,25 @@ final class MetalSceneRenderer {
     }
 
     func discardCache() {
+        chainScratch.removeAll(); generatorScratch = nil; glowScratch = nil
         spineRenderer.discardCache()
         crossGlareRenderer.discardCache()
         maskTargets.removeAll()
+        particleTextureCache.removeAll()
         sourceCache.removeAll()
         imageCache.removeAll()
         lyricsCache = nil
         spectrumTarget = nil
         bloomScratch = nil
-        radialInputScratch = nil
-        radialOutputScratch = nil
-        transformScratch = nil
     }
 
-    private func transform(_ image: VisualFrame, clip: VisualClip, at time: Double, settings: SceneSettings, features: AudioFeatures?, shake: ImageEffects.Shake?) -> CGAffineTransform {
+    private func transform(_ image: VisualFrame, clip: VisualClip, at time: Double, settings: SceneSettings, features: AudioFeatures?) -> CGAffineTransform {
         let reference = image.referenceBounds ?? CGRect(x: 0, y: 0, width: image.width, height: image.height)
         let fit = min(size.width / reference.width, size.height / reference.height)
         let imageScale = fit * (ParameterEvaluator.value(.scale, clip: clip, at: time, settings: settings, features: features) / 100)
-        let displacement = shake?.displacement(at: time - clip.start) ?? .zero
         let angle = ParameterEvaluator.value(.rotation, clip: clip, at: time, settings: settings, features: features).truncatingRemainder(dividingBy: 360) * (-.pi / 180)
-        return CGAffineTransform(translationX: size.width / 2 + (ParameterEvaluator.value(.x, clip: clip, at: time, settings: settings, features: features) + displacement.x) * scale,
-                                 y: size.height / 2 + (ParameterEvaluator.value(.y, clip: clip, at: time, settings: settings, features: features) + displacement.y) * scale)
+        return CGAffineTransform(translationX: size.width / 2 + (ParameterEvaluator.value(.x, clip: clip, at: time, settings: settings, features: features)) * scale,
+                                 y: size.height / 2 + (ParameterEvaluator.value(.y, clip: clip, at: time, settings: settings, features: features)) * scale)
             .rotated(by: angle).scaledBy(x: imageScale, y: imageScale)
             .translatedBy(x: -reference.midX, y: -reference.midY)
     }
@@ -485,67 +464,140 @@ final class MetalSceneRenderer {
     }
 
     private func process(_ key: ImageKey, source: MTLTexture, reusing previous: ProcessedImage?, commands: MTLCommandBuffer) throws -> ProcessedImage {
-        let glarePadding = key.glare.map { $0.length + $0.width / 2 } ?? 0
-        let support = 3 * (key.blur + key.glowRadius) + glarePadding
-        let padding = support > 0 ? ceil(support * scale) + 2 : 0
-        let bounds = CGRect(origin: .zero, size: canvas.insetBy(dx: -padding, dy: -padding).size)
-        let positioned = try filterTexture(bounds: bounds, reusing: key.needsFiltering ? transformScratch : previous?.image)
+        let nodes = key.chain.isBypassed ? [] : key.chain.nodes.filter(\.isEnabled)
+        let support = nodes.reduce(0.0) { value, node in
+            switch node.payload {
+            case let .blur(v): return value + 3 * v.radius
+            case let .bloom(v): return value + 3 * v.radius
+            case let .crossGlare(v): return value + v.length + v.width / 2
+            case let .shake(v): return value + max(v.x, v.y) * v.strength / 100
+            case let .sobelChromatic(v): return value + (v.amount > 0 ? v.sample(at: key.localTime).support : 0)
+            case let .chromaticAberration(v): return value + v.displacement(at: key.localTime)
+            default: return value
+            }
+        }
+        // Keep fragment derivative quads aligned when a filter changes the shared surface margin.
+        let padding = support > 0 ? ceil((ceil(support * scale) + 2) / 2) * 2 : 0
+        let bounds = CGRect(x: 0, y: 0, width: canvas.width + padding * 2, height: canvas.height + padding * 2)
+        if chainScratch.count != 2 || chainScratch[0].width != Int(bounds.width) || chainScratch[0].height != Int(bounds.height) {
+            chainScratch = try (0..<2).map { _ in try filterTexture(bounds: bounds, reusing: nil) }
+        }
+        var current = chainScratch[0]
+        func next() -> MTLTexture { current === chainScratch[0] ? chainScratch[1] : chainScratch[0] }
         var placement = placement(for: key, padding: padding, bounds: bounds)
-        let clear = key.background.map { MTLClearColorMake(Self.linear($0.red), Self.linear($0.green), Self.linear($0.blue), 1) }
-            ?? MTLClearColorMake(0, 0, 0, 0)
-        let pass = try encoder(commands, target: positioned, clear: clear)
-        pass.setRenderPipelineState(placementPipeline)
-        pass.setVertexBytes(&placement, length: MemoryLayout<Placement>.stride, index: 0)
-        pass.setFragmentTexture(source, index: 0)
-        quad(pass)
-        if let shape = key.shape {
-            var uniforms = ShapeRenderer.uniforms(shape.geometry)
-            uniforms.color = SIMD4(Float(Self.linear(shape.color.red)), Float(Self.linear(shape.color.green)), Float(Self.linear(shape.color.blue)), Float(shape.opacity / 100))
-            uniforms.viewport = SIMD4(Float(bounds.width), Float(bounds.height), Float(padding), Float(scale))
-            pass.setRenderPipelineState(shapePipeline)
-            pass.setFragmentBytes(&uniforms, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
-            quad(pass)
+        let base = try encoder(commands, target: current, clear: MTLClearColorMake(0, 0, 0, 0))
+        base.setRenderPipelineState(placementPipeline)
+        base.setVertexBytes(&placement, length: MemoryLayout<Placement>.stride, index: 0)
+        base.setFragmentTexture(source, index: 0)
+        quad(base); base.endEncoding()
+        func image() throws -> CIImage {
+            guard let value = CIImage(mtlTexture: current, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
+            return value
         }
-        pass.endEncoding()
-
-        var rendered = positioned
-        if key.needsFiltering {
-            transformScratch = positioned
-            guard let input = CIImage(mtlTexture: positioned, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
-            var filtered = input
-            if let correction = key.correction {
-                filtered = filtered.applyingFilter("CIHueAdjust", parameters: ["inputAngle": correction.hue * .pi / 180])
-                    .applyingFilter("CIColorControls", parameters: ["inputBrightness": correction.brightness / 100,
-                                                                   "inputSaturation": correction.saturation / 100])
-            }
-            if let chromatic = key.chromatic {
-                filtered = try ChromaticAberrationRenderer.apply(chromatic, to: filtered, bounds: bounds, scale: scale)
-            }
-            if let vignette = key.vignette {
-                filtered = try VignetteRenderer.apply(vignette, to: filtered, canvas: canvas, padding: padding, scale: scale)
-            }
-            if let radial = key.radialBlur {
-                let input: MTLTexture
-                if key.correction != nil || key.chromatic != nil || key.vignette != nil {
-                    input = try render(filtered, bounds: bounds, reusing: radialInputScratch, commands: commands)
-                    radialInputScratch = input
-                } else { input = positioned }
-                rendered = try radialBlurRenderer.render(input, effect: radial, canvas: canvas.size, padding: padding,
-                                                        reusing: key.blur > 0 ? radialOutputScratch : previous?.image, commands: commands)
-                if key.blur > 0 {
-                    radialOutputScratch = rendered
-                    guard let image = CIImage(mtlTexture: rendered, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
-                    filtered = image
+        for node in nodes {
+            var filtered: CIImage?
+            switch node.payload {
+            case let .colorCorrection(v): filtered = try ChainColorRenderer.apply(v, to: image())
+            case let .binarization(v): filtered = try BinarizationRenderer.apply(v, to: image())
+            case let .chromaticAberration(v):
+                if let sample = ChromaticAberrationRenderer.sample(v, at: key.localTime) {
+                    filtered = try ChromaticAberrationRenderer.apply(sample, to: image(), bounds: bounds, scale: scale)
                 }
+            case let .sobelChromatic(v):
+                current = try sobelChromaticRenderer.render(current, effect: v, localTime: key.localTime,
+                                                            canvas: canvas.size, padding: padding, output: next(), commands: commands)
+            case let .vignette(v): filtered = try VignetteRenderer.apply(v, to: image(), canvas: canvas, padding: padding, scale: scale)
+            case let .blur(v): if v.radius > 0 { filtered = try image().applyingGaussianBlur(sigma: v.radius * scale) }
+            case let .radialBlur(v):
+                if v.strength > 0 { current = try radialBlurRenderer.render(current, effect: v, canvas: canvas.size, padding: padding, reusing: next(), commands: commands) }
+            case let .shake(v):
+                let offset = v.displacement(at: key.localTime)
+                filtered = try image().transformed(by: CGAffineTransform(translationX: offset.x * scale, y: offset.y * scale))
+            case let .bloom(v):
+                if v.intensity > 0 && v.threshold < 100 {
+                    let glow = try bloom(current, threshold: v.threshold / 100, radius: v.radius, bounds: bounds, commands: commands)
+                    try merge(glow, into: current, gain: Float(v.intensity / 100), additive: true, commands: commands)
+                }
+            case let .crossGlare(v):
+                if v.isActive {
+                    var effect = v; effect.intensity = 100
+                    let glow = try crossGlareRenderer.render(current, effect: effect, scale: scale, reusing: glowScratch, commands: commands)
+                    glowScratch = glow
+                    try merge(glow, into: current, gain: Float(v.intensity / 100), additive: true, commands: commands)
+                }
+            case let .mask(v):
+                let output = next()
+                let pass = try encoder(commands, target: output, clear: MTLClearColorMake(0, 0, 0, 0))
+                pass.setRenderPipelineState(chainMaskPipeline)
+                pass.setFragmentTexture(current, index: 0)
+                var mask = ShapeRenderer.mask(v)
+                var geometry = SIMD4(Float(bounds.width), Float(bounds.height), Float(padding), Float(scale))
+                pass.setFragmentBytes(&mask, length: MemoryLayout.size(ofValue: mask), index: 0)
+                pass.setFragmentBytes(&geometry, length: MemoryLayout.size(ofValue: geometry), index: 1)
+                quad(pass); pass.endEncoding(); current = output
+            case let .zoomLoop(v):
+                if v.opacity > 0 {
+                    let output = next()
+                    let pass = try encoder(commands, target: output, clear: MTLClearColorMake(0, 0, 0, 0))
+                    pass.setRenderPipelineState(chainLoopPipeline)
+                    pass.setFragmentTexture(current, index: 0)
+                    var animation = SIMD4(Float((key.localTime + v.phaseOffset) * v.speed / 100), Float(v.zoom / 100), Float(v.brightness / 100), Float(v.opacity / 100))
+                    var geometry = SIMD4(Float(bounds.width), Float(bounds.height), Float(padding), Float(scale))
+                    var center = SIMD2(Float(v.centerX / 1920), Float(v.centerY / 1080))
+                    pass.setFragmentBytes(&animation, length: MemoryLayout.size(ofValue: animation), index: 0)
+                    pass.setFragmentBytes(&geometry, length: MemoryLayout.size(ofValue: geometry), index: 1)
+                    pass.setFragmentBytes(&center, length: MemoryLayout.size(ofValue: center), index: 2)
+                    quad(pass); pass.endEncoding(); current = output
+                }
+            case let .solidBackground(v):
+                guard let color = CIColor(red: Self.linear(v.color.red), green: Self.linear(v.color.green), blue: Self.linear(v.color.blue), alpha: 1, colorSpace: Self.linearRGB) else { throw Self.renderError }
+                let background = CIImage(color: color)
+                    .cropped(to: CGRect(x: padding, y: padding, width: canvas.width, height: canvas.height))
+                filtered = try image().composited(over: background)
+            case let .shape(v):
+                let pass = try encoder(commands, target: current, clear: MTLClearColorMake(0, 0, 0, 0), load: true)
+                var uniforms = ShapeRenderer.uniforms(v.geometry)
+                uniforms.color = SIMD4(Float(Self.linear(v.color.red)), Float(Self.linear(v.color.green)), Float(Self.linear(v.color.blue)), Float(v.opacity / 100))
+                uniforms.viewport = SIMD4(Float(bounds.width), Float(bounds.height), Float(padding), Float(scale))
+                pass.setRenderPipelineState(shapePipeline)
+                pass.setFragmentBytes(&uniforms, length: MemoryLayout.size(ofValue: uniforms), index: 0)
+                quad(pass); pass.endEncoding()
+            case .belowMask: break
+            default:
+                let target = try filterTexture(bounds: canvas, reusing: generatorScratch)
+                generatorScratch = target
+                let pass = try encoder(commands, target: target, clear: MTLClearColorMake(0, 0, 0, 0))
+                var one = ImageEffects(); one.nodes = [node]
+                let clip = VisualClip(start: 0, end: .greatestFiniteMagnitude, effects: one)
+                try drawGenerated(clip, at: key.localTime, particleImages: key.particleImages, encoder: pass)
+                pass.endEncoding()
+                try merge(target, into: current, flip: true, padding: padding, commands: commands)
             }
-            if key.blur > 0 { filtered = filtered.applyingGaussianBlur(sigma: key.blur * scale) }
-            if key.radialBlur == nil || key.blur > 0 {
-                rendered = try render(filtered, bounds: bounds, reusing: previous?.image, commands: commands)
-            }
+            if let filtered { current = try render(filtered, bounds: bounds, reusing: next(), commands: commands) }
         }
-        let glow = key.glowRadius > 0 ? try bloom(rendered, key: key, bounds: bounds, reusing: previous?.glow, commands: commands) : nil
-        let glare = try key.glare.map { try crossGlareRenderer.render(rendered, effect: $0, scale: scale, reusing: previous?.glare, commands: commands) }
-        return ProcessedImage(key: key, image: rendered, glow: glow, glare: glare)
+        let output = try filterTexture(bounds: bounds, reusing: previous?.image)
+        let pass = try encoder(commands, target: output, clear: MTLClearColorMake(0, 0, 0, 0))
+        copy(current, gain: 1, flip: false, encoder: pass)
+        pass.endEncoding()
+        return ProcessedImage(key: key, image: output)
+    }
+
+    private func copy(_ source: MTLTexture, gain: Float, flip: Bool, additive: Bool = false, encoder: MTLRenderCommandEncoder) {
+        encoder.setRenderPipelineState(additive ? chainEmissionPipeline : chainCopyPipeline)
+        encoder.setFragmentTexture(source, index: 0)
+        var values = SIMD2(gain, flip ? Float(1) : 0)
+        encoder.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
+        quad(encoder)
+    }
+
+    private func merge(_ source: MTLTexture, into target: MTLTexture, gain: Float = 1, flip: Bool = false,
+                       padding: Double = 0, additive: Bool = false, commands: MTLCommandBuffer) throws {
+        let pass = try encoder(commands, target: target, clear: MTLClearColorMake(0, 0, 0, 0), load: true)
+        if flip {
+            pass.setViewport(MTLViewport(originX: padding, originY: padding, width: canvas.width, height: canvas.height, znear: 0, zfar: 1))
+        }
+        copy(source, gain: gain, flip: flip, additive: additive, encoder: pass)
+        pass.endEncoding()
     }
 
     private func placement(for key: ImageKey, padding: Double, bounds: CGRect) -> Placement {
@@ -558,14 +610,14 @@ final class MetalSceneRenderer {
                          targetSize: SIMD2(Float(bounds.width), Float(bounds.height)))
     }
 
-    private func bloom(_ image: MTLTexture, key: ImageKey, bounds: CGRect, reusing previous: MTLTexture?, commands: MTLCommandBuffer) throws -> MTLTexture {
+    private func bloom(_ image: MTLTexture, threshold level: Double, radius: Double, bounds: CGRect, commands: MTLCommandBuffer) throws -> MTLTexture {
         let emission = try filterTexture(bounds: bounds, reusing: bloomScratch)
         bloomScratch = emission
         guard let encoder = commands.makeComputeCommandEncoder() else { throw Self.renderError }
         encoder.setComputePipelineState(highlight)
         encoder.setTexture(image, index: 0)
         encoder.setTexture(emission, index: 1)
-        var threshold = Float(key.threshold)
+        var threshold = Float(level)
         encoder.setBytes(&threshold, length: MemoryLayout<Float>.size, index: 0)
         let columns = highlight.threadExecutionWidth
         let rows = max(1, highlight.maxTotalThreadsPerThreadgroup / columns)
@@ -574,7 +626,9 @@ final class MetalSceneRenderer {
                                      threadsPerThreadgroup: MTLSize(width: columns, height: rows, depth: 1))
         encoder.endEncoding()
         guard let glow = CIImage(mtlTexture: emission, options: [.colorSpace: Self.linearRGB]) else { throw Self.renderError }
-        return try render(glow.applyingGaussianBlur(sigma: key.glowRadius * scale), bounds: bounds, reusing: previous, commands: commands)
+        let output = try render(glow.applyingGaussianBlur(sigma: radius * scale), bounds: bounds, reusing: glowScratch, commands: commands)
+        glowScratch = output
+        return output
     }
 
     private func filterTexture(bounds: CGRect, reusing previous: MTLTexture?) throws -> MTLTexture {
@@ -589,6 +643,20 @@ final class MetalSceneRenderer {
         let cleared = image.composited(over: CIImage(color: .clear).cropped(to: bounds))
         filters.render(cleared, to: texture, commandBuffer: commands, bounds: bounds, colorSpace: Self.linearRGB)
         return texture
+    }
+
+    private func drawImageParticles(_ node: EffectNode, texture: MTLTexture, at localTime: Double,
+                                    encoder: MTLRenderCommandEncoder) throws {
+        guard let appearance = node.particleAppearance else { return }
+        let aspect = SIMD2(Float(texture.width), Float(texture.height)) / Float(max(texture.width, texture.height))
+        encoder.setRenderPipelineState(appearance.blend == .normal ? particleImagePipeline : particleImageAddPipeline)
+        encoder.setFragmentTexture(texture, index: 0)
+        for records in node.imageParticleInstances(at: localTime, aspect: aspect) where !records.isEmpty {
+            let buffer = records.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count) }
+            guard let buffer else { throw Self.renderError }
+            encoder.setVertexBuffer(buffer, offset: 0, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: records.count)
+        }
     }
 
     private func drawSprites(_ instances: [SIMD4<Float>], with pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder, opacity: Float) {

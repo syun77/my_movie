@@ -113,10 +113,10 @@ final class RadialFocusTests: XCTestCase {
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let views = all(editor)
         let add = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "集中線２"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "集中線２"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.radialFocus)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         for parameter in ImageEffects.RadialFocus.parameters {
             let field = try XCTUnwrap(views.compactMap { $0 as? DragValueField }.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
             XCTAssertEqual(field.doubleValue, 100)
@@ -148,9 +148,9 @@ final class RadialFocusTests: XCTestCase {
         XCTAssertTrue(zip(base, lit).contains { $1[0] > $0[0] + 10 })
         clip.effects?.mask = .init(geometry: ShapeGeometry(width: 0))
         try canvas.draw([(background, 1), (clip, 2)])
-        XCTAssertEqual(lit, pixels(), "自画像マスク対象外")
+        XCTAssertEqual(base, pixels(), "後段マスクは集中線２も切り抜く")
         var owner = canvas.clip; owner.id = UUID()
-        owner.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below))
+        owner.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)))
         try canvas.draw([(background, 1), (clip, 2), (owner, 3)])
         XCTAssertEqual(base, pixels(), "下段マスクは集中線２も切り抜く")
         clip.fixedValues[.opacity] = 0

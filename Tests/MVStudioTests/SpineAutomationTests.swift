@@ -139,7 +139,7 @@ final class SpineAutomationTests: XCTestCase {
         let original = track(URL(fileURLWithPath: "/tmp/a.json"), descriptor: descriptor, playback: playback)
         var clip = original.clips[0]
         clip.trimStart(to: 3)
-        let trimmed = try original.updating(clip, slot: 1, duration: 10)
+        let trimmed = try original.updating(clip, layerID: original.layers[0].id, duration: 10)
         XCTAssertEqual(clip.sourceTime(at: 3.5), original.clips[0].sourceTime(at: 3.5))
         XCTAssertEqual(clip.content.spinePlayback?.resolved(at: 0.5), playback.resolved(at: 1.5))
         guard case .selection(_, let keys) = clip.content.spinePlayback?.mode else { return XCTFail() }
@@ -160,16 +160,16 @@ final class SpineAutomationTests: XCTestCase {
         duplicate.id = UUID()
         duplicate.start = 6
         duplicate.end = 9
-        XCTAssertThrowsError(try trimmed.inserting(duplicate, slot: 1, duration: 10))
+        XCTAssertThrowsError(try trimmed.inserting(duplicate, layerID: trimmed.layers[0].id, duration: 10))
         var copied = try XCTUnwrap(duplicate.content.spinePlayback)
         copied.renewKeyIDs()
         duplicate.content = .spine(copied)
-        XCTAssertNoThrow(try trimmed.inserting(duplicate, slot: 1, duration: 10))
+        XCTAssertNoThrow(try trimmed.inserting(duplicate, layerID: trimmed.layers[0].id, duration: 10))
         var missing = playback
         missing.mode = .selection(base: "A", keys: [SpineAnimationKey(time: -1, animationName: "missing")])
         var invalid = original.clips[0]
         invalid.content = .spine(missing)
-        XCTAssertThrowsError(try original.updating(invalid, slot: 1, duration: 10))
+        XCTAssertThrowsError(try original.updating(invalid, layerID: original.layers[0].id, duration: 10))
     }
 
     @MainActor func testBlendLaneBendInterpolationAndSingleRemoval() async throws {
@@ -197,9 +197,9 @@ final class SpineAutomationTests: XCTestCase {
         timeline.visibleSpan = 5
         timeline.visuals = current
         timeline.selectedImageID = current.clips[0].id
-        timeline.selectedSlot = 1
+        timeline.selectedLayerID = timeline.visuals.layers[0].id
         timeline.isEnabled = true
-        timeline.revealAutomation(in: 1)
+        timeline.revealAutomation(in: timeline.visuals.layers[0].id)
         var commits = 0
         var seeks = 0
         timeline.onSeek = { _ in seeks += 1 }
@@ -242,7 +242,7 @@ final class SpineAutomationTests: XCTestCase {
         current.layers[0].clips[0].content = .spine(playback)
         editor.visuals.load(current, projectURL: URL(fileURLWithPath: "/tmp/audio.mvproject"))
         editor.setAvailable(hasAudio: true, isBusy: false)
-        editor.timeline.onImageSelect?(current.clips[0].id, 1)
+        editor.timeline.onImageSelect?(current.clips[0].id, editor.timeline.visuals.layers[0].id)
         editor.currentTime = 0.75
         editor.visuals.editSpineLane(.remove)
         let fixed = try XCTUnwrap(editor.visuals.track.clips[0].content.spinePlayback)
@@ -298,9 +298,9 @@ final class SpineAutomationTests: XCTestCase {
         timeline.visibleSpan = 5
         timeline.visuals = current
         timeline.selectedImageID = current.clips[0].id
-        timeline.selectedSlot = 1
+        timeline.selectedLayerID = timeline.visuals.layers[0].id
         timeline.isEnabled = true
-        timeline.revealAutomation(in: 1)
+        timeline.revealAutomation(in: timeline.visuals.layers[0].id)
         var seeks = 0
         var commits = 0
         timeline.onSeek = { _ in seeks += 1 }

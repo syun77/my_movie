@@ -19,9 +19,9 @@ final class EffectTestCanvas {
                                             space: MetalSceneRenderer.sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         transparent = try XCTUnwrap(context.makeImage())
     }
-    func draw(_ clips: [(VisualClip, Int)], time: Double = 0.5, guide: UUID? = nil, video: Bool = false) throws {
+    func draw(_ clips: [(VisualClip, Int)], time: Double = 0.5, guide: UUID? = nil, video: Bool = false, particleImages: [UUID: VisualFrame] = [:]) throws {
         let layers = clips.map { clip, slot -> VisualRenderLayer in
-            var layer = VisualRenderLayer(clip: clip, image: transparent); layer.slot = slot; return layer
+            var layer = VisualRenderLayer(clip: clip, image: transparent); layer.layerID = Self.layerID(slot); layer.order = slot; layer.maskOwnerID = Self.layerID(slot + 1); layer.particleImages = particleImages; return layer
         }
         let begin = ProcessInfo.processInfo.systemUptime
         let commands = try renderer.encode(visuals: layers, features: nil, settings: SceneSettings(spectrum: false), lyrics: LyricsTrack(), time: time, target: target, video: video, guideClipID: guide)
@@ -30,6 +30,8 @@ final class EffectTestCanvas {
         lastGPUMS = (commands.gpuEndTime - commands.gpuStartTime) * 1000
         if commands.status != .completed { throw commands.error ?? MetalSceneRenderer.renderError }
     }
+    static func layerID(_ index: Int) -> UUID { UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", index + 100))! }
+
     func save(_ path: String) throws {
         let context = try XCTUnwrap(CGContext(data: nil, width: target.width, height: target.height, bitsPerComponent: 8, bytesPerRow: target.width * 4,
                                             space: MetalSceneRenderer.sRGB,

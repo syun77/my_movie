@@ -20,9 +20,9 @@ final class SpineTests: XCTestCase {
         XCTAssertEqual(initial.pages.pages[0].bytes.prefix(4), Data([255,255,255,255]))
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let asset = track.register(url: json, projectURL: project, kind: .spine(descriptor))
-        let result = try track.adding(assetID: asset, at: 0, slot: 1, duration: 3, grid: TimelineSnapGrid())
+        let result = try track.adding(assetID: asset, at: 0, layerID: track.layers[0].id, duration: 3, grid: TimelineSnapGrid())
         track = result.track
-        var clip = result.clip; clip.content = .spine(SpinePlayback(animationName: "move")); track = try track.updating(clip, slot: 1, duration: 3)
+        var clip = result.clip; clip.content = .spine(SpinePlayback(animationName: "move")); track = try track.updating(clip, layerID: track.layers[0].id, duration: 3)
         func area(_ p: SpineDrawPacket) -> Double {
             stride(from: 0, to: p.indices.count, by: 3).reduce(0) { sum, i in
                 let a = p.vertices[Int(p.indices[i])], b = p.vertices[Int(p.indices[i+1])], c = p.vertices[Int(p.indices[i+2])]
@@ -52,9 +52,9 @@ final class SpineTests: XCTestCase {
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
-        track = try track.adding(assetID: id, at: 0, slot: 1, duration: 5, grid: TimelineSnapGrid()).track
+        track = try track.adding(assetID: id, at: 0, layerID: track.layers[0].id, duration: 5, grid: TimelineSnapGrid()).track
         var clip = track.clips[0]; clip.content = .spine(SpinePlayback(animationName: "move", sourceIn: 3, loop: false))
-        track = try track.updating(clip, slot: 1, duration: 5)
+        track = try track.updating(clip, layerID: track.layers[0].id, duration: 5)
         track = try track.dragging(id: clip.id, part: .start, delta: 0.5, duration: 5, grid: TimelineSnapGrid())
         XCTAssertEqual(track.clips[0].content.sourceIn, 3.5)
         let file = ProjectFile(audioURL: dir.appendingPathComponent("audio.wav"), visuals: track, settings: SceneSettings(), projectURL: project)
@@ -64,7 +64,7 @@ final class SpineTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(absolute.spineDescriptor).atlasReference.relative)
         XCTAssertEqual(absolute.spineDescriptor?.atlasReference.path, atlas.path)
         var invalid = track.clips[0]; invalid.content = .spine(SpinePlayback(animationName: "missing"))
-        XCTAssertThrowsError(try track.updating(invalid, slot: 1, duration: 5))
+        XCTAssertThrowsError(try track.updating(invalid, layerID: track.layers[0].id, duration: 5))
     }
 
     func testMissingDependenciesAndExportSnapshot() async throws {
@@ -72,7 +72,7 @@ final class SpineTests: XCTestCase {
         let provider = SpinePoseProvider(); let (descriptor, _) = try await provider.inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
-        track = try track.adding(assetID: id, at: 0, slot: 1, duration: 5, grid: TimelineSnapGrid()).track
+        track = try track.adding(assetID: id, at: 0, layerID: track.layers[0].id, duration: 5, grid: TimelineSnapGrid()).track
         try await provider.prepare(track: track, projectURL: project, cancellation: nil)
         let before = try packet(await provider.layers(track: track, projectURL: project, time: 0.5, cancellation: nil))
         try FileManager.default.removeItem(at: dir.appendingPathComponent("page.png"))
@@ -94,10 +94,10 @@ final class SpineTests: XCTestCase {
         let (descriptor, _) = try await SpinePoseProvider().inspect(skeleton: json, atlas: atlas)
         let project = dir.appendingPathComponent("audio.mvproject")
         var track = VisualTrack(); let id = track.register(url: json, projectURL: project, kind: .spine(descriptor))
-        let added = try track.adding(assetID: id, at: 0, slot: 1, duration: 5, grid: TimelineSnapGrid())
+        let added = try track.adding(assetID: id, at: 0, layerID: track.layers[0].id, duration: 5, grid: TimelineSnapGrid())
         let editor = PlacementEditor(); _ = editor.view; editor.restoreTab(.visuals); editor.duration = 5
         editor.visuals.load(added.track, projectURL: project); editor.setAvailable(hasAudio: true, isBusy: false)
-        editor.timeline.onImageSelect?(added.clip.id, 1)
+        editor.timeline.onImageSelect?(added.clip.id, editor.timeline.visuals.layers[0].id)
         func find(_ view: NSView, _ id: String) -> NSView? {
             if view.identifier?.rawValue == id { return view }
             return view.subviews.lazy.compactMap { find($0,id) }.first

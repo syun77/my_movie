@@ -28,10 +28,10 @@ final class VisualEditorTests: XCTestCase {
         let editor = VisualEditor(); _ = editor.view
         editor.load(VisualTrack(), projectURL: project); editor.duration = 10; editor.setAvailable(true)
         var saves = 0; editor.onChange = { _ in saves += 1 }
-        editor.importFile(a, placement: (2, 1.04)); try await waitForImport(editor)
+        editor.importFile(a, placement: (editor.track.layers[1].id, 1.04)); try await waitForImport(editor)
         XCTAssertEqual(editor.track.clips.count, 1); XCTAssertEqual(editor.track.clips[0].start, 1); XCTAssertEqual(saves, 1)
         let original = editor.track
-        editor.importFile(b, placement: (2, 1)); try await waitForImport(editor)
+        editor.importFile(b, placement: (editor.track.layers[1].id, 1)); try await waitForImport(editor)
         XCTAssertEqual(editor.track, original); XCTAssertEqual(saves, 1, "配置失敗で素材だけを登録しない")
         let id = original.assets[0].id
         editor.importFile(b, replacingAsset: id); try await waitForImport(editor)
@@ -60,7 +60,7 @@ final class VisualEditorTests: XCTestCase {
         var track = VisualTrack()
         let project = URL(fileURLWithPath: "/tmp/song.wav.mvproject")
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/sample.png"), projectURL: project)
-        let added = try track.adding(assetID: asset, at: 1, slot: 1, duration: 10, grid: TimelineSnapGrid())
+        let added = try track.adding(assetID: asset, at: 1, layerID: track.layers[0].id, duration: 10, grid: TimelineSnapGrid())
         editor.visuals.load(added.track, projectURL: project); editor.setAvailable(hasAudio: true, isBusy: false)
         func find(_ view: NSView, _ id: String) -> NSView? {
             if view.identifier?.rawValue == id { return view }
@@ -112,8 +112,8 @@ final class VisualEditorTests: XCTestCase {
         view.visualMode = true; view.isEnabled = true; view.duration = 20
         let project = URL(fileURLWithPath: "/tmp/song.wav.mvproject")
         var track = VisualTrack(); let id = track.register(url: URL(fileURLWithPath: "/tmp/image.png"), projectURL: project)
-        let first = try track.adding(assetID: id, at: 1, slot: 1, duration: 20, grid: TimelineSnapGrid())
-        track = try first.track.adding(assetID: id, at: 1, slot: 2, duration: 20, grid: TimelineSnapGrid()).track
+        let first = try track.adding(assetID: id, at: 1, layerID: track.layers[0].id, duration: 20, grid: TimelineSnapGrid())
+        track = try first.track.adding(assetID: id, at: 1, layerID: first.track.layers[1].id, duration: 20, grid: TimelineSnapGrid()).track
         view.visuals = track
         var commits = 0; var preview: VisualTrack?
         view.onImageCommit = { value, _ in commits += 1; view.visuals = value }
@@ -123,23 +123,23 @@ final class VisualEditorTests: XCTestCase {
         }
         view.mouseDown(with: event(.leftMouseDown, 2, 160))
         view.mouseDragged(with: event(.leftMouseDragged, 5, 68))
-        XCTAssertEqual(preview?.slot(of: first.clip.id), 3)
+        XCTAssertEqual(preview?.layerID(of: first.clip.id), preview?.layers[2].id)
         XCTAssertEqual(preview?.clip(first.clip.id), first.clip, "段移動は横ずれがあっても時間と演出を保持")
         XCTAssertEqual(commits, 0)
         view.mouseUp(with: event(.leftMouseUp, 5, 68))
-        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.slot(of: first.clip.id), 3)
+        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.layerID(of: first.clip.id), view.visuals.layers[2].id)
         view.mouseDown(with: event(.leftMouseDown, 2, 68))
         view.mouseDragged(with: event(.leftMouseDragged, 2, 160))
-        XCTAssertEqual(preview?.slot(of: first.clip.id), 1)
+        XCTAssertEqual(preview?.layerID(of: first.clip.id), preview?.layers[0].id)
         view.mouseDragged(with: event(.leftMouseDragged, 2, 115))
         XCTAssertEqual(preview, view.visuals, "有効な仮位置のあとでも衝突先では元に戻す")
         view.mouseUp(with: event(.leftMouseUp, 2, 115))
-        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.slot(of: first.clip.id), 3)
+        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.layerID(of: first.clip.id), view.visuals.layers[2].id)
         view.mouseDown(with: event(.leftMouseDown, 2, 68))
         view.mouseDragged(with: event(.leftMouseDragged, 2, 160))
         view.cancelDrag()
         view.mouseUp(with: event(.leftMouseUp, 2, 160))
-        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.slot(of: first.clip.id), 3)
+        XCTAssertEqual(commits, 1); XCTAssertEqual(view.visuals.layerID(of: first.clip.id), view.visuals.layers[2].id)
         view.mouseDown(with: event(.leftMouseDown, 2, 68))
         view.mouseDragged(with: event(.leftMouseDragged, 2, 160))
         view.mouseUp(with: event(.leftMouseUp, 2, 205))
@@ -147,7 +147,7 @@ final class VisualEditorTests: XCTestCase {
         view.mouseDown(with: event(.leftMouseDown, 1, 68))
         view.mouseDragged(with: event(.leftMouseDragged, 1.5, 160))
         view.mouseUp(with: event(.leftMouseUp, 1.5, 160))
-        XCTAssertEqual(view.visuals.slot(of: first.clip.id), 3, "端トリムでは段を変えない")
+        XCTAssertEqual(view.visuals.layerID(of: first.clip.id), view.visuals.layers[2].id, "端トリムでは段を変えない")
         XCTAssertEqual(view.visuals.clip(first.clip.id)?.start, 1.5)
     }
     @MainActor func testTimelineGhostHitTestingImageDragAndDropCoordinates() throws {
@@ -159,7 +159,7 @@ final class VisualEditorTests: XCTestCase {
         view.track = LyricsTrack(clips: [LyricClip(start: 0, end: 10, text: "歌詞のゴースト")])
         let project = URL(fileURLWithPath: "/tmp/song.wav.mvproject"), url = URL(fileURLWithPath: "/tmp/image.png")
         var track = VisualTrack(); let asset = track.register(url: url, projectURL: project)
-        let added = try track.adding(assetID: asset, at: 1, slot: 1, duration: 20, grid: TimelineSnapGrid())
+        let added = try track.adding(assetID: asset, at: 1, layerID: track.layers[0].id, duration: 20, grid: TimelineSnapGrid())
         view.visuals = added.track
         var lyricSelections = 0, commits = 0
         view.onSelect = { _ in lyricSelections += 1 }
@@ -177,15 +177,15 @@ final class VisualEditorTests: XCTestCase {
         let pasteboard = NSPasteboard.withUniqueName(); defer { pasteboard.releaseGlobally() }
         pasteboard.writeObjects([url as NSURL])
         let drop = try view.fileDrop(at: NSPoint(x: view.x(at: 6.04), y: 115), pasteboard: pasteboard)
-        XCTAssertEqual(drop.slot, 2); XCTAssertEqual(drop.start, 6); XCTAssertEqual(drop.end, 8)
+        XCTAssertEqual(drop.layerID, view.visuals.layers[1].id); XCTAssertEqual(drop.start, 6); XCTAssertEqual(drop.end, 8)
         let dragInfo = FileDragInfo(window: window, pasteboard: pasteboard, point: view.convert(NSPoint(x: view.x(at: 6.04), y: 115), to: nil))
-        var received: (URL, Int, Double)?
+        var received: (URL, UUID, Double)?
         view.onDropImage = { received = ($0, $1, $2) }
         XCTAssertEqual(view.draggingEntered(dragInfo), .copy)
         XCTAssertTrue(view.prepareForDragOperation(dragInfo))
         XCTAssertTrue(view.performDragOperation(dragInfo))
         view.concludeDragOperation(dragInfo)
-        XCTAssertEqual(received?.0, url); XCTAssertEqual(received?.1, 2); XCTAssertEqual(received?.2, 6)
+        XCTAssertEqual(received?.0, url); XCTAssertEqual(received?.1, view.visuals.layers[1].id); XCTAssertEqual(received?.2, 6)
         XCTAssertThrowsError(try view.fileDrop(at: NSPoint(x: view.x(at: 3), y: 160), pasteboard: pasteboard))
         XCTAssertThrowsError(try view.fileDrop(at: NSPoint(x: 5, y: 115), pasteboard: pasteboard))
         pasteboard.clearContents(); pasteboard.writeObjects([url as NSURL, URL(fileURLWithPath: "/tmp/two.png") as NSURL])

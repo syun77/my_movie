@@ -22,7 +22,7 @@ final class ImageAnimationTests: XCTestCase {
     private func fixture(slot: Int = 3) throws -> (VisualTrack, VisualClip) {
         var track = VisualTrack()
         let asset = track.register(url: URL(fileURLWithPath: "/tmp/animation.png"), projectURL: URL(fileURLWithPath: "/tmp/animation.mvproject"))
-        let added = try track.adding(assetID: asset, at: 1, slot: slot, duration: 10, grid: TimelineSnapGrid())
+        let added = try track.adding(assetID: asset, at: 1, layerID: track.layers[slot - 1].id, duration: 10, grid: TimelineSnapGrid())
         return (added.track, added.clip)
     }
 
@@ -59,11 +59,11 @@ final class ImageAnimationTests: XCTestCase {
         editor.timeline = timeline
         var (track, clip) = try fixture()
         clip.effects = ImageEffects(blur: .init())
-        track = try track.updating(clip, slot: 3, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
         editor.duration = 10
         editor.load(track, projectURL: nil)
         editor.setAvailable(true)
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         editor.currentTime = 2
         let field = try XCTUnwrap(control("visuals.value.blurRadius", in: editor.view) as DragValueField?)
         XCTAssertFalse(field.hasAutomation)
@@ -79,7 +79,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertTrue(field.hasAutomation)
         var restored = try XCTUnwrap(editor.track.clip(clip.id))
         restored.effects?.blur = nil
-        editor.restore(try automated.updating(restored, slot: 3, duration: 10))
+        editor.restore(try automated.updating(restored, layerID: automated.layers[2].id, duration: 10))
         XCTAssertFalse(field.isEnabled)
     }
 
@@ -107,7 +107,7 @@ final class ImageAnimationTests: XCTestCase {
         editor.timeline = timeline
         let (track, clip) = try fixture()
         editor.duration = 10; editor.load(track, projectURL: nil); editor.setAvailable(true)
-        timeline.onImageSelect?(clip.id, 3); editor.currentTime = 2
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id); editor.currentTime = 2
         let field = try XCTUnwrap(control("visuals.value.opacity", in: editor.view) as DragValueField?)
         XCTAssertEqual(field.doubleValue, 100)
         field.stringValue = "50"
@@ -208,9 +208,9 @@ final class ImageAnimationTests: XCTestCase {
             var curve = try XCTUnwrap(clip.curve(.x)); curve.minimum = -100; curve.maximum = 100
             curve.keys[1].interpolation = mode
             clip.setCurve(curve)
-            track = try track.updating(clip, slot: 3, duration: 10)
-            timeline.visuals = track; timeline.selectedImageID = clip.id; timeline.selectedSlot = 3
-            timeline.revealAutomation(in: 3); timeline.selectGraph(.x, reveal: true)
+            track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
+            timeline.visuals = track; timeline.selectedImageID = clip.id; timeline.selectedLayerID = timeline.visuals.layers[2].id
+            timeline.revealAutomation(in: timeline.visuals.layers[2].id); timeline.selectGraph(.x, reveal: true)
             let midpoint = try XCTUnwrap(curve.midpoint(after: first))
             let y = 152 - (midpoint.value + 100) / 200 * 54
             func event(_ type: NSEvent.EventType, _ offset: Double) -> NSEvent {
@@ -304,10 +304,10 @@ final class ImageAnimationTests: XCTestCase {
         var curve = try XCTUnwrap(clip.curve(.x)); curve.minimum = -100; curve.maximum = 100
         clip.setCurve(curve)
         clip.end = 6
-        track = try track.updating(clip, slot: 3, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
         timeline.visualMode = true; timeline.isEnabled = true; timeline.duration = 10
         timeline.visuals = track; timeline.currentTime = 4
-        timeline.revealAutomation(in: 3)
+        timeline.revealAutomation(in: timeline.visuals.layers[2].id)
         var commits = 0
         var seeks = [Double]()
         timeline.onSeek = { seeks.append($0) }
@@ -410,15 +410,15 @@ final class ImageAnimationTests: XCTestCase {
         var curve = try XCTUnwrap(clip.curve(.x))
         curve.minimum = -100; curve.maximum = 100
         clip.setCurve(curve)
-        track = try track.updating(clip, slot: 3, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
         timeline.visualMode = true
         timeline.isEnabled = true
         timeline.duration = 10
         timeline.visuals = track
         timeline.selectedImageID = clip.id
-        timeline.selectedSlot = 3
+        timeline.selectedLayerID = timeline.visuals.layers[2].id
         timeline.currentTime = 4
-        timeline.revealAutomation(in: 3)
+        timeline.revealAutomation(in: timeline.visuals.layers[2].id)
         timeline.selectGraph(.x, reveal: true)
         var previews = [VisualTrack]()
         var commits = [VisualTrack]()
@@ -477,7 +477,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(clip.keyTime(at: 1.01, grid: TimelineSnapGrid(bpm: 137, origin: 0.1)), 1)
         XCTAssertEqual(clip.keyTime(at: 1.04, grid: nil), 1.04)
 
-        track = try track.updating(clip, slot: 3, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
         let trimmed = try track.dragging(id: clip.id, part: .start, delta: 0.5, duration: 10, grid: TimelineSnapGrid())
         let shortened = try XCTUnwrap(trimmed.clip(clip.id))
         XCTAssertEqual(shortened.curve(.scale)?.keys.first?.time, -0.5)
@@ -518,7 +518,7 @@ final class ImageAnimationTests: XCTestCase {
         editor.duration = 10
         editor.load(track, projectURL: nil)
         editor.setAvailable(true)
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         editor.currentTime = 2
 
         let field = try XCTUnwrap(control("visuals.value.scale", in: editor.view) as DragValueField?)
@@ -609,7 +609,7 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertEqual(editor.track.clip(clip.id)?.baseValue(.scale), 100)
         XCTAssertEqual(commits, commitsBeforeDelete + 1)
         editor.load(automated, projectURL: nil)
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         XCTAssertTrue(field.hasAutomation, "復元時に青い丸も復元する")
         editor.setAvailable(false)
         XCTAssertNil(automationMenu(field))
@@ -637,7 +637,7 @@ final class ImageAnimationTests: XCTestCase {
         timeline.onSeek = { time in timeline.currentTime = time; editor.currentTime = time }
         editor.onSeek = timeline.onSeek
         defer { timeline.onSeek = nil; editor.onSeek = nil }
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         timeline.onSeek?(1.52)
 
         let value = try XCTUnwrap(control("visuals.value.scale", in: editor.view) as NSTextField?)
@@ -645,7 +645,7 @@ final class ImageAnimationTests: XCTestCase {
         value.stringValue = "150"
         try performAutomationMenu(knob, title: "オートメーションを作成")
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.time, 0.5)
-        XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
+        XCTAssertTrue(timeline.expandedLayerIDs.contains(timeline.visuals.layers[2].id))
         XCTAssertEqual(timeline.selectedParameter, .scale)
         XCTAssertEqual(editor.track.clip(clip.id)?.curve(.scale)?.keys.first?.value, 150)
         let minimum = try XCTUnwrap(control("visuals.graph.minimum", in: editor.view) as NSTextField?)
@@ -712,11 +712,11 @@ final class ImageAnimationTests: XCTestCase {
         }
         click(NSPoint(x: timeline.x(at: 4), y: 69))
         XCTAssertNil(timeline.selectedImageID)
-        XCTAssertTrue(timeline.expandedLayerSlots.contains(3), "空白をクリックしてもレーンを収納しない")
-        click(NSPoint(x: 65, y: 69))
-        XCTAssertFalse(timeline.expandedLayerSlots.contains(3))
-        click(NSPoint(x: 65, y: 69))
-        XCTAssertTrue(timeline.expandedLayerSlots.contains(3))
+        XCTAssertTrue(timeline.expandedLayerIDs.contains(timeline.visuals.layers[2].id), "空白をクリックしてもレーンを収納しない")
+        click(NSPoint(x: TimelineView.gutter - 12, y: 69))
+        XCTAssertFalse(timeline.expandedLayerIDs.contains(timeline.visuals.layers[2].id))
+        click(NSPoint(x: TimelineView.gutter - 12, y: 69))
+        XCTAssertTrue(timeline.expandedLayerIDs.contains(timeline.visuals.layers[2].id))
         click(NSPoint(x: timeline.x(at: 1.5), y: 98))
         XCTAssertEqual(timeline.selectedImageID, clip.id, "レーンからクリップを再選択できる")
         let snap = try XCTUnwrap(control("visuals.keySnap", in: editor.view) as NSButton?)
@@ -754,6 +754,6 @@ final class ImageAnimationTests: XCTestCase {
         XCTAssertNil(timeline.selectedParameter)
         XCTAssertNil(timeline.selectedKeyID)
         XCTAssertEqual(timeline.currentTime, 2.123)
-        XCTAssertNil(contextMenu(at: NSPoint(x: 20, y: 105)))
+        XCTAssertNotNil(contextMenu(at: NSPoint(x: 20, y: 105))?.item(withTitle: "上にレイヤーを追加"))
     }
 }

@@ -11,6 +11,8 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     var snapGrid = TimelineSnapGrid() { didSet { timeline.snapGrid = snapGrid } }
     var currentTime = 0.0 { didSet { timeline.currentTime = currentTime } }
     var duration = 0.0 { didSet { timeline.duration = duration } }
+    private var handleTypography: LyricsTypography?
+    private var handleGeneration = UUID()
     private(set) var track = LyricsTrack()
     let timeline = TimelineView()
     private let table = NSTableView()
@@ -54,10 +56,12 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         style.spacing = 10
         configureFontMenu()
         let fontRow = typographyRow([NSTextField(labelWithString: "フォント"), font])
+        let positionX = typographyField(.x, title: "描画位置 X")
+        let positionY = typographyField(.y, title: "描画位置 Y")
         let placement = typographyRow([
             NSTextField(labelWithString: "サイズ"), typographyField(.fontSize, title: "フォントサイズ"),
-            NSTextField(labelWithString: "X"), typographyField(.x, title: "描画位置 X"),
-            NSTextField(labelWithString: "Y"), typographyField(.y, title: "描画位置 Y"),
+            PreviewHandleLabel("X", field: positionX), positionX,
+            PreviewHandleLabel("Y", field: positionY), positionY,
             NSTextField(labelWithString: "px（1080p）")
         ])
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lyrics"))
@@ -112,6 +116,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     func clearPresetSelection() { presets.clearSelection() }
 
     func load(_ value: LyricsTrack) {
+        handleGeneration = UUID()
         timeline.cancelDrag()
         track = value; timingIsValid = true
         timeline.track = value; timeline.selectedID = nil
@@ -307,6 +312,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
 
     private func typographyField(_ parameter: LyricsTypography.Field, title: String) -> DragValueField {
         let field = DragValueField(frame: .zero)
+        if parameter == .x || parameter == .y { field.previewHandleProvider = { [weak self] in self?.previewHandleTarget() } }
         field.identifier = NSUserInterfaceItemIdentifier("lyrics.\(parameter)")
         field.setAccessibilityLabel(title)
         field.delegate = self
@@ -376,5 +382,43 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         track.outlineWidth = (width.doubleValue * 10).rounded() / 10
         track.outlineColor = RGBColor(color.color)
         updateWidthLabel(); timeline.track = track; onChange?(track)
+    }
+}
+
+@MainActor
+extension LyricsEditor {
+    func previewHandleTarget() -> PreviewHandleTarget? {
+        guard available else { return nil }
+        let generation = handleGeneration, selection = timeline.selectedID
+        let valid: () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return self.available && self.handleGeneration == generation && self.timeline.selectedID == selection
+        }
+        return PreviewHandleTarget(id: "lyrics." + generation.uuidString, title: "歌詞の位置", isValid: valid,
+            isVisible: { [weak self] in
+                guard valid(), let self else { return false }
+                return !(self.track.text(at: self.currentTime) ?? "").isEmpty
+            }, position: { [weak self] in
+                guard let self else { return .zero }
+                let value = self.handleTypography ?? self.track.typography
+                return CGPoint(x: value.x, y: value.y)
+            }, begin: { [weak self] in
+                guard valid(), let self else { return nil }
+                let original = self.track
+                var draft = original
+                return PreviewHandleEdit(update: { [weak self] point in
+                    guard let self, valid() else { return }
+                    draft.typography = original.typography.updating(.x, to: Int(point.x.rounded())).updating(.y, to: Int(point.y.rounded()))
+                    self.handleTypography = draft.typography
+                    for (parameter, field) in self.typographyFields { field.integerValue = draft.typography[keyPath: parameter.keyPath] }
+                    self.onPreview?(draft)
+                }, finish: { [weak self] commit in
+                    guard let self else { return }
+                    self.handleTypography = nil
+                    if commit, valid() { self.commitTypography(draft.typography) }
+                    self.updateTypographyControls()
+                    self.onPreview?(self.track)
+                })
+            })
     }
 }

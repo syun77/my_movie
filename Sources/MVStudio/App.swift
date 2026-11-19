@@ -67,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         let studioWindow = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 1160, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window = studioWindow
         studioWindow.clipEditor = placementEditor
+        studioWindow.previewHandles = preview.handles
+        placementEditor.onTabChange = { [weak self] in self?.preview.handles.clear() }
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
         studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.visuals.cancelValueDrag() ?? false }
@@ -162,10 +164,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             guard let self else { return }
             self.stopPlayback(); self.seek.doubleValue = time; self.scrub()
         }
-        placementEditor.visuals.onSelectionChange = { [weak self] id in self?.preview.guideClipID = id }
+        placementEditor.visuals.onSelectionChange = { [weak self] id in
+            self?.preview.guideClipID = id
+            self?.preview.handles.refresh()
+        }
         placementEditor.visuals.onProcessing = { [weak self] value in self?.imageProcessing = value; self?.refreshControls() }
         placementEditor.visuals.onAssetsReload = { [weak self] in
             guard let self else { return }
+            self.preview.handles.clear()
             self.lastPreviewKey = nil; self.displayedPreviewKey = nil; self.previewRevision += 1
             Task { await self.previewFrames.invalidate(); self.refreshPreviewFrames() }
         }
@@ -279,10 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             loadAudio(at: url, projectURL: project, restoring: nil)
         }
     }
-    private func openProject(at url: URL) {
+    func openProject(at url: URL) {
         do {
-            let project = try storage.read(from: url)
-            loadAudio(at: project.audio.resolve(projectURL: url), projectURL: url, restoring: project)
+            let result = try storage.readForOpening(from: url)
+            loadAudio(at: result.project.audio.resolve(projectURL: url), projectURL: url, restoring: result)
         } catch {
             let alert = NSAlert(error: error)
             alert.informativeText += "\n既存プロジェクトを残して新しく始める場合は、バックアップを作成してください。"
@@ -297,17 +303,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             } catch { showError(error) }
         }
     }
-    private func loadAudio(at url: URL, projectURL: URL, restoring project: ProjectFile?) {
-        stopPlayback(); setBusy(true); status.stringValue = "音声を解析しています…"; progress.isIndeterminate = true; progress.startAnimation(nil)
+    private func loadAudio(at url: URL, projectURL: URL, restoring readResult: ProjectReadResult?) {
+        let project = readResult?.project
+        stopPlayback(); setBusy(true)
+        status.stringValue = readResult?.needsMigration == true
+            ? "演出の外観が変わる場合があります。原本をバックアップしてチェーンへ変換します。音声を解析中…"
+            : "音声を解析しています…"
+        progress.isIndeterminate = true; progress.startAnimation(nil)
         analysisTask = Task {
             do {
                 let task = Task.detached { try AudioAnalyzer.analyze(url: url) }
                 let features = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
                 try Task.checkCancellation()
-                await previewFrames.invalidate()
                 let loaded = try AVAudioPlayer(contentsOf: url); loaded.prepareToPlay()
                 try project?.lyrics.validate(duration: features.duration)
                 try project?.visuals.validate(duration: features.duration)
+                let backup = try readResult.flatMap { try storage.commitMigration($0) }
+                await previewFrames.invalidate()
+                preview.handles.clear()
                 player = loaded; audioURL = url; preview.features = features; preview.time = 0
                 self.projectURL = projectURL
                 lyricsEditor.clearPresetSelection()
@@ -329,7 +342,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                 previewRevision += 1; lastPreviewKey = nil; displayedPreviewKey = nil; preview.visuals = []
                 editHistory.reset(EditSnapshot(lyrics: preview.lyrics, visuals: visualTrack, settings: preview.settings)); endHistoryGroup()
                 prepareTransients()
-                _ = saveProject(); refreshPreviewFrames()
+                if let backup, let readResult {
+                    status.stringValue = "演出の外観が変わる場合があります。v\(readResult.sourceVersion)→v\(ProjectFile.currentVersion)変換済み（原本バックアップあり）"
+                    status.toolTip = readResult.changes.joined(separator: "、") + "\n" + backup.path
+                } else { _ = saveProject() }
+                refreshPreviewFrames()
             } catch is CancellationError { status.stringValue = "解析をキャンセルしました。" }
             catch { showError(error) }
             progress.stopAnimation(nil); progress.isIndeterminate = false; progress.doubleValue = 0; setBusy(false); preview.invalidateFrame()
@@ -414,6 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     @objc func undoEdit() { performHistoryAction(redo: false) }
     @objc func redoEdit() { performHistoryAction(redo: true) }
     private func performHistoryAction(redo: Bool) {
+        preview.handles.cancelDrag()
         guard historyIsAvailable else { return }
         if let text = window.firstResponder as? NSTextView, text.hasMarkedText() { NSSound.beep(); return }
         (window as? StudioWindow)?.cancelNumberDrags()
@@ -432,10 +450,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     @objc private func togglePlay() {
         guard let player else { return }
         if player.isPlaying || playbackPreparation != nil { stopPlayback(); return }
+        preview.handles.cancelDrag()
         placementEditor.timeline.followPlayhead()
         if player.currentTime >= player.duration - 0.01 { player.currentTime = 0 }
         preview.time = player.currentTime
         updateTime()
+        preview.handles.isPlaying = true
         let revision = previewRevision
         let requestID = UUID(); playbackRequestID = requestID
         play.title = "準備中…"
@@ -459,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         }
     }
     private func stopPlayback() {
+        preview.handles.isPlaying = false
         playbackRequestID = UUID(); playbackPreparation?.cancel(); playbackPreparation = nil
         if let player, player.isPlaying { preview.time = player.currentTime; seek.doubleValue = preview.time }
         player?.pause(); wasPlaying = false; play.title = "再生"
@@ -468,6 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         scrub()
     }
     private func scrub() {
+        preview.handles.cancelDrag()
         previewRevision += 1; lastPreviewKey = nil
         player?.currentTime = seek.doubleValue; preview.time = seek.doubleValue
         updateTime()
@@ -483,7 +505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         updateTime()
     }
     private func updateTime() {
+        preview.handles.isPlaying = player?.isPlaying == true || playbackPreparation != nil
         placementEditor.currentTime = preview.time
+        preview.handles.refresh()
         refreshPreviewFrames()
         func format(_ value: Double) -> String { String(format: "%d:%02d", Int(value) / 60, Int(value) % 60) }
         timeLabel.stringValue = "\(format(preview.time)) / \(format(preview.features?.duration ?? 0))"
@@ -491,7 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private struct PreviewKey: Equatable {
         let projectURL: URL
         let clips: [VisualClip]
-        let slots: [Int]
+        let layers: [UUID]
         let assets: [VisualAsset]
     }
     private var lastPreviewKey: PreviewKey?
@@ -500,7 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         guard let projectURL else { return }
         let track = previewTrack, time = preview.time
         let active = track.active(at: time)
-        let key = PreviewKey(projectURL: projectURL, clips: active, slots: active.map { track.slot(of: $0.id) ?? 1 }, assets: active.compactMap { track.asset($0.assetID) })
+        let key = PreviewKey(projectURL: projectURL, clips: active, layers: track.layers.map(\.id), assets: active.compactMap { track.asset($0.assetID) })
         let dynamic = active.contains { $0.content.sourceIn != nil }
         if key != lastPreviewKey {
             previewRevision += 1; lastPreviewKey = key
@@ -617,6 +641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private func refreshControls() {
         let enabled = !busy && !imageProcessing
         if !enabled { (window as? StudioWindow)?.cancelNumberDrags() }
+        preview.handles.canEdit = enabled
         placementEditor.setAvailable(hasAudio: player != nil, isBusy: !enabled)
         for control in controls { control.isEnabled = enabled }
         play.isEnabled = enabled && player != nil; seek.isEnabled = enabled && player != nil
@@ -624,6 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     }
     private func showError(_ error: Error) { status.stringValue = "エラー: " + error.localizedDescription; let alert = NSAlert(error: error); alert.beginSheetModal(for: window) }
     private func prepareToClose() -> Bool {
+        preview.handles.cancelDrag()
         guard !busy && !imageProcessing else {
             NSSound.beep(); status.stringValue = "処理をキャンセルしてから終了してください。"
             return false
@@ -636,6 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         guard saveProject() else { NSSound.beep(); return false }
         return true
     }
+    func windowDidResignKey(_ notification: Notification) { preview.handles.cancelDrag() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { prepareToClose() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

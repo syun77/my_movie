@@ -13,7 +13,7 @@ final class LensFlareTests: XCTestCase {
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let views = all(editor)
         let add = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "レンズフレア"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "レンズフレア"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.lensFlare)
         for parameter in ImageEffects.LensFlare.parameters {

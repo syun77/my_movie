@@ -41,10 +41,17 @@ enum VisualSource: @unchecked Sendable {
 }
 
 struct VisualRenderLayer: @unchecked Sendable {
-    var slot: Int = 1
+    var particleImages: [UUID: VisualFrame] = [:]
+    var layerID = UUID()
+    var order = 0
+    var maskOwnerID: UUID?
     let clip: VisualClip
     let source: VisualSource
     var frame: VisualFrame? { if case let .frame(frame) = source { return frame }; return nil }
+    mutating func updatePlacement(from track: VisualTrack) {
+        guard let placement = track.renderPlacement(for: clip.id) else { return }
+        layerID = placement.id; order = placement.order; maskOwnerID = placement.maskOwner
+    }
     init(clip: VisualClip, image: CGImage) { self.clip = clip; source = .frame(VisualFrame(image)) }
     init(clip: VisualClip, frame: VisualFrame) { self.clip = clip; source = .frame(frame) }
     init(clip: VisualClip, spine: SpineDrawPacket) { self.clip = clip; source = .spine(spine) }

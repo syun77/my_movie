@@ -63,11 +63,66 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     var start: Double
     var end: Double
     var content: VisualContent = .still
-    var audioModulations: [ImageParameter: AudioModulation] = [:]
-    var automationRanges: [ImageParameter: DisplayRange] = [:]
+    private var baseAudioModulations: [ImageParameter: AudioModulation] = [:]
+    private var baseAutomationRanges: [ImageParameter: DisplayRange] = [:]
     var fixedValues: [ImageParameter: Double] = [:]
-    var curves: [ImageCurve] = []
+    private var baseCurves: [ImageCurve] = []
     var effects: ImageEffects?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, assetID, start, end, content, fixedValues
+        case baseAudioModulations = "audioModulations", baseAutomationRanges = "automationRanges", baseCurves = "curves"
+        case effects = "effectChain"
+    }
+
+    init(id: UUID = UUID(), assetID: UUID? = nil, start: Double, end: Double, content: VisualContent = .still,
+         audioModulations: [ImageParameter: AudioModulation] = [:], automationRanges: [ImageParameter: DisplayRange] = [:],
+         fixedValues: [ImageParameter: Double] = [:], curves: [ImageCurve] = [], effects: ImageEffects? = nil) {
+        self.id = id; self.assetID = assetID; self.start = start; self.end = end; self.content = content
+        self.fixedValues = fixedValues; self.effects = effects
+        self.audioModulations = audioModulations; self.automationRanges = automationRanges; self.curves = curves
+    }
+
+    var curves: [ImageCurve] {
+        get { baseCurves + (effects?.allNodes.flatMap(\.curves) ?? []) }
+        set {
+            baseCurves = newValue.filter { $0.parameter.effectKind == nil || effects?.node(for: $0.parameter) == nil }
+            for node in effects?.allNodes ?? [] {
+                effects?.editNode(node.id) { value in value.curves = newValue.filter { $0.parameter.effectKind == value.kind } }
+            }
+        }
+    }
+    var audioModulations: [ImageParameter: AudioModulation] {
+        get { (effects?.allNodes ?? []).reduce(baseAudioModulations) { $0.merging($1.audioModulations) { _, new in new } } }
+        set {
+            baseAudioModulations = newValue.filter { $0.key.effectKind == nil || effects?.node(for: $0.key) == nil }
+            for node in effects?.allNodes ?? [] {
+                effects?.editNode(node.id) { value in value.audioModulations = newValue.filter { $0.key.effectKind == value.kind } }
+            }
+        }
+    }
+    var automationRanges: [ImageParameter: DisplayRange] {
+        get { (effects?.allNodes ?? []).reduce(baseAutomationRanges) { $0.merging($1.automationRanges) { _, new in new } } }
+        set {
+            baseAutomationRanges = newValue.filter { $0.key.effectKind == nil || effects?.node(for: $0.key) == nil }
+            for node in effects?.allNodes ?? [] {
+                effects?.editNode(node.id) { value in value.automationRanges = newValue.filter { $0.key.effectKind == value.kind } }
+            }
+        }
+    }
+    var hasValidAutomationStorage: Bool {
+        baseCurves.allSatisfy { $0.parameter.effectKind == nil }
+            && baseAudioModulations.keys.allSatisfy { $0.effectKind == nil }
+            && baseAutomationRanges.keys.allSatisfy { $0.effectKind == nil }
+            && fixedValues.keys.allSatisfy { $0.effectKind == nil }
+    }
+    var orderedAutomationParameters: [ImageParameter] {
+        let used = automationParameters
+        let base = ImageParameter.allCases.filter { $0.effectKind == nil && used.contains($0) }
+        return base + (effects?.allNodes ?? []).flatMap { node in
+            ImageParameter.allCases.filter { $0.effectKind == node.kind && used.contains($0) }
+        }
+    }
 
     static let playbackSpeedRange = 0.1...16.0
     func sourceTime(at time: Double) -> Double {
@@ -78,30 +133,34 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
 
 struct VisualLayer: Codable, Sendable, Equatable, Identifiable {
     var id = UUID()
-    var slot: Int
+    var name: String
+    var isVisible = true
+    var isLocked = false
     var clips: [VisualClip] = []
 }
 
 struct VisualTrack: Codable, Sendable, Equatable {
     var assets: [VisualAsset] = []
-    var layers: [VisualLayer] = (1...3).map { VisualLayer(slot: $0) }
+    var layers: [VisualLayer] = (1...3).map { VisualLayer(name: "レイヤー \($0)") }
     var clips: [VisualClip] { layers.flatMap(\.clips) }
     func asset(_ id: UUID?) -> VisualAsset? { assets.first { $0.id == id } }
     func clip(_ id: UUID?) -> VisualClip? { clips.first { $0.id == id } }
-    func slot(of id: UUID) -> Int? { layers.first { $0.clips.contains { $0.id == id } }?.slot }
+    func layerID(of id: UUID) -> UUID? { layers.first { $0.clips.contains { $0.id == id } }?.id }
     func active(at time: Double) -> [VisualClip] {
-        layers.sorted { $0.slot < $1.slot }.compactMap { $0.clips.first { $0.start <= time && time < $0.end } }
+        layers.filter(\.isVisible).compactMap { $0.clips.first { $0.start <= time && time < $0.end } }
     }
     func uses(_ id: UUID) -> [VisualClip] { clips.filter { $0.assetID == id } }
+    func particleUses(_ id: UUID) -> [VisualClip] { clips.filter { $0.particleAssetIDs.contains(id) } }
 
     func validate(duration: Double? = nil) throws {
         var ids = Set<UUID>()
-        guard layers.count == 3, Set(layers.map(\.slot)) == Set(1...3) else { throw StudioError.message("素材レイヤーは1〜3の3段が必要です。") }
+        guard (1...Self.maximumLayers).contains(layers.count) else { throw StudioError.message("レイヤー数は1〜\(Self.maximumLayers)段にしてください。") }
         for asset in assets {
             guard ids.insert(asset.id).inserted, !asset.reference.path.isEmpty, asset.kind.spineDescriptor?.isValid != false, asset.kind.videoDuration.map({ $0.isFinite && $0 > 0 }) ?? true else { throw StudioError.message("素材素材の参照が不正です。") }
         }
         let assetIDs = Set(assets.map(\.id))
         for layer in layers {
+            guard Self.validName(layer.name) else { throw StudioError.message("レイヤー名が不正です。") }
             guard ids.insert(layer.id).inserted else { throw StudioError.message("素材レイヤーのIDが重複しています。") }
             var previousEnd = 0.0
             for clip in layer.clips {
@@ -121,6 +180,14 @@ struct VisualTrack: Codable, Sendable, Equatable {
                         throw StudioError.message("動画の速度は0.1〜16倍で、参照区間が素材の長さを超えないようにしてください。")
                     }
                 default: throw StudioError.message("素材とクリップの種類が一致しません。")
+                }
+                for id in clip.particleAssetIDs {
+                    guard let image = asset(id), image.kind == .still else { throw StudioError.message("粒子画像の素材参照が不正です。") }
+                }
+                for node in clip.effects?.allNodes ?? [] {
+                    guard node.particleAppearance?.isValid != false,
+                          node.particleAppearance == nil || node.kind.supportsParticleImage else { throw StudioError.message("粒子画像の設定が不正です。") }
+                    guard ids.insert(node.id).inserted else { throw StudioError.message("演出ノードのIDが重複しています。") }
                 }
                 guard clip.effects?.isValid != false else { throw StudioError.message("素材クリップの追加演出の設定が不正です。") }
                 if let playback = clip.content.spinePlayback {
@@ -146,6 +213,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
     }
 
     func replacingAsset(id: UUID, url: URL, projectURL: URL, kind: VisualAssetKind = .still) throws -> VisualTrack {
+        try requireEditableAsset(id)
         guard let index = assets.firstIndex(where: { $0.id == id }) else { throw StudioError.message("素材が見つかりません。") }
         guard assets[index].kind.sameType(as: kind) else { throw StudioError.message("同じ種類の素材で置き換えてください。") }
         var value = self
@@ -153,8 +221,9 @@ struct VisualTrack: Codable, Sendable, Equatable {
         if let existing = assets.first(where: { $0.id != id && $0.reference.resolve(projectURL: projectURL).standardizedFileURL == url.standardizedFileURL }) {
             if let existingIndex = value.assets.firstIndex(where: { $0.id == existing.id }) { value.assets[existingIndex].kind = kind }
             for layer in value.layers.indices {
-                for clip in value.layers[layer].clips.indices where value.layers[layer].clips[clip].assetID == id {
-                    value.layers[layer].clips[clip].assetID = existing.id
+                for clip in value.layers[layer].clips.indices {
+                    if value.layers[layer].clips[clip].assetID == id { value.layers[layer].clips[clip].assetID = existing.id }
+                    value.layers[layer].clips[clip].remapParticleAsset(id, to: existing.id)
                 }
             }
             value.assets.remove(at: index)
@@ -164,16 +233,21 @@ struct VisualTrack: Codable, Sendable, Equatable {
     }
 
     func removingAsset(id: UUID, includingPlacements: Bool) throws -> VisualTrack {
-        guard includingPlacements || uses(id).isEmpty else { throw StudioError.message("使用中の素材です。配置も削除する確認が必要です。") }
+        try requireEditableAsset(id)
+        guard includingPlacements || (uses(id).isEmpty && particleUses(id).isEmpty) else { throw StudioError.message("使用中の素材です。配置も削除する確認が必要です。") }
         var value = self
         for layer in value.layers.indices { value.layers[layer].clips.removeAll { $0.assetID == id } }
+        for layer in value.layers.indices {
+            for clip in value.layers[layer].clips.indices { value.layers[layer].clips[clip].remapParticleAsset(id, to: nil) }
+        }
         value.assets.removeAll { $0.id == id }
         try value.validate()
         return value
     }
 
-    func placement(at time: Double, slot: Int, duration: Double, grid: TimelineSnapGrid) throws -> (start: Double, end: Double) {
-        guard time.isFinite, time >= 0, time < duration, let layer = layers.first(where: { $0.slot == slot }) else { throw StudioError.message("曲の範囲内の素材行を選んでください。") }
+    func placement(at time: Double, layerID: UUID, duration: Double, grid: TimelineSnapGrid) throws -> (start: Double, end: Double) {
+        try requireEditable(layerID)
+        guard time.isFinite, time >= 0, time < duration, let layer = layers.first(where: { $0.id == layerID }) else { throw StudioError.message("曲の範囲内の素材行を選んでください。") }
         let start = try grid.snap(time, within: 0...duration)
         guard !layer.clips.contains(where: { $0.start <= start && start < $0.end }) else { throw StudioError.message("配置先が素材と重なっています。空白または別のレイヤーを選んでください。") }
         let limit = min(duration, layer.clips.first(where: { $0.start >= start })?.start ?? duration)
@@ -182,12 +256,12 @@ struct VisualTrack: Codable, Sendable, Equatable {
         return (start, end)
     }
 
-    func adding(assetID: UUID, at time: Double, slot: Int, duration: Double, grid: TimelineSnapGrid) throws -> (track: VisualTrack, clip: VisualClip) {
-        var range = try placement(at: time, slot: slot, duration: duration, grid: grid)
+    func adding(assetID: UUID, at time: Double, layerID: UUID, duration: Double, grid: TimelineSnapGrid) throws -> (track: VisualTrack, clip: VisualClip) {
+        var range = try placement(at: time, layerID: layerID, duration: duration, grid: grid)
         guard let asset = asset(assetID) else { throw StudioError.message("素材が見つかりません。") }
         var content = VisualContent.still
         if let length = asset.kind.videoDuration {
-            let nextStart = layers.first { $0.slot == slot }?.clips.first { $0.start >= range.start }?.start ?? duration
+            let nextStart = layers.first { $0.id == layerID }?.clips.first { $0.start >= range.start }?.start ?? duration
             let limit = min(duration, nextStart, range.start + length)
             guard limit - range.start >= 1.0 / 30 else { throw StudioError.message("動画を配置する長さがありません。") }
             range.end = try grid.snap(limit, within: (range.start + 1.0 / 30)...limit)
@@ -195,27 +269,29 @@ struct VisualTrack: Codable, Sendable, Equatable {
         }
         if let descriptor = asset.kind.spineDescriptor { content = .spine(SpinePlayback(animationName: descriptor.animations[0].name)) }
         let clip = VisualClip(assetID: assetID, start: range.start, end: range.end, content: content)
-        return (try inserting(clip, slot: slot, duration: duration), clip)
+        return (try inserting(clip, layerID: layerID, duration: duration), clip)
     }
 
-    func addingEmpty(at time: Double, slot: Int, duration: Double, grid: TimelineSnapGrid) throws -> (track: VisualTrack, clip: VisualClip) {
-        let range = try placement(at: time, slot: slot, duration: duration, grid: grid)
+    func addingEmpty(at time: Double, layerID: UUID, duration: Double, grid: TimelineSnapGrid) throws -> (track: VisualTrack, clip: VisualClip) {
+        let range = try placement(at: time, layerID: layerID, duration: duration, grid: grid)
         let clip = VisualClip(assetID: nil, start: range.start, end: range.end, effects: ImageEffects(solidBackground: .init()))
-        return (try inserting(clip, slot: slot, duration: duration), clip)
+        return (try inserting(clip, layerID: layerID, duration: duration), clip)
     }
 
-    func inserting(_ clip: VisualClip, slot: Int, duration: Double) throws -> VisualTrack {
+    func inserting(_ clip: VisualClip, layerID: UUID, duration: Double) throws -> VisualTrack {
+        try requireEditable(layerID)
         var value = self
-        guard let index = value.layers.firstIndex(where: { $0.slot == slot }) else { throw StudioError.message("素材レイヤーが見つかりません。") }
+        guard let index = value.layers.firstIndex(where: { $0.id == layerID }) else { throw StudioError.message("素材レイヤーが見つかりません。") }
         value.layers[index].clips.append(clip)
         value.layers[index].clips.sort { $0.start < $1.start }
         try value.validate(duration: duration)
         return value
     }
 
-    func updating(_ clip: VisualClip, slot: Int, duration: Double) throws -> VisualTrack {
+    func updating(_ clip: VisualClip, layerID: UUID, duration: Double) throws -> VisualTrack {
+        try requireEditable(self.layerID(of: clip.id))
         guard self.clip(clip.id) != nil else { throw StudioError.message("素材の配置が見つかりません。") }
-        return try removingClip(id: clip.id).inserting(clip, slot: slot, duration: duration)
+        return try removingClip(id: clip.id).inserting(clip, layerID: layerID, duration: duration)
     }
 
     func removingClip(id: UUID) -> VisualTrack {
@@ -226,7 +302,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
 
     func dragging(id: UUID, part: TimelineDragPart, delta: Double, duration: Double, grid: TimelineSnapGrid) throws -> VisualTrack {
         try validate(duration: duration)
-        guard delta.isFinite, let slot = slot(of: id), let layer = layers.first(where: { $0.slot == slot }), let index = layer.clips.firstIndex(where: { $0.id == id }) else { throw StudioError.message("素材の移動量が不正です。") }
+        guard delta.isFinite, let layerID = layerID(of: id), let layer = layers.first(where: { $0.id == layerID }), let index = layer.clips.firstIndex(where: { $0.id == id }) else { throw StudioError.message("素材の移動量が不正です。") }
         var clip = layer.clips[index]
         let before = index > 0 ? layer.clips[index - 1].end : 0
         let after = index + 1 < layer.clips.count ? layer.clips[index + 1].start : duration
@@ -244,6 +320,6 @@ struct VisualTrack: Codable, Sendable, Equatable {
             } else { sourceEnd = duration }
             clip.end = try grid.snap(clip.end + delta, within: (clip.start + 1.0 / 30)...min(after, duration, sourceEnd))
         }
-        return try updating(clip, slot: slot, duration: duration)
+        return try updating(clip, layerID: layerID, duration: duration)
     }
 }

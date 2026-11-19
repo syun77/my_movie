@@ -33,8 +33,8 @@ final class ProjectStorageTests: XCTestCase {
         var heights = TimelineHeights()
         heights.viewport = 380
         heights[.lyrics] = 20
-        heights[.visual(1)] = 21
-        heights[.automation(1, .rotation)] = 27
+        heights[.visual(visuals.layers[0].id)] = 21
+        heights[.automation(visuals.layers[0].id, .rotation)] = 27
         try storage.save(ProjectFile(audioURL: audio, visuals: visuals, settings: settings, timelineHeights: heights, projectURL: url), to: url)
         let restarted = ProjectStorage(defaults: UserDefaults(suiteName: suite)!)
         XCTAssertEqual(restarted.lastProjectURL, url)
@@ -53,7 +53,7 @@ final class ProjectStorageTests: XCTestCase {
         let defaultProject = try storage.read(from: url)
         XCTAssertTrue(defaultProject.visuals.assets.isEmpty)
         XCTAssertNil(defaultProject.timelineHeights)
-        heights[.automation(1, .rotation)] = 0
+        heights[.automation(visuals.layers[0].id, .rotation)] = 0
         XCTAssertThrowsError(try storage.save(ProjectFile(audioURL: audio, settings: settings, timelineHeights: heights, projectURL: url), to: url))
         let previous = try Data(contentsOf: url)
         var invalid = settings; invalid.bpm = .nan

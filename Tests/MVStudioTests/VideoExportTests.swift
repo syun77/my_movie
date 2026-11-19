@@ -37,7 +37,7 @@ final class VideoExportTests: XCTestCase {
         visuals.layers[1].clips = [trimmed,
             VisualClip(assetID: video, start: 1.2, end: duration, content: .video(sourceIn: 1.6, speed: 0.5), audioModulations: [:])]
         var upper = VisualClip(assetID: video, start: 0.7, end: 1, content: .video(sourceIn: 1.1), audioModulations: [:])
-        upper.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(kind: .ellipse, width: 900, height: 600), target: .below, feather: 20), blur: .init(radius: 2))
+        upper.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(kind: .ellipse, width: 900, height: 600), feather: 20), blur: .init(radius: 2))
         upper.audioModulations[.blurRadius] = AudioModulation(source: .beat, amount: 5, beatNoteDenominator: 12)
         visuals.layers[2].clips = [upper]
         // Unused missing media must not prevent export.

@@ -140,7 +140,7 @@ final class SharpFocusTests: XCTestCase {
         XCTAssertEqual(synced.evaluatedEffects(at: 0.3)?.sharpFocus?.opacity, 0)
         synced.audioModulations[.sharpCount] = AudioModulation(source: .beat, amount: 0.5)
         XCTAssertEqual(synced.evaluatedEffects(at: 0)?.sharpFocus?.count, 121)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).sharpFocus)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).sharpFocus)
     }
     func testRenderedInkMasksScaleAndOpacity() throws {
         let canvas = try EffectTestCanvas()
@@ -167,11 +167,12 @@ final class SharpFocusTests: XCTestCase {
         clip.fixedValues[.opacity] = 100
         clip.effects?.mask = .init(geometry: ShapeGeometry(width: 0))
         try canvas.draw([(background, 1), (clip, 2)])
-        XCTAssertLessThan(canvas.pixel(x, y)[0], 20, "自画像マスクは集中線３に作用しない")
+        XCTAssertEqual(canvas.pixel(x, y), [255, 255, 255, 255], "後段マスクは集中線３も切り抜く")
         var owner = canvas.clip; owner.id = UUID()
-        owner.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below))
+        owner.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)))
         try canvas.draw([(background, 1), (clip, 2), (owner, 3)])
         XCTAssertEqual(canvas.pixel(x, y), [255, 255, 255, 255])
+        clip.effects?.mask = nil
         clip.effects?.sharpFocus?.color = .white
         background.effects?.solidBackground?.color = .black
         try canvas.draw([(background, 1), (clip, 2)])
@@ -200,10 +201,10 @@ final class SharpFocusTests: XCTestCase {
         editor.onCommit = { clip.effects = $0; load() }
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let add = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "集中線３"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "集中線３"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.sharpFocus)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         let fields = all(editor).compactMap { $0 as? DragValueField }
         for parameter in ImageEffects.SharpFocus.parameters {
             let field = try XCTUnwrap(fields.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })

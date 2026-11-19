@@ -2,6 +2,20 @@ import AppKit
 
 @MainActor
 final class DragValueField: NSTextField {
+    var previewHandleProvider: (() -> PreviewHandleTarget?)?
+    var showsPreviewHandle = false { didSet { if oldValue != showsPreviewHandle { needsDisplay = true } } }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { (window as? StudioWindow)?.previewHandles?.activate(previewHandleProvider?()) }
+        return accepted
+    }
+
+    override func selectText(_ sender: Any?) {
+        (window as? StudioWindow)?.previewHandles?.activate(previewHandleProvider?())
+        super.selectText(sender)
+    }
+
     var contextMenuProvider: (() -> NSMenu)?
     var onDragStart: (() -> Bool)?
     var onDragChange: ((Double) -> Void)?
@@ -75,6 +89,11 @@ final class DragValueField: NSTextField {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        if showsPreviewHandle {
+            NSColor(srgbRed: 0.65, green: 0.90, blue: 1, alpha: 1).setStroke()
+            let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
+            outline.lineWidth = 1.5; outline.stroke()
+        }
         let center = NSPoint(x: 11, y: bounds.midY)
         let radius: CGFloat = 8
         let opacity: CGFloat = isEnabled ? 1 : 0.35

@@ -16,7 +16,7 @@ final class CrossGlareTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip)), clip)
         clip.effects?.crossGlare?.length = .nan
         XCTAssertFalse(clip.effects?.isValid == true)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).crossGlare)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).crossGlare)
     }
 
     func testRenderingAndCacheInvalidation() throws {
@@ -88,8 +88,8 @@ final class CrossGlareTests: XCTestCase {
         let input = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
         var pixels = [SIMD4<Float>](repeating: .zero, count: 33 * 33)
         pixels[16 * 33 + 16] = SIMD4(1, 0, 0, 1)
-        // Hidden RGB in transparent pixels must not contribute light.
-        pixels[3 * 33 + 3] = SIMD4(100, 100, 100, 0)
+        // Additive radiance at zero coverage remains visible to downstream light extraction.
+        pixels[3 * 33 + 3] = SIMD4(0.5, 0, 0, 0)
         pixels.withUnsafeBytes { input.replace(region: MTLRegionMake2D(0, 0, 33, 33), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: 33 * 16) }
         let queue = try XCTUnwrap(device.makeCommandQueue())
         let commands = try XCTUnwrap(queue.makeCommandBuffer())
@@ -108,6 +108,7 @@ final class CrossGlareTests: XCTestCase {
         }
         var emission = [Float](repeating: 0, count: 33 * 33)
         emission[16 * 33 + 16] = 0.2126
+        emission[3 * 33 + 3] = 0.1063
         var horizontal = emission, vertical = emission
         for step in [1, 2, 4] {
             horizontal = convolve(horizontal, dx: step, dy: 0)
@@ -190,10 +191,10 @@ final class CrossGlareTests: XCTestCase {
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let views = all(editor)
         let add = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "クロスグレア"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "クロスグレア"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.crossGlare)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         for parameter in ImageEffects.CrossGlare.parameters {
             let field = try XCTUnwrap(views.compactMap { $0 as? DragValueField }.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
             XCTAssertEqual(field.doubleValue, parameter.effect?.initial)

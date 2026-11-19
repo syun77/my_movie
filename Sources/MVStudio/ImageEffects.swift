@@ -2,30 +2,180 @@ import Foundation
 import simd
 
 struct ImageEffects: Codable, Equatable, Sendable {
-    var shape: Shape?
-    var mask: Mask?
-    var solidBackground: SolidBackground?
-    var blur: Blur?
-    var radialBlur: RadialBlur?
-    var crossGlare: CrossGlare?
-    var bloom: Bloom?
-    var particles: Particles?
-    var embers: Embers?
-    var snow: Snow?
-    var orbs: Orbs?
-    var zoomLoop: ZoomLoop?
-    var octgrams: Octgrams?
-    var warpFlight: WarpFlight?
-    var radialFocus: RadialFocus?
-    var radialRays: RadialRays?
-    var straightLines: StraightLines?
-    var sharpFocus: SharpFocus?
-    var focusLines: FocusLines?
-    var shake: Shake?
-    var colorCorrection: ColorCorrection?
-    var chromaticAberration: ChromaticAberration?
-    var lensFlare: LensFlare?
-    var vignette: Vignette?
+    var nodes: [EffectNode] = []
+    var isBypassed = false
+    var outputMask: EffectNode?
+
+    var shape: Shape? {
+        get { if case let .shape(value) = nodes.first(where: { $0.kind == .shape })?.payload { return value }; return nil }
+        set { set(.shape, payload: newValue.map(EffectPayload.shape)) }
+    }
+    var mask: Mask? {
+        get { if case let .mask(value) = nodes.first(where: { $0.kind == .mask })?.payload { return value }; return nil }
+        set { set(.mask, payload: newValue.map(EffectPayload.mask)) }
+    }
+    var solidBackground: SolidBackground? {
+        get { if case let .solidBackground(value) = nodes.first(where: { $0.kind == .solidBackground })?.payload { return value }; return nil }
+        set { set(.solidBackground, payload: newValue.map(EffectPayload.solidBackground)) }
+    }
+    var blur: Blur? {
+        get { if case let .blur(value) = nodes.first(where: { $0.kind == .blur })?.payload { return value }; return nil }
+        set { set(.blur, payload: newValue.map(EffectPayload.blur)) }
+    }
+    var radialBlur: RadialBlur? {
+        get { if case let .radialBlur(value) = nodes.first(where: { $0.kind == .radialBlur })?.payload { return value }; return nil }
+        set { set(.radialBlur, payload: newValue.map(EffectPayload.radialBlur)) }
+    }
+    var crossGlare: CrossGlare? {
+        get { if case let .crossGlare(value) = nodes.first(where: { $0.kind == .crossGlare })?.payload { return value }; return nil }
+        set { set(.crossGlare, payload: newValue.map(EffectPayload.crossGlare)) }
+    }
+    var bloom: Bloom? {
+        get { if case let .bloom(value) = nodes.first(where: { $0.kind == .bloom })?.payload { return value }; return nil }
+        set { set(.bloom, payload: newValue.map(EffectPayload.bloom)) }
+    }
+    var particles: Particles? {
+        get { if case let .particles(value) = nodes.first(where: { $0.kind == .particles })?.payload { return value }; return nil }
+        set { set(.particles, payload: newValue.map(EffectPayload.particles)) }
+    }
+    var embers: Embers? {
+        get { if case let .embers(value) = nodes.first(where: { $0.kind == .embers })?.payload { return value }; return nil }
+        set { set(.embers, payload: newValue.map(EffectPayload.embers)) }
+    }
+    var snow: Snow? {
+        get { if case let .snow(value) = nodes.first(where: { $0.kind == .snow })?.payload { return value }; return nil }
+        set { set(.snow, payload: newValue.map(EffectPayload.snow)) }
+    }
+    var orbs: Orbs? {
+        get { if case let .orbs(value) = nodes.first(where: { $0.kind == .orbs })?.payload { return value }; return nil }
+        set { set(.orbs, payload: newValue.map(EffectPayload.orbs)) }
+    }
+    var zoomLoop: ZoomLoop? {
+        get { if case let .zoomLoop(value) = nodes.first(where: { $0.kind == .zoomLoop })?.payload { return value }; return nil }
+        set { set(.zoomLoop, payload: newValue.map(EffectPayload.zoomLoop)) }
+    }
+    var octgrams: Octgrams? {
+        get { if case let .octgrams(value) = nodes.first(where: { $0.kind == .octgrams })?.payload { return value }; return nil }
+        set { set(.octgrams, payload: newValue.map(EffectPayload.octgrams)) }
+    }
+    var warpFlight: WarpFlight? {
+        get { if case let .warpFlight(value) = nodes.first(where: { $0.kind == .warpFlight })?.payload { return value }; return nil }
+        set { set(.warpFlight, payload: newValue.map(EffectPayload.warpFlight)) }
+    }
+    var radialFocus: RadialFocus? {
+        get { if case let .radialFocus(value) = nodes.first(where: { $0.kind == .radialFocus })?.payload { return value }; return nil }
+        set { set(.radialFocus, payload: newValue.map(EffectPayload.radialFocus)) }
+    }
+    var radialRays: RadialRays? {
+        get { if case let .radialRays(value) = nodes.first(where: { $0.kind == .radialRays })?.payload { return value }; return nil }
+        set { set(.radialRays, payload: newValue.map(EffectPayload.radialRays)) }
+    }
+    var straightLines: StraightLines? {
+        get { if case let .straightLines(value) = nodes.first(where: { $0.kind == .straightLines })?.payload { return value }; return nil }
+        set { set(.straightLines, payload: newValue.map(EffectPayload.straightLines)) }
+    }
+    var sharpFocus: SharpFocus? {
+        get { if case let .sharpFocus(value) = nodes.first(where: { $0.kind == .sharpFocus })?.payload { return value }; return nil }
+        set { set(.sharpFocus, payload: newValue.map(EffectPayload.sharpFocus)) }
+    }
+    var focusLines: FocusLines? {
+        get { if case let .focusLines(value) = nodes.first(where: { $0.kind == .focusLines })?.payload { return value }; return nil }
+        set { set(.focusLines, payload: newValue.map(EffectPayload.focusLines)) }
+    }
+    var shake: Shake? {
+        get { if case let .shake(value) = nodes.first(where: { $0.kind == .shake })?.payload { return value }; return nil }
+        set { set(.shake, payload: newValue.map(EffectPayload.shake)) }
+    }
+    var binarization: Binarization? {
+        get { if case let .binarization(value) = nodes.first(where: { $0.kind == .binarization })?.payload { return value }; return nil }
+        set { set(.binarization, payload: newValue.map(EffectPayload.binarization)) }
+    }
+    var colorCorrection: ColorCorrection? {
+        get { if case let .colorCorrection(value) = nodes.first(where: { $0.kind == .colorCorrection })?.payload { return value }; return nil }
+        set { set(.colorCorrection, payload: newValue.map(EffectPayload.colorCorrection)) }
+    }
+    var chromaticAberration: ChromaticAberration? {
+        get { if case let .chromaticAberration(value) = nodes.first(where: { $0.kind == .chromaticAberration })?.payload { return value }; return nil }
+        set { set(.chromaticAberration, payload: newValue.map(EffectPayload.chromaticAberration)) }
+    }
+    var lensFlare: LensFlare? {
+        get { if case let .lensFlare(value) = nodes.first(where: { $0.kind == .lensFlare })?.payload { return value }; return nil }
+        set { set(.lensFlare, payload: newValue.map(EffectPayload.lensFlare)) }
+    }
+    var sobelChromatic: SobelChromatic? {
+        get { if case let .sobelChromatic(value) = nodes.first(where: { $0.kind == .sobelChromatic })?.payload { return value }; return nil }
+        set { set(.sobelChromatic, payload: newValue.map(EffectPayload.sobelChromatic)) }
+    }
+    var vignette: Vignette? {
+        get { if case let .vignette(value) = nodes.first(where: { $0.kind == .vignette })?.payload { return value }; return nil }
+        set { set(.vignette, payload: newValue.map(EffectPayload.vignette)) }
+    }
+    var belowMask: Mask? {
+        get { if case let .belowMask(value) = outputMask?.payload { return value }; return nil }
+        set { set(.belowMask, payload: newValue.map(EffectPayload.belowMask)) }
+    }
+
+    init(shape: Shape? = nil, mask: Mask? = nil, belowMask: Mask? = nil, solidBackground: SolidBackground? = nil, blur: Blur? = nil, radialBlur: RadialBlur? = nil, crossGlare: CrossGlare? = nil, bloom: Bloom? = nil, particles: Particles? = nil, embers: Embers? = nil, snow: Snow? = nil, orbs: Orbs? = nil, zoomLoop: ZoomLoop? = nil, octgrams: Octgrams? = nil, warpFlight: WarpFlight? = nil, radialFocus: RadialFocus? = nil, radialRays: RadialRays? = nil, straightLines: StraightLines? = nil, sharpFocus: SharpFocus? = nil, focusLines: FocusLines? = nil, shake: Shake? = nil, binarization: Binarization? = nil, colorCorrection: ColorCorrection? = nil, chromaticAberration: ChromaticAberration? = nil, lensFlare: LensFlare? = nil, vignette: Vignette? = nil, sobelChromatic: SobelChromatic? = nil) {
+        self.solidBackground = solidBackground
+        self.shape = shape
+        self.shake = shake
+        self.colorCorrection = colorCorrection
+        self.binarization = binarization
+        self.chromaticAberration = chromaticAberration
+        self.vignette = vignette
+        self.sobelChromatic = sobelChromatic
+        self.radialBlur = radialBlur
+        self.blur = blur
+        self.bloom = bloom
+        self.crossGlare = crossGlare
+        self.zoomLoop = zoomLoop
+        self.mask = mask
+        self.lensFlare = lensFlare
+        self.particles = particles
+        self.embers = embers
+        self.snow = snow
+        self.orbs = orbs
+        self.octgrams = octgrams
+        self.warpFlight = warpFlight
+        self.radialFocus = radialFocus
+        self.focusLines = focusLines
+        self.sharpFocus = sharpFocus
+        self.straightLines = straightLines
+        self.radialRays = radialRays
+        self.belowMask = belowMask
+    }
+
+    mutating func set(_ kind: EffectKind, payload: EffectPayload?) {
+        if kind == .belowMask {
+            if let payload { if outputMask != nil { outputMask?.payload = payload } else { outputMask = EffectNode(payload: payload) } }
+            else { outputMask = nil }
+        } else if let index = nodes.firstIndex(where: { $0.kind == kind }) {
+            if let payload { nodes[index].payload = payload } else { nodes.remove(at: index) }
+        } else if let payload { nodes.append(EffectNode(payload: payload)) }
+    }
+
+    var needsClock: Bool {
+        guard !isBypassed else { return false }
+        return nodes.contains { node in
+            guard node.isEnabled else { return false }
+            switch node.kind {
+            case .shake, .sobelChromatic, .chromaticAberration, .zoomLoop, .lensFlare, .particles, .embers, .snow, .orbs,
+                 .octgrams, .warpFlight, .radialFocus, .focusLines, .sharpFocus, .straightLines, .radialRays: return true
+            default: return false
+            }
+        }
+    }
+    var allNodes: [EffectNode] { nodes + (outputMask.map { [$0] } ?? []) }
+    func node(for parameter: ImageParameter) -> EffectNode? { allNodes.first { $0.kind == parameter.effectKind } }
+    mutating func editNode(_ id: UUID, _ edit: (inout EffectNode) -> Void) {
+        if let index = nodes.firstIndex(where: { $0.id == id }) { edit(&nodes[index]) }
+        else if outputMask?.id == id { edit(&outputMask!) }
+    }
+    mutating func move(_ id: UUID, to index: Int) {
+        guard let old = nodes.firstIndex(where: { $0.id == id }) else { return }
+        let node = nodes.remove(at: old)
+        nodes.insert(node, at: min(nodes.count, max(0, index)))
+    }
 
     struct CrossGlare: Codable, Equatable, Sendable {
         var isEnabled = true
@@ -93,6 +243,24 @@ struct ImageEffects: Codable, Equatable, Sendable {
         static let percentRange = 0.0...100
         var isValid: Bool {
             [strength, size, softness].allSatisfy { Self.percentRange.contains($0) }
+        }
+    }
+
+    struct Binarization: Codable, Equatable, Sendable {
+        var isEnabled = true
+        var threshold = 50.0
+        var darkColor = RGBColor.black
+        var lightColor = RGBColor(red: 1, green: 1, blue: 1)
+        var amount = 100.0
+        static let percentRange = 0.0...100
+        var isActive: Bool { isEnabled && amount > 0 }
+        var isValid: Bool {
+            Self.percentRange.contains(threshold) && Self.percentRange.contains(amount)
+                && darkColor.isValid && lightColor.isValid
+        }
+
+        mutating func swapColors() {
+            (darkColor, lightColor) = (lightColor, darkColor)
         }
     }
 
@@ -483,8 +651,19 @@ struct ImageEffects: Codable, Equatable, Sendable {
     }
 
     var isValid: Bool {
+        guard Set(nodes.map(\.kind)).count == nodes.count,
+              !nodes.contains(where: { $0.kind == .belowMask }),
+              outputMask.map({ $0.kind == .belowMask }) ?? true,
+              Set(allNodes.map(\.id)).count == allNodes.count,
+              allNodes.allSatisfy({ node in
+                  node.particleAppearance?.isValid != false && (node.particleAppearance == nil || node.kind.supportsParticleImage) && node.curves.allSatisfy { $0.parameter.effectKind == node.kind }
+                      && node.audioModulations.keys.allSatisfy { $0.effectKind == node.kind }
+                      && node.automationRanges.keys.allSatisfy { $0.effectKind == node.kind }
+              }), belowMask?.isValid != false else { return false }
         if shape?.isValid == false || mask?.isValid == false { return false }
         if let solidBackground, !solidBackground.color.isValid { return false }
+        if sobelChromatic?.isValid == false { return false }
+        if binarization?.isValid == false { return false }
         if radialBlur?.isValid == false { return false }
         if let blur, !Blur.radiusRange.contains(blur.radius) { return false }
         if let bloom, !(Bloom.thresholdRange.contains(bloom.threshold) && Bloom.radiusRange.contains(bloom.radius)

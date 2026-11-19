@@ -1,3 +1,242 @@
+# レイヤー並べ替えの半透明表示（実装中）
+
+- 最終更新: 2026-11-20 JST。
+- 要件: 演出チェーン同様、掴んでいるレイヤーを半透明で追従表示する。
+- 確認: EffectChainListは元行30%・追従行85%。TimelineViewは現在仮順序と挿入線だけ。
+- 方針: 押下時の可視レイヤー群（ヘッダー/クリップ/展開レーン）を取り込み、掴み位置を保って85%で追従。仮順序内の元行は30%へ薄め、挿入線は最前面。既存の確定/取消/保存を維持する。
+- 次: 描画・操作の検証、リファクタリング、最終./scripts/build-app.shと署名確認。
+- 既存未コミット変更を保持。実行中処理なし。
+
+# Sobel＋色収差の実装（完了）
+
+- 最終更新: 2026-11-20 JST。docs/SOBEL_CHROMATIC.mdの設計で実装をユーザー承認。
+- 完了: 専用ノード・4モードUI・5数値のキー/音楽同期・Metal加工・時計/トリム・保存v15/読込v12〜15。v11変換器削除、固定v15 fixtureと境界試験を更新。原文コード/映像は転用せず独自実装。
+- 整理: 時計/モード/近傍評価をモデル、GPU加工を専用rendererに分離。範囲/既定値をモデルと共通数値定義で共有し、中央サンプルを再利用。中間面の余白を偶数pxへ揃え図形の微分AAを安定化。
+- 変更: SobelChromatic.swift/SobelChromaticRenderer.swift/SobelChromaticTests.swift新規、EffectChain/ImageEffects/ImageAnimation/EffectAutomation/EffectCategory/ImageEffectsEditor/MetalSceneRenderer/Scene.metal/ProjectFile/ProjectMigrator、保存fixture/移行・カテゴリ・チェーン試験、設計/README/関連保存仕様/AGENTS。
+- 検証: 全体250件成功・外部Spine1件スキップ（/tmp/my-movie-sobel-full.log）。GPU対CPU/透明・半透明・HDR・加算光/4モード/時計・トリム/コピー・履歴・音楽同期/UI/順序・キャッシュ/MP4全12フレーム各5画素の一致を確認。git diff --check成功。PNG /tmp/my-movie-sobel-preview.pngを目視確認。
+- 計測: 単独試験1080p1/3/8段GPU最大7.08/13.56/32.06ms、プロセス最大RSS43.9/44.3/45.5MB。GPUメモリ総量・最小対象Mac・50段の保証値ではない。
+- 最終検証: 整理後の関連33件成功（/tmp/my-movie-sobel-final-tests.log）。./scripts/build-app.sh成功（/tmp/my-movie-sobel-build-app.log）、最新dist/MV Studio.app生成済み。codesign --verify --deep --strictと同梱Scene.metalの原文一致、git diff --check成功。
+- 次: 最新appを再起動し、「追加演出 → 色・質感 → Sobel＋色収差」から利用する。手動GUI操作・実素材での初期値調整は未実施。今回の実行中処理・未解決障害なし。既存変更・別作業の記録を保持。
+- 環境: 制限環境ではMetal/NSFileCoordinatorが失敗するため、検証とapp生成はmacOSサービスにアクセス可能な実行を使用。
+
+# 電撃ビームの設計（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。要件: Shadertoy wsjGRwを組み込む設計。実装は対象外。
+- 確認: ブラウザーでAnime background / mmerchanteのImageコードを読取。電撃6層・各22区間、背景とノイズのテクスチャ、iFrame/iTime混在を確認。
+- 完了: docs/ELECTRIC_BEAM.mdに独立生成ノード、UI初期値、24Hz時計、GPU区間描画、alpha保持、余白、自動化、保存移行、実装順と受入条件を記録。AGENTSへ参照追記。
+- 整理: 背景・固定導入を分離。継ぎ目のmax union、有限半径の光、余白への生成、既存ノードID/時計/XY操作の共用を明記。
+- 検証: 現行チェーン・カテゴリ・保存v14・位置ハンドルと照合。git diff --check成功。文書のみでテスト・app再生成は対象外。
+- 未完了: 実装、原作コード利用条件、実画面の初期値調整、GPU計測。値と再現方法は提案。
+- 次: 意見を反映。実装依頼時は保存版と可変レイヤー作業を再確認し、利用条件・モデル・CPU幾何から着手。実行中処理なし。並行更新された別作業の進捗と既存変更を保持。
+
+# 炎アウトラインの組込設計（完了・実装未着手）
+
+- 最終更新: 2026-11-19 JST。要件: Shadertoy 3lfGR7を追加演出へ組み込む設計。実装は対象外。
+- 確認: ブラウザーでDogrtt「Inner outline test」のImageコードを確認。素材輪郭抽出ではなく四辺の内向き炎。参照元の不透明黒背景を透明加算へ置き換える提案。
+- 完了: docs/FIRE_OUTLINE.mdに矩形/10数値・自動化・時計/トリム・Metal生成・alpha0 RGB・チェーン/マスク・保存・変更箇所・受入条件を記載。AGENTSへ参照を追記。
+- 整理: 生成と輪郭抽出の範囲を明確化。既存のノード/共通評価/生成面を再利用し、色空間・反転・最終不透明度の責務を統一。提案と確認済み事実を区別。
+- 検証: 参照ソースと既存チェーン/カテゴリ/保存v14のコードを照合。文書差分と参照先を確認。コード変更なし、ビルド/描画試験は対象外。
+- 変更ファイル: docs/FIRE_OUTLINE.md、AGENTS.md、PROGRESS.mdのみ。他の進行中変更は保持。
+- 未解決: コード転用条件/クレジット、初期値の視覚調整、性能は実装時に確認。設計の障害なし。実行中処理なし。
+- 次: 実装指示後、利用条件を確認し、モデル→自動化→Metal→UI→試験→整理→最終appビルドの順に進める。
+
+# Sobelフィルター＋色収差の設計（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。要件: Shadertoy Nl33D2の演出を組み込む設計。実装は対象外。
+- 参照: ブラウザーでNeon6/JzscwhatのImageコードを確認。時間で輪郭と色収差が切り替わる。負数pow・赤成分alphaは安全な式へ再定義する設計。
+- 完了: docs/SOBEL_CHROMATIC.mdに専用チェーンノード、4モード、数値/色、GPU処理、透明/加算光、余白、時計、自動化、保存移行、実装順、受入条件を記録。AGENTSへ参照を追記。
+- 整理: 既存色収差との責務、同じ入力を読む2処理のsupport最大値、余白に依存しない画面座標、元作品との差異を明記。現行v14の進行中変更を確認し、次版での移行を設計。
+- 検証: 文書と実コードのチェーン/中間面/自動化/保存境界を照合。今回の文書差分のgit diff --check成功。全体検証は既存のVisualEditor.swift:168の末尾空白で失敗（今回変更せず）。文書のみのためテスト・app再生成は対象外。
+- 未完了: 実装、元コード転用時のライセンス確認、実素材の初期値調整、GPU性能計測。提案値は未確定。
+- 次: 設計への意見を反映。実装依頼時に保存バージョンと可変レイヤー作業の状態を再確認し、モデル・参照計算から着手する。今回の実行中処理なし。既存の未コミット変更と別作業の進捗を保持。
+
+# 可変タイムラインレイヤーの実装（完了）
+
+- 最終更新: 2026-11-19 JST。docs/VARIABLE_VISUAL_LAYERS.mdの実装をユーザー承認。
+- 完了: 初期3段/最大50段・最低1段、追加/削除/改名/上下移動/ヘッダードラッグ、表示/ロックを実装。UUIDへ所属/選択/高さ/開閉を統一し、順序は配列だけが所有する。
+- 保存: v14/対応v11〜14。v13→14で既存ID・3空段・順序を保持し行高をUUIDキーへ変換。固定fixture v14を追加、範囲外のv10変換器を削除。
+- 描画: 非表示段の取得/出力検証を省略。order/隣接maskOwnerIDで空・非表示段を飛び越さない。対象名は仮順序でも更新。素材再利用と取得世代を保持、非表示/削除のSpineキャッシュを解放。
+- 整理: 段の値操作/ロック/素材変更の判定をVisualLayerEditingへ集約。共通行記述から段座標/境界/スクロールを計算し、フレームの段情報更新を共通化。終了時のドラッグ/名前欄取消も追加。
+- 検証: 全体241件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-layers-full.log）。整理後関連52件成功（/tmp/my-movie-layers-final-related.log）。最終40件は外部サンプル1件スキップ・失敗0（/tmp/my-movie-layers-final.log）。追加の最終4件も成功（/tmp/my-movie-layers-last.log）。新規8件で6段混在・ロック/素材管理・保存/履歴/行高・非表示欠損・MP4全6フレームを確認。
+- 性能: 1080p全画面10/20/50段、GPU p95約7.57/32.20/105.95ms、試験プロセス累積ピークRSS約340/501/901MiB。20段+3放射ブラー約41.48ms。最大50段を編集/保存上限とし、30fpsは保証しない。最小対象Macは未計測。
+- 目視: /tmp/my-movie-variable-layers.pngで6段/名前/選択/表示切替の描画を確認。実素材を使う手動GUI操作は未実施。
+- 変更: VisualLayerEditing.swift/VariableLayerTests.swift/v14.json新規、VisualTrack/各編集UI/TimelineHeights/各フレーム取得/MetalSceneRenderer/ProjectFile/ProjectMigrator/関連テスト、README/関連仕様/AGENTS/PROGRESS。
+- ビルド: 最終./scripts/build-app.sh成功（/tmp/my-movie-layers-build-app-final.log）。最新dist/MV Studio.appを生成。codesign --verify --deep --strict、git diff --check成功。
+- 次: 最新appを再起動し、タイムライン左上「＋レイヤー」と各段ヘッダーで利用する。今回の実行中処理・未解決障害なし。
+- 制限環境のMetal不可はmacOSサービス環境で解消。未解決の実装障害なし。既存未コミット変更を保持。
+
+# パーティクル画像の実装（完了）
+
+- 最終更新: 2026-11-19 JST。docs/PARTICLE_IMAGES.mdの実装をユーザー承認。
+- 要件: 4粒子演出の画像指定・回転/大きさ/色/合成・自動化、素材管理・保存・共通描画。未指定時は既存形状。
+- 現在: 共通ParticleAppearanceをノードに追加、16数値を自動化へ接続。4種の画像GPU描画・選択/読込/ドロップ/解除UI・素材使用/削除/置換・コピー・プレビュー/出力の画像取得を実装。
+- 保存: v13/対応v10〜13。v12→13で固定の標準外観を付与。画像未指定は標準へ正規化、ファイル欠損は参照を保持。
+- 整理: 粒子データ生成をParticleImageInstancesへ分離。画像用テクスチャ共有/専用2048px表現/出力時128MiB予算内固定、サムネイル同期を共通化。
+- 完了: ./scripts/build-app.sh成功（/tmp/my-movie-particle-build-app.log）、最新dist/MV Studio.app生成済み。codesign --verify --deep --strict、git diff --check成功。
+- 変更: ParticleAppearance.swift/ParticleAppearanceEditor.swift/ParticleImageInstances.swift新規、EffectChain/EffectAutomation/ImageAnimation/ImageEffects/MetalSceneRenderer/Scene.metal/VisualRenderLayer/VisualFrameProvider/PreviewFrameReuse/VisualTrack/VisualAssetLoader/VisualEditor/VisualAssetManager/ClipClipboard/PlacementEditor/ProjectFile/ProjectMigrator、ParticleImageTestsと関連テスト/fixture、README/関連仕様/AGENTS。
+- 次: 最新appを再起動し、4種の粒子演出の「粒子の見た目」で画像を選択する。実行中処理・未解決障害なし。手動GUIの実素材操作は未実施。既存未コミット変更を保持。
+- 検証: 整理前の関連28件成功（/tmp/my-movie-particle-integration.log）。4演出/元形状/上下/半透明/履歴/素材依存/欠損/出力固定/UI読込/別プロジェクトコピー/MP4比較/旧形式を確認。1080p3段×4発生源×200粒GPU最大12.75ms。最小対象Macの保証・ピークメモリ計測は未実施。
+- 最終検証: 全体234件・外部Spine1件スキップ・失敗0（/tmp/my-movie-particle-full.log）。整理後の関連35件も成功（/tmp/my-movie-particle-final.log）、欠損時キャッシュ・画像矩形比・回転位相・v12→13固定既定値も確認。最終性能はGPU最大14.23ms（同ログ）。git diff --check成功。
+- 環境: 制限環境のMetal不可、macOSサービスへアクセス可能な実行で成功。debug/releaseビルド成功。
+
+# 演出チェーンのドラッグ表示（完了）
+
+- 最終更新: 2026-11-19 09:14 JST。ユーザーがdocs/EFFECT_CHAIN_DRAG.mdの仕様で実装を承認。
+- 実装: EffectChainListで5ptの待機/実ドラッグ、元行30%/追従行85%の共通描画、枠/影、前面の黄色挿入線、閉じた手/操作不可カーソルを実装。描画はvisibleRectへクリップし、領域外では最後の仮順序を保持、最終mouseUp座標で確定。
+- 整理: 行描画と移動先計算・終了処理を共通化。長い名前は末尾省略。モデル更新/編集不可/ビュー取外しで取消し、待機クリックではプレビュー通知を出さない。ドラッグ中は右クリックメニューを開かない。
+- 検証: 新規4件とチェーン/カテゴリ/配置の関連19件成功（/tmp/my-movie-chain-drag-test2.log）。ライト/ダークの実描画で不透明度と取消後の復元を確認し、PNGも目視確認（/tmp/my-movie-chain-drag-light.png、dark.png）。初回はテストfixtureのactor指定漏れを修正。
+- 最終検証: 新規5件を含む関連23件が成功（/tmp/my-movie-chain-drag-final.log）。スクロール部分表示/領域外/メニュー抑制/待機取消と既存の履歴・配置・MP4も確認。git diff --check成功。README/docs/EFFECT_CHAIN/docs/EFFECT_CHAIN_DRAG/AGENTSを実装内容へ更新。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-chain-drag-build.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動し、演出ハンドルをドラッグして使用する。実マウスによる手動GUI操作は未実施。実AppKitイベント・描画・関連回帰は自動試験で確認。今回の実行中処理・未解決障害なし。既存のカテゴリ等の未コミット変更を保持。
+
+# 演出チェーンのドラッグ表示（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。要件: ドラッグ中の項目を薄く表示し、移動対象を見分けやすくする仕様の検討。実装依頼ではない。
+- 確認: EffectChainListは元行を通常表示したまま黄色の挿入線だけを描画し、押下直後からdrag状態を持つ。
+- 完了: docs/EFFECT_CHAIN_DRAG.mdに元行30%/追従行85%/5pt開始閾値/ポインター追従/領域外/取消/履歴/受入条件を提案として記録。docs/EFFECT_CHAIN.mdとAGENTS.mdから参照。
+- 整理・検証: 表示透明度と演出値、選択とドラッグ対象、待機と確定を区別。現行の仮プレビュー/1回確定/取消処理と照合し、git diff --check成功。文書のみのためテスト・アプリ再生成は対象外。
+- 次: ユーザーの意見を受けて仕様を確定する。実装未着手、今回の実行中処理なし。既存の未コミット変更を保持。
+
+# 演出カテゴリの実装（完了）
+
+- 最終更新: 2026-11-19 JST。ユーザーがdocs/EFFECT_CATEGORIES.mdの仕様で実装を承認。
+- 要件: 25種類を6カテゴリに分類、末尾/途中追加で共用、追加済み/無効状態を表示、チェーン順維持。
+- 確認: 演出チェーン実装済み（v12）。仕様のチェーン導入後ルールを適用し、直下段マスクは固定出力設定として分類から除外する。
+- 完了: EffectCategoryに25種類/6カテゴリとメニュー生成を集約。末尾/途中追加の再検証と詳細表示、追加済み/無効表示を実装。
+- 整理: 未表示の旧選択欄と専用処理を削除しチェーン選択へ統一。既存演出UIテストを階層メニュー探索へ更新。
+- 検証: 新規3件＋レイアウト/履歴関連3件成功（/tmp/my-movie-categories-test.log）。演出UI/Undo/自動保存/レイアウト関連24件成功（/tmp/my-movie-categories-related.log）。旧メニュー参照を前提にした試験は現在の表示メニューを確認する方式へ更新。
+- ビルド: 制限環境のdsymutilがOperation not permittedで失敗（/tmp/my-movie-categories-build.log）。通常権限の./scripts/build-app.sh成功（/tmp/my-movie-categories-build-access.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 最終検証: git diff --check成功。手動でのメニュー/VoiceOver操作は未実施。ネイティブNSMenuを使い、関連UI/モデル/履歴は自動試験で確認。
+- 次: 最新appを再起動し、追加メニューまたはチェーン行の「この後に追加」からカテゴリを選ぶ。今回の実行中処理・未解決障害なし。
+- 既存未コミット変更と別作業の進捗を保持。変更: EffectCategory.swift/EffectCategoryTests.swift新規、ImageEffectsEditor/EffectChainList、既存演出UI試験、README/docs/EFFECT_CATEGORIES/AGENTS/PROGRESS。
+
+# 可変タイムラインレイヤーの具体設計（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。
+- 要件: 必要に応じてタイムラインのレイヤーを増やせる方式の設計。方式はユーザー指定、詳細は提案、実装は対象外。
+- 調査: VisualTrack/VisualEditor/TimelineView/TimelineHeights/VisualFrameProvider/PreviewFrameReuse/MetalSceneRenderer/EditHistoryと既存検討資料を確認。
+- 方針: 安定IDと背面→前面の配列順を分離。操作・非表示/ロック・隣接マスク・非同期取得・保存移行を一体で定義する。
+- 完了: docs/VARIABLE_VISUAL_LAYERS.mdに操作・モデル・マスク・ロック・性能・履歴・移行・実装単位・受入条件を記録。比較資料とAGENTSの参照を更新。
+- 整理・検証: ID/順序の責務、入力・ロックの共通判定、空段を保持するマスク、非同期処理の再検証を整理。git diff --check成功。文書のみでapp再生成不要。
+- 次: 詳細案への意見を反映し、実装依頼後に現行保存形式と性能上限を再確認して着手する。コード未変更。
+- 既存未コミット変更を保持。今回の実行中処理・障害なし。
+
+# 多数画像のレイヤー方式の検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。
+- 要件: クリップ内サブレイヤーとタイムラインのレイヤー追加を比較。今回は設計のみ。
+- 確認: VisualTrackの固定3段検証、TimelineViewの固定行、TimelineHeightsのslot依存、演出チェーン・直下段マスク。
+- 方針: 可変レイヤーを先行し、まとめ編集は後段で検討。既存未コミット変更・別作業の記録を保持。
+- 完了: docs/VISUAL_LAYER_SCALING.mdへ比較・推奨仕様・移行・マスク・性能・受入条件を記録。AGENTS.mdに参照追記。
+- 整理・検証: 表示整理と合成グループを区別し、安定ID・マスク隣接規則・保存境界を確認。文書のみでコード変更・アプリ再生成はなし。
+- 次: ユーザーの意見を受けて仕様を確定する。実装未着手。
+- 今回の実行中処理なし。他作業のビルド状態は未確認。
+
+# 演出チェーンの実装（完了）
+
+- 最終更新: 2026-11-19 08:59 JST。ユーザーがdocs/EFFECT_CHAIN.mdで実装を承認。
+- 完了: 順序付きノードが設定・安定ID・キー・同期・範囲を所有。UIは縦一覧/上下ドラッグ/挿入線/上下移動・途中追加・削除メニュー/有効切替/全体バイパス。自クリップと直下段のマスクを分離し同時使用可能。
+- 描画: 素材取得・基本変形→生成/加工ノードの直列評価→最終不透明度→段間マスク/合成。後段加工は前段粒子・発光も対象。alpha0の加算光を色補正/2値化/高輝度抽出で保持。余白付き2面と発光scratchを再利用し、静的チェーンをキャッシュする。
+- 保存: v12、対応v9〜12。v11→12で決定的ID/固定順からのチェーン生成・自動化移動・mask分離。読込時に外観変更を説明し原本バックアップを共有。コピーはノード/キーIDを更新、トリムで時計を保持。ノードID＋パラメーターで演出レーン高を保存。
+- 整理: 固定順レンダラー・未使用scratch・旧zoomLoopImage・mask.target/対象切替UIを削除。種類別設定はノードへの投影API、基本変形と演出の自動化操作は既存共通APIへ集約。README/関連設計/AGENTSを更新。
+- 検証: 全218件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-chain-full2.log）。最終表示調整後の関連20件も成功（/tmp/my-movie-chain-final.log）。新規10件で順序差、全種類の後段加工、光の保持、マスク、移行、ドラッグ取消、Undo/バイパス、ノード高さ、MP4の実フレーム一致を確認。
+- 性能: 3段の放射光線1800フレームでGPU p95 24.18ms、最大28.41ms。3段マスク/粒子でGPU最大13.60ms（同ログ）。最小対象Macや全演出最大値併用時の負荷保証・ピークメモリ計測は未実施。
+- 目視: /tmp/my-movie-mask-inspector.pngでチェーン一覧とマスク詳細を確認。暗色時の行メニュー色を調整。実素材を用いた手動GUI操作は未実施。
+- ビルド: ./scripts/build-app.sh成功。最終表示調整後の最新dist/MV Studio.appを生成済み（/tmp/my-movie-chain-build-final.log）。codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動し、「追加演出」の一覧で順序を調整する。実行中処理・未解決障害なし。既存未コミット作業を保持。
+
+# 演出カテゴリの仕様検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。要件: 長くなった演出項目をカテゴリごとに選択しやすくする仕様を検討する。今回は設計のみ。
+- 調査: ImageEffectsEditorの25種類・追加メニュー・追加済み選択、docs/EFFECT_CHAIN.mdの提案を確認。
+- 方針: 追加メニューを1段のカテゴリへ分類し、追加済み選択は直接アクセスを維持。分類と描画順を分離する。
+- 完了: docs/EFFECT_CATEGORIES.mdへ25種類/6カテゴリ、追加済み選択、重複防止、チェーンとの関係、状態保持と受入条件を記録。AGENTS.mdへ参照追記。
+- 整理・検証: 全25種類の所属を照合、分類と適用順を分離、入れ子メニューの状態更新の注意点を記録。文書のみでテスト・app再生成は対象外。git diff --check成功。
+- 次: ユーザーの意見を受けて仕様を確定する。未実装。既存の未コミット変更と別作業の進捗を保持。
+- 今回の実行中処理・障害なし。
+
+# 2値化演出の実装（完了）
+
+- 最終更新: 2026-11-19 JST。ユーザーがdocs/BINARIZATION.mdの仕様で実装を承認。
+- 要件: 2色・しきい値・適用率、透明度保持、色交換、キー/音楽同期、保存/Undo、プレビュー/出力を共通経路で実装。
+- 現在: モデル・UI・共通GPU処理・キャッシュ/放射ブラー経路を実装済み。既存未コミット変更を保持。
+- 検証: 制限環境はMetal取得/Core Image描画不可。macOSサービスへアクセス可能な環境でUI・保存/自動化・合成は成功。しきい値等号の原色判定でsRGB変換の浮動小数点誤差を検出し、端点の厳密保持を追加。MP4試験も追加。
+- 完了: 関連5件成功（/tmp/my-movie-binarization-test-final.log）。原色等号/0/100%・半透明/透明・色交換/混合・自動化/音楽同期・キャッシュ・放射ブラー・MP4を確認。
+- 整理: フィルター要否を共通判定へ集約し、数値範囲/初期値は既存Effect定義からUIへ供給。削除/Undo/プロジェクト保存の結合試験を追加。
+- 検証: 最終全体208件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-binarization-full.log）。新規6件は削除/Undo/保存復元を含め成功。
+- 変更: BinarizationRenderer.swift/BinarizationTests.swift新規、ImageEffects/ImageAnimation/EffectAutomation/ImageEffectsEditor/MetalSceneRenderer、README/docs/BINARIZATION/docs/IMAGE_EFFECTS/AGENTS/PROGRESS。
+- ビルド: 権限のある環境の `./scripts/build-app.sh` 成功（/tmp/my-movie-binarization-build-access.log）。最新dist/MV Studio.app生成、codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動し、画像・演出→追加演出→2値化を追加する。実素材の手動GUI操作は未実施。
+- 環境: 制限環境はdsymutilのOperation not permittedで失敗（/tmp/my-movie-binarization-build.log）。権限のある環境の再実行で解消。
+- 実行中処理・未解決障害なし。既存のXYハンドル/プロジェクト移行と他仕様検討の変更を保持。
+
+# 演出チェーンの仕様検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。要件: 演出を適用する順番を制御する仕様を考える。実装は依頼されていない。
+- 完了: docs/EFFECT_CHAIN.mdへ直列評価・UI・作用範囲・マスク分離・ノード単位自動化・保存移行・GPU制約・受入条件を記録。AGENTS.mdへ参照追記。
+- 調査: MetalSceneRenderer.process/drawClip/段合成、ImageEffectsEditor、既存演出・2値化仕様案を照合。
+- 整理: 素材加工と生成を統一、ブルーム/グレアは順次入力、シェイクと自クリップマスクは前段全体へ適用。基本変形・最終不透明度・直下段マスクは固定工程。加算光のalpha=0と後段加工の契約を実装時の必須事項に明記。
+- 検証: 文書の整合性とgit diff --checkを確認。文書のみのためテスト・アプリ再生成は対象外。既存の未コミット実装を保持。
+- 次: ユーザーの意見を受けて仕様を確定する。実装未着手、実行中処理なし。
+
+# 2値化演出の仕様検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。
+- 要件: 追加演出「2値化」の仕様を検討する。実装は依頼されていない。
+- 現在: 既存の追加演出、共通オートメーション、MetalSceneRendererの素材加工と合成経路を確認済み。
+- 方針: 2色の輝度しきい値処理、透明度保持、しきい値/適用率の自動化を提案する。
+- 完了: docs/BINARIZATION.mdへ対象・設定・色空間・透明度・処理順・自動化・保存・受入条件を記録。AGENTS.mdへ参照を追記。
+- 整理・検証: 厳密な2色と適用率/後段効果の関係、しきい値端点、移行作業との独立性を整理。文書のみのためテスト・アプリ再生成は対象外。
+- 次: ユーザーの意見を受けて仕様を確定する。実装は未着手。
+- 既存のプロジェクト移行等の未コミット作業を保持。今回の実行中処理なし。
+
+# プロジェクト形式の3世代移行（完了）
+
+- 最終更新: 2026-11-19 JST。docs/PROJECT_MIGRATION.mdの実装依頼。
+- 要件・実装: v11保存・v8〜11段階読込。固定既定値、未知項目/範囲外番号の拒否、元Dataのバックアップ、外部更新検出、atomic保存。音声/曲長検証と移行保存後に編集状態を切り替える。
+- 整理: ProjectStorageを専用ファイルへ分離。ProjectMigratorへ旧構造変換/既定値/未知項目検査を集約。Appの重複モデル引数とupgradeVersionを除去。
+- 変更: ProjectMigrator.swift/ProjectStorage.swift新規、ProjectFile.swift/App.swift/Package.swift/ShapeTests.swift、ProjectMigrationTests.swiftとv8〜11固定fixture新規、README・関連設計書・AGENTS・PROGRESS。
+- 検証: 全体202件、外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-migration-full.log）。最終移行8件成功（/tmp/my-movie-migration-final.log）。起動/明示読込、失敗時の元ファイル・旧編集状態保持、バックアップ一致、保存順序、評価値、既定値を確認。git diff --check成功。
+- 環境: 制限環境ではNSFileCoordinatorがCocoa 512で失敗。macOSサービスへアクセスできる環境で成功。
+- 制約: 保存契約を特定できない開発途中の同一v10のwidth/height型放射光線は理由を示して拒否。fixtureは型履歴に基づく合成データで、ユーザー実ファイルの手動移行は未検証。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-migration-build.log）。最新dist/MV Studio.appを生成。codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動して利用する。今回の実行中処理・未解決障害なし。既存・他作業の未コミット変更は保持。
+
+# プロジェクト形式の3世代移行の検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。
+- 要件: バージョン番号を持ち、3世代前まで変換して読み込む仕様の検討。今回は設計のみ。
+- 調査: ProjectFileはcurrentVersion=10で一致のみ受入。ProjectStorageはdecode後にvalidate、Appは音声解析・区間検証後に自動保存する。v10内にも保存構造の変更があるため、番号だけで過去構造を特定できない。
+- 完了: docs/PROJECT_MIGRATION.mdに現行＋過去3世代、隣接変換、v10内構造差、バックアップと自動保存、失敗時処理、受入条件を提案として記録。AGENTS.mdへ参照追記。
+- 整理・検証: 現行実装の読込/検証/保存順序と照合し、提案と現仕様を区別。文書のみでテスト・app再生成は対象外。git diff --checkで確認。
+- 次: 仕様採用後、Git履歴と旧JSONを照合しv8/v9/v10の変換可能性を確認する。実装・移行実証は未実施。
+- 既存のXYプレビューハンドル実装中の変更を保持。今回の実行中処理なし。
+
+# XYプレビューハンドルの実装（完了）
+
+- 最終更新: 2026-11-19 JST。ユーザーがdocs/PREVIEW_HANDLES.mdの仕様で実装を承認。
+- 要件: 座標欄クリックで1組のハンドル、XYドラッグ/Shift軸制限/取消/Undo1回、各座標系・自動化・歌詞・スペクトラムへ対応。
+- 現在: 共通オーバーレイ・13組の座標ペア、各編集器の仮編集/確定、表示とキー操作を実装済み。整理と回帰検証中。
+- 検証: 新規5件成功（/tmp/my-movie-handles-test.log）。追加の欄/ラベル/フォーカス/ESC操作を検証する。初回はキャッシュ権限エラー、/tmpへモジュールキャッシュ指定で解消。
+- 整理: 座標変換/ペア/評価後位置を共通型へ集約、ハンドル外はヒットテストを通過、基準位置の小数保持、履歴とキャンセルの責務を整理。
+- 検証: 関連16件成功（/tmp/my-movie-handles-related.log）。AppKit画像 /tmp/my-movie-preview-handle.png を目視確認。全体試験は制限環境のメディア/Core Imageアクセスで多数失敗しており、アクセス可能な環境で再検証する。
+- 検証: アクセス可能な環境の全194件は外部Spineサンプル1件スキップ、失敗0（/tmp/my-movie-handles-full-access.log）。最終整理後の関連16件も成功（/tmp/my-movie-handles-final.log）。余白補正・入力/ハンドルのEsc順序・Undo1回・数値の小数保持も確認。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-handles-build.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strictとgit diff --check成功。
+- 変更: PreviewHandle.swift/PreviewPositionPair.swift/PreviewHandleTests.swift新規、App/StudioWindow/PreviewView/各数値編集器、README/docs/PREVIEW_HANDLES/AGENTS/PROGRESS。既存docs/PROJECT_MIGRATION.mdは変更しない。
+- 次: 最新appを再起動し、位置X/Yをクリックしてプレビューのハンドルを操作する。実素材での手動GUI操作は未実施。AppKitイベント/描画・モデル・履歴・全体出力回帰は自動試験で確認。
+- 実行中処理・障害なし。
+
+# XYプレビューハンドルの仕様検討（提案作成済み）
+
+- 最終更新: 2026-11-19 JST。
+- 要件: 画像や演出の位置X/Yをプレビュー上のハンドルで操作する。該当数値欄のクリックを表示契機とする案を検討する。
+- 現在: PreviewView、DragValueField、ImageParameter、描画座標を確認。設計のみでコード実装は行わない。
+- 方針: 座標ペアを明示登録し、対象を1組保持。既存の基準値編集と共通化する。
+- 完了: docs/PREVIEW_HANDLES.mdへ提案を記録。表示解除・自動化・履歴・異なる座標系を整理。AGENTS.mdへ参照追記。
+- 検証: 設計を既存数値操作/描画と照合。文書のみのためビルド不要。git diff --checkで空白検証。
+- 次: ユーザーの意見を受けて仕様を確定し、その後に実装する。コードは未変更。
+- 実行中処理・障害なし。
+
 # 放射光線の回転方向のばらつき（完了）
 
 - 最終更新: 2026-11-19 JST。要件: 光線の向きが回転するようなばらつきを発生させる。

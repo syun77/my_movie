@@ -1,7 +1,8 @@
 import Foundation
 
 struct ProjectFile: Codable {
-    static let currentVersion = 10
+    static let currentVersion = 15
+    static let oldestSupportedVersion = currentVersion - 3
 
     private(set) var version: Int
     let audio: AssetReference
@@ -22,8 +23,6 @@ struct ProjectFile: Codable {
         self.timelineHeights = timelineHeights
     }
 
-    mutating func upgradeVersion() { version = Self.currentVersion }
-
     func validate() throws {
         guard version == Self.currentVersion else { throw StudioError.message("このプロジェクトの形式には対応していません。") }
         try lyrics.validate()
@@ -31,7 +30,8 @@ struct ProjectFile: Codable {
         let imageClips = visuals.clips
         let keyIDs = imageClips.flatMap { clip in clip.curves.flatMap { $0.keys.map(\.id) } }
         let spineIDs = imageClips.flatMap { $0.content.spinePlayback?.keyIDs ?? [] }
-        let ids = spineIDs + visualAssets.map(\.id) + visualLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
+        let nodeIDs = imageClips.flatMap { $0.effects?.allNodes.map(\.id) ?? [] }
+        let ids = nodeIDs + spineIDs + visualAssets.map(\.id) + visualLayers.map(\.id) + imageClips.map(\.id) + keyIDs + lyrics.clips.map(\.id)
         guard Set(ids).count == ids.count else { throw StudioError.message("プロジェクト内のIDが重複しています。") }
         guard settings.bpm.isFinite, (20...300).contains(settings.bpm),
               settings.beatOffset.isFinite, settings.beatOffset >= 0, settings.spectrumStyle.isValid,
@@ -53,37 +53,4 @@ struct AssetReference: Codable, Sendable, Equatable {
     func resolve(projectURL: URL) -> URL {
         relative ? projectURL.deletingLastPathComponent().appendingPathComponent(path) : URL(fileURLWithPath: path)
     }
-}
-
-struct ProjectStorage {
-    private let defaults: UserDefaults
-    private let lastProjectKey = "lastProjectURL"
-
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
-
-    var lastProjectURL: URL? {
-        defaults.string(forKey: lastProjectKey).map { URL(fileURLWithPath: $0) }
-    }
-
-    static func projectURL(for audioURL: URL) -> URL {
-        audioURL.appendingPathExtension("mvproject")
-    }
-
-    func read(from url: URL) throws -> ProjectFile {
-        let project = try JSONDecoder().decode(ProjectFile.self, from: Data(contentsOf: url))
-        try project.validate()
-        return project
-    }
-
-    func save(_ project: ProjectFile, to url: URL) throws {
-        try project.validate()
-        var updated = project
-        updated.upgradeVersion()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(updated).write(to: url, options: .atomic)
-        remember(url)
-    }
-
-    private func remember(_ url: URL) { defaults.set(url.path, forKey: lastProjectKey) }
 }

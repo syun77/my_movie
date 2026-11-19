@@ -1,0 +1,312 @@
+{
+  "version": 15,
+  "audio": {
+    "path": "song.wav",
+    "relative": true
+  },
+  "visualAssets": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "reference": {
+        "path": "image.png",
+        "relative": true
+      },
+      "kind": {
+        "still": {}
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "reference": {
+        "path": "video.mov",
+        "relative": true
+      },
+      "kind": {
+        "video": {
+          "duration": 20
+        }
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "reference": {
+        "path": "model.json",
+        "relative": true
+      },
+      "kind": {
+        "spine": {
+          "_0": {
+            "atlasReference": {
+              "path": "model.atlas",
+              "relative": true
+            },
+            "exportVersion": "4.3.26",
+            "referenceBounds": {
+              "x": -100,
+              "y": -200,
+              "width": 200,
+              "height": 400
+            },
+            "animations": [
+              {
+                "name": "idle",
+                "duration": 2
+              },
+              {
+                "name": "walk",
+                "duration": 1
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "visualLayers": [
+    {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "clips": [
+        {
+          "id": "00000000-0000-0000-0000-00000000000B",
+          "assetID": "00000000-0000-0000-0000-000000000001",
+          "start": 0,
+          "end": 3,
+          "content": {
+            "still": {}
+          },
+          "audioModulations": [
+            "scale",
+            {
+              "enabled": true,
+              "source": "beat",
+              "blend": "relative",
+              "amount": 20,
+              "releaseSeconds": 0.3,
+              "beatNoteDenominator": 4,
+              "transientBand": {
+                "kind": "all",
+                "lowerHz": 40,
+                "upperHz": 180
+              }
+            }
+          ],
+          "automationRanges": [],
+          "fixedValues": [
+            "x",
+            120,
+            "rotation",
+            45
+          ],
+          "curves": [
+            {
+              "parameter": "rotation",
+              "minimum": -180,
+              "maximum": 360,
+              "keys": [
+                {
+                  "id": "00000000-0000-0000-0000-000000000015",
+                  "time": -1,
+                  "value": 0,
+                  "midpointOffset": 12
+                },
+                {
+                  "id": "00000000-0000-0000-0000-000000000016",
+                  "time": 2,
+                  "value": 180,
+                  "interpolation": "smooth"
+                }
+              ]
+            }
+          ],
+          "effectChain": {
+            "nodes": [
+              {
+                "id": "8EF043D2-8914-37CB-0FCE-F2E14AFE7815",
+                "payload": {
+                  "colorCorrection": {
+                    "_0": {
+                      "isEnabled": true,
+                      "hue": 10,
+                      "brightness": 0,
+                      "saturation": 100
+                    }
+                  }
+                },
+                "curves": [],
+                "audioModulations": [],
+                "automationRanges": []
+              },
+              {
+                "id": "C6BD0CB3-85CA-306F-67BB-6FE384DA9509",
+                "payload": {
+                  "blur": {
+                    "_0": {
+                      "isEnabled": true,
+                      "radius": 8
+                    }
+                  }
+                },
+                "curves": [],
+                "audioModulations": [],
+                "automationRanges": []
+              },
+              {
+                "id": "A1BCDE00-1234-5678-9ABC-000000000015",
+                "payload": {
+                  "sobelChromatic": {
+                    "_0": {
+                      "isEnabled": true,
+                      "mode": "combined",
+                      "amount": 75,
+                      "edgeStrength": 120,
+                      "edgeWidth": 2,
+                      "edgeColor": {
+                        "red": 0.2,
+                        "green": 0.85,
+                        "blue": 1
+                      },
+                      "chromaticAmount": 32,
+                      "speed": 100,
+                      "phaseOffset": 0.25
+                    }
+                  }
+                },
+                "curves": [],
+                "audioModulations": [],
+                "automationRanges": []
+              }
+            ],
+            "isBypassed": false
+          }
+        }
+      ],
+      "name": "レイヤー 1",
+      "isVisible": true,
+      "isLocked": false
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000005",
+      "clips": [
+        {
+          "id": "00000000-0000-0000-0000-00000000000C",
+          "assetID": "00000000-0000-0000-0000-000000000002",
+          "start": 0,
+          "end": 3,
+          "content": {
+            "video": {
+              "sourceIn": 2,
+              "speed": 2
+            }
+          },
+          "audioModulations": [],
+          "automationRanges": [],
+          "fixedValues": [],
+          "curves": []
+        }
+      ],
+      "name": "レイヤー 2",
+      "isVisible": true,
+      "isLocked": false
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000006",
+      "clips": [
+        {
+          "id": "00000000-0000-0000-0000-00000000000D",
+          "assetID": "00000000-0000-0000-0000-000000000003",
+          "start": 0,
+          "end": 3,
+          "content": {
+            "spine": {
+              "_0": {
+                "sourceIn": 1.25,
+                "loop": false,
+                "mode": {
+                  "single": {
+                    "_0": "idle"
+                  }
+                }
+              }
+            }
+          },
+          "audioModulations": [],
+          "automationRanges": [],
+          "fixedValues": [],
+          "curves": []
+        }
+      ],
+      "name": "レイヤー 3",
+      "isVisible": true,
+      "isLocked": false
+    }
+  ],
+  "settings": {
+    "bpm": 143,
+    "beatOffset": 0.75,
+    "spectrum": true,
+    "spectrumStyle": {
+      "shape": "line",
+      "color": {
+        "red": 1,
+        "green": 0.2,
+        "blue": 0.1
+      },
+      "resolution": 16,
+      "layout": {
+        "x": 10,
+        "y": 20,
+        "width": 800,
+        "height": 200,
+        "barGap": 0
+      }
+    }
+  },
+  "lyrics": {
+    "clips": [
+      {
+        "id": "00000000-0000-0000-0000-00000000001F",
+        "start": 0,
+        "end": 2,
+        "text": "歌詞"
+      },
+      {
+        "id": "00000000-0000-0000-0000-000000000020",
+        "start": 2,
+        "end": 3,
+        "text": "続き",
+        "predecessorID": "00000000-0000-0000-0000-00000000001F"
+      }
+    ],
+    "outlineWidth": 3,
+    "outlineColor": {
+      "red": 0,
+      "green": 0,
+      "blue": 0
+    },
+    "typography": {
+      "fontName": "HiraginoSans-W6",
+      "fontSize": 54,
+      "x": 960,
+      "y": 540
+    }
+  },
+  "timelineHeights": {
+    "viewport": 380,
+    "lyrics": 24,
+    "visuals": [
+      "00000000-0000-0000-0000-000000000004",
+      30
+    ],
+    "automation": [
+      "00000000-0000-0000-0000-000000000004",
+      [
+        "rotation",
+        40
+      ]
+    ],
+    "spine": [
+      "00000000-0000-0000-0000-000000000006",
+      100
+    ]
+  }
+}

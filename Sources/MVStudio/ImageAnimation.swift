@@ -1,8 +1,10 @@
 import Foundation
 
 enum ImageParameter: String, CaseIterable, Codable, Sendable {
+    case particlesImageSize, particlesImageAngle, particlesImageSpread, particlesImageSpin, embersImageSize, embersImageAngle, embersImageSpread, embersImageSpin, snowImageSize, snowImageAngle, snowImageSpread, snowImageSpin, orbsImageSize, orbsImageAngle, orbsImageSpread, orbsImageSpin
     case shapeWidth, shapeHeight, shapeX, shapeY, shapeRotation, shapeInnerRatio, shapeOpacity
     case maskWidth, maskHeight, maskX, maskY, maskRotation, maskInnerRatio, maskFeather, maskStrength
+    case belowMaskWidth, belowMaskHeight, belowMaskX, belowMaskY, belowMaskRotation, belowMaskInnerRatio, belowMaskFeather, belowMaskStrength
     case x, y, scale, rotation, opacity
     case flareX, flareY, flareSize, flareIntensity
     case glareThreshold, glareIntensity, glareLength, glareWidth, glareAngle
@@ -12,7 +14,9 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
     case snowCount, snowDiameter, snowFallSpeed, snowWind, snowOpacity
     case vignetteStrength, vignetteSize, vignetteSoftness
+    case sobelAmount, sobelStrength, sobelWidth, sobelChromaticAmount, sobelSpeed
     case chromaticAmount, chromaticAngle
+    case binarizationThreshold, binarizationAmount
     case colorHue, colorBrightness, colorSaturation
     case shakeX, shakeY, shakeStrength
     case radialSpeed, radialZoom, radialBrightness, radialOpacity
@@ -234,6 +238,7 @@ extension VisualClip {
         effects?.octgrams?.phaseOffset += delta
         effects?.warpFlight?.phaseOffset += delta
         effects?.radialFocus?.phaseOffset += delta
+        effects?.sobelChromatic?.phaseOffset += delta
         effects?.chromaticAberration?.phaseOffset += delta
         effects?.shake?.phaseOffset += delta
         start = time
@@ -288,7 +293,7 @@ extension VisualClip {
     }
 
     func validateAnimation(ids: inout Set<UUID>) throws {
-        guard audioModulations.allSatisfy({ $0.value.isValid(for: $0.key) && ($0.key.effect == nil || $0.key.effect?.read(effects ?? ImageEffects()) != nil) }),
+        guard hasValidAutomationStorage, audioModulations.allSatisfy({ $0.value.isValid(for: $0.key) && ($0.key.effect == nil || $0.key.effect?.read(effects ?? ImageEffects()) != nil) }),
               automationRanges.allSatisfy({ $0.key.accepts($0.value.lower) && $0.key.accepts($0.value.upper) && $0.value.lower < $0.value.upper && audioModulations[$0.key] != nil && curve($0.key) == nil }),
               fixedValues.allSatisfy({ $0.key.accepts($0.value) }),
               Set(curves.map(\.parameter)).count == curves.count else {

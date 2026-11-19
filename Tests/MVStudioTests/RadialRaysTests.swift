@@ -118,7 +118,7 @@ final class RadialRaysTests: XCTestCase {
         synced.audioModulations[.raysOpacity] = AudioModulation(source: .beat, amount: 100)
         XCTAssertEqual(synced.evaluatedEffects(at: 0)?.radialRays?.opacity, 100)
         XCTAssertEqual(synced.evaluatedEffects(at: 0.3)?.radialRays?.opacity, 0)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).radialRays)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).radialRays)
     }
 
     func testAdditiveCoreGlowScaleAndMask() throws {
@@ -144,7 +144,7 @@ final class RadialRaysTests: XCTestCase {
         try canvas.draw([(clip, 1)])
         XCTAssertGreaterThan(canvas.pixel(960, 540)[2], 245)
         var upper = canvas.clip; upper.id = UUID()
-        upper.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below))
+        upper.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)))
         try canvas.draw([(clip, 1), (upper, 2)])
         XCTAssertEqual(canvas.pixel(1200, 540), background)
         for disabled in [0, 1, 2, 3] {
@@ -188,9 +188,9 @@ final class RadialRaysTests: XCTestCase {
         load(); editor.onCommit = { clip.effects = $0; load() }
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let add = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "放射光線"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "放射光線"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
-        XCTAssertNotNil(clip.effects?.radialRays); XCTAssertFalse(item.isEnabled)
+        XCTAssertNotNil(clip.effects?.radialRays); XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         let fields = all(editor).compactMap { $0 as? DragValueField }
         for parameter in ImageEffects.RadialRays.parameters {
             let field = try XCTUnwrap(fields.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
@@ -251,7 +251,7 @@ final class RadialRaysTests: XCTestCase {
         clip.audioModulations[.raysIntensity] = AudioModulation(source: .beat, amount: 10)
         var track = VisualTrack(); track.layers[0].clips = [clip]
         editor.load(track, projectURL: nil)
-        timeline.onImageSelect?(clip.id, 1)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[0].id)
         let history = EditHistory()
         let original = EditSnapshot(visuals: track)
         history.reset(original)

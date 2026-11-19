@@ -55,7 +55,7 @@ final class StraightLinesTests: XCTestCase {
         synced.audioModulations[.straightOpacity] = AudioModulation(source: .beat, amount: 100)
         XCTAssertEqual(synced.evaluatedEffects(at: 0)?.straightLines?.opacity, 100)
         XCTAssertEqual(synced.evaluatedEffects(at: 0.3)?.straightLines?.opacity, 0)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).straightLines)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).straightLines)
     }
 
     func testVariationPreservesColorAndRevealsBackground() throws {
@@ -109,7 +109,7 @@ final class StraightLinesTests: XCTestCase {
         XCTAssertEqual(canvas.pixel(x, y)[0], background)
         clip.fixedValues[.opacity] = 100
         var owner = canvas.clip; owner.id = UUID()
-        owner.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below))
+        owner.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)))
         try canvas.draw([(clip, 1), (owner, 2)])
         XCTAssertEqual(canvas.pixel(x, y)[0], background)
         clip.effects = ImageEffects(straightLines: .init(seed: 42))
@@ -131,10 +131,10 @@ final class StraightLinesTests: XCTestCase {
         editor.onCommit = { clip.effects = $0; load() }
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let add = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "直線効果線"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "直線効果線"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.straightLines)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         let fields = all(editor).compactMap { $0 as? DragValueField }
         for parameter in ImageEffects.StraightLines.parameters {
             let field = try XCTUnwrap(fields.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
@@ -181,7 +181,7 @@ final class StraightLinesTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.03))
         XCTAssertEqual(clip.effects?.straightLines?.color, RGBColor(red: 1, green: 0, blue: 0))
         color.deactivate(); NSColorPanel.shared.orderOut(nil)
-        let shuffle = try XCTUnwrap(all(editor).compactMap { $0 as? NSButton }.first { $0.title == "配置を変更" })
+        let shuffle = try XCTUnwrap(all(editor).compactMap { $0 as? NSButton }.first { $0.identifier?.rawValue == "visuals.effects.straightShuffle" })
         let seed = clip.effects?.straightLines?.seed
         XCTAssertTrue(shuffle.sendAction(shuffle.action, to: shuffle.target))
         XCTAssertNotEqual(clip.effects?.straightLines?.seed, seed)

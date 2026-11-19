@@ -5,10 +5,8 @@ final class TimelineView: NSView {
     var visualMode = false { didSet { hoverPoint = nil; cancelDrag(); updateGraphLayout(); setAccessibilityLabel(visualMode ? "画像タイムライン" : "歌詞タイムライン"); needsDisplay = true } }
     var visuals = VisualTrack() {
         didSet {
-            layerParameters = Dictionary(uniqueKeysWithValues: visuals.layers.map { layer in
-                let used = Set(layer.clips.flatMap { $0.automationParameters })
-                return (layer.slot, ImageParameter.allCases.filter { used.contains($0) })
-            })
+            if visuals.layer(selectedLayerID) == nil, let id = visuals.layers.first?.id { selectedLayerID = id }
+            rebuildLayerParameters()
             updateGraphLayout()
         }
     }
@@ -19,11 +17,12 @@ final class TimelineView: NSView {
     var selectedImageID: UUID? {
         didSet {
             if oldValue != selectedImageID { selectGraph(nil); spineLane.clearSelection() }
+            rebuildLayerParameters()
             updateGraphLayout()
         }
     }
-    private(set) var expandedLayerSlots: Set<Int> = []
-    private var layerParameters: [Int: [ImageParameter]] = [:]
+    private(set) var expandedLayerIDs: Set<UUID> = []
+    private var layerParameters: [UUID: [ImageParameter]] = [:]
     private(set) var selectedParameter: ImageParameter?
     private(set) var selectedKeyID: UUID?
     var onGraphSelection: (() -> Void)?
@@ -45,6 +44,10 @@ final class TimelineView: NSView {
     }
     private let rowsTop = 48.0
     private var rowResize: RowResize?
+    private struct LayoutRow { let row: TimelineHeights.Row; let top: Double; let height: Double }
+    private var layoutRows: [LayoutRow] = []
+    private var layerOffsets: [UUID: Double] = [:]
+    private var layoutHeight = 0.0
 
     private struct RowResize {
         let row: TimelineHeights.Row
@@ -93,15 +96,15 @@ final class TimelineView: NSView {
             return rect.maxY - fraction * rect.height
         }
     }
-    var selectedSlot = 1 { didSet { needsDisplay = true } }
-    var onImageSelect: ((UUID?, Int) -> Void)?
+    var selectedLayerID = UUID() { didSet { needsDisplay = true } }
+    var onImageSelect: ((UUID?, UUID) -> Void)?
     var onImagePreview: ((VisualTrack) -> Void)?
     var onImageCommit: ((VisualTrack, UUID) -> Void)?
-    var onCreateEmptyClip: ((Int, Double) -> Void)?
-    var onDropImage: ((URL, Int, Double) -> Void)?
+    var onCreateEmptyClip: ((UUID, Double) -> Void)?
+    var onDropImage: ((URL, UUID, Double) -> Void)?
     private var imageDrag: ImageDrag?
     private var dropGeometry: TimelineGeometry?
-    private var dropCandidate: (slot: Int, start: Double, end: Double)?
+    private var dropCandidate: (layerID: UUID, start: Double, end: Double)?
     private struct ImageDrag {
         let original: VisualTrack
         let geometry: TimelineGeometry
@@ -110,7 +113,7 @@ final class TimelineView: NSView {
         let initialX: Double
         var draft: VisualTrack
         var hasDragged = false
-        var targetSlot: Int?
+        var targetLayerID: UUID?
         var error: String?
     }
     var snapGrid = TimelineSnapGrid() { didSet { cancelDrag(); needsDisplay = true } }
@@ -158,7 +161,7 @@ final class TimelineView: NSView {
 
     func followPlayhead() { manualOrigin = nil }
 
-    static let gutter = 78.0
+    static let gutter = 220.0
     private var clipY: Double { 39 - lyricScroll }
     private var clipHeight: Double { rowHeight(.lyrics) }
     private var lyricBoundaryY: Double { clipY + clipHeight + 4 }
@@ -179,7 +182,7 @@ final class TimelineView: NSView {
     }
 
     var canEditClips: Bool {
-        isEnabled && rowResize == nil && frozenGeometry == nil && automationPreview == nil
+        isEnabled && layerDrag == nil && rowResize == nil && frozenGeometry == nil && automationPreview == nil
     }
 
     override init(frame frameRect: NSRect) {
@@ -198,6 +201,7 @@ final class TimelineView: NSView {
         identifier = NSUserInterfaceItemIdentifier("placement.timeline")
         toolTip = "Shift＋ホイールで横スクロール、⌘＋ホイールで拡大・縮小、Option＋ホイールで再生位置を移動。本体を左右で時刻移動、画像本体を上下でレイヤー移動。左右端で開始・終了を調整。行の下の境界線で高さを調整。空白や目盛りでシーク。Escで取り消し。"
         defaultToolTip = toolTip
+        updateRowLayout()
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("歌詞タイムライン")
@@ -206,9 +210,13 @@ final class TimelineView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.12, alpha: 1).setFill(); bounds.fill()
-        if visualMode { drawImages() }
+        if visualMode {
+            drawImages()
+            label("＋ レイヤー", rect: addLayerRect, color: isEnabled ? .white : .gray, size: 11)
+        }
         else { drawLyrics() }
         drawRowBoundaries()
+        drawLayerDragPresentation()
     }
 
     private func drawLyrics() {
@@ -322,10 +330,10 @@ final class TimelineView: NSView {
         return nil
     }
 
-    private func imageHit(at point: NSPoint, slot: Int) -> ClipHit? {
-        guard graphViewport.contains(point), let layer = visuals.layers.first(where: { $0.slot == slot }) else { return nil }
+    private func imageHit(at point: NSPoint, layerID: UUID) -> ClipHit? {
+        guard graphViewport.contains(point), let layer = visuals.layers.first(where: { $0.id == layerID }) else { return nil }
         for clip in layer.clips {
-            if let hit = clipHit(id: clip.id, at: point, rect: imageRect(clip, slot: slot), viewport: graphViewport) {
+            if let hit = clipHit(id: clip.id, at: point, rect: imageRect(clip, layerID: layerID), viewport: graphViewport) {
                 return hit
             }
         }
@@ -343,7 +351,13 @@ final class TimelineView: NSView {
     override func mouseMoved(with event: NSEvent) {
         hoverPoint = convert(event.locationInWindow, from: nil)
         spineLane.mouseMoved(hoverPoint)
-        toolTip = hoverPoint.flatMap { spineLane.tooltip(at: $0) } ?? defaultToolTip
+        toolTip = hoverPoint.flatMap { point in
+            if point.x < Self.gutter, let id = layerID(at: point), let layer = visuals.layer(id) {
+                let target = visuals.layers.firstIndex(where: { $0.id == id }).flatMap { $0 > 0 ? visuals.layers[$0 - 1].name : nil } ?? "なし"
+                return layer.name + " / 直下段マスク対象: " + target
+            }
+            return spineLane.tooltip(at: point)
+        } ?? defaultToolTip
         needsDisplay = true
     }
 
@@ -358,6 +372,7 @@ final class TimelineView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if visualMode, canEditClips, layerHeaderDown(event, point: point) { return }
         if frozenGeometry == nil, automationPreview == nil, let boundary = rowBoundary(at: point),
            window?.makeFirstResponder(self) != false {
             let height = rowHeight(boundary.row)
@@ -386,6 +401,7 @@ final class TimelineView: NSView {
         needsDisplay = true
     }
     override func mouseDragged(with event: NSEvent) {
+        if layerDrag != nil { updateLayerDrag(convert(event.locationInWindow, from: nil)); return }
         if rowResize != nil {
             updateRowResize(with: event)
             return
@@ -401,12 +417,13 @@ final class TimelineView: NSView {
         } else if let frozen = scrubGeometry { seek(at: point.x, geometry: frozen) }
     }
     override func mouseUp(with event: NSEvent) {
+        if layerDrag != nil { finishLayerDrag(convert(event.locationInWindow, from: nil)); return }
         if rowResize != nil {
             updateRowResize(with: event)
             if let resize = rowResize {
                 rowResize = nil
-                if heights[resize.row] != resize.height {
-                    heights[resize.row] = resize.height
+                if heights.height(resize.row, nodeID: heightNodeID(resize.row)) != resize.height {
+                    heights.setHeight(resize.height, for: resize.row, nodeID: heightNodeID(resize.row))
                     onHeightCommit?()
                 } else {
                     needsDisplay = true
@@ -428,6 +445,10 @@ final class TimelineView: NSView {
     }
     private func seek(at x: Double, geometry: TimelineGeometry) { onSeek?(max(0, min(duration, geometry.time(at: x - Self.gutter)))) }
     func cancelDrag() {
+        if let value = layerDrag {
+            layerDrag = nil; layerScrollTimer?.invalidate(); layerScrollTimer = nil
+            visuals = value.original; onLayerPreview?(value.original); onImagePreview?(value.original); NSCursor.arrow.set()
+        }
         spineLane.cancel()
         if let resize = rowResize {
             rowResize = nil
@@ -447,28 +468,29 @@ final class TimelineView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard canEditClips else { return super.menu(for: event) }
         let point = convert(event.locationInWindow, from: nil)
+        if visualMode, point.x < Self.gutter, let id = layerID(at: point), headerRect(id).contains(point) { return layerMenu(id) }
         if visualMode, onCreateEmptyClip != nil, point.x >= Self.gutter,
-           point.x <= bounds.width - TimelineGeometry.inset, let slot = slot(at: point),
-           let layer = visuals.layers.first(where: { $0.slot == slot }) {
+           point.x <= bounds.width - TimelineGeometry.inset, let layerID = layerID(at: point),
+           let layer = visuals.layers.first(where: { $0.id == layerID }) {
             let time = geometry.time(at: point.x - Self.gutter)
             if !layer.clips.contains(where: { $0.start <= time && time < $0.end }),
-               (try? visuals.placement(at: time, slot: slot, duration: duration, grid: snapGrid)) != nil {
+               (try? visuals.placement(at: time, layerID: layerID, duration: duration, grid: snapGrid)) != nil {
                 let menu = NSMenu()
                 let item = menu.addItem(withTitle: "空のクリップを作成", action: #selector(createEmptyClip(_:)), keyEquivalent: "")
                 item.target = self
-                item.representedObject = EmptyClipTarget(slot: slot, time: time)
+                item.representedObject = EmptyClipTarget(layerID: layerID, time: time)
                 return menu
             }
         }
         configureSpineLane(displayed: visuals)
-        if visualMode, let menu = spineLane.menu(at: point) { return menu }
+        if visualMode, visuals.canEdit(selectedLayerID), let menu = spineLane.menu(at: point) { return menu }
         if visualMode, onImageCommit != nil,
            let hit = graphKey(at: point, in: graphLanes(in: visuals)),
-           window?.makeFirstResponder(self) != false {
+           visuals.canEdit(visuals.layerID(of: hit.lane.clip.id)), window?.makeFirstResponder(self) != false {
             if selectedImageID != hit.lane.clip.id {
-                selectedSlot = visuals.slot(of: hit.lane.clip.id) ?? selectedSlot
+                selectedLayerID = visuals.layerID(of: hit.lane.clip.id) ?? selectedLayerID
                 selectedImageID = hit.lane.clip.id
-                onImageSelect?(hit.lane.clip.id, selectedSlot)
+                onImageSelect?(hit.lane.clip.id, selectedLayerID)
             }
             selectGraph(hit.lane.curve.parameter, key: hit.key.id)
             let menu = NSMenu()
@@ -507,13 +529,13 @@ final class TimelineView: NSView {
     }
 
     private struct EmptyClipTarget {
-        let slot: Int
+        let layerID: UUID
         let time: Double
     }
 
     @objc private func createEmptyClip(_ item: NSMenuItem) {
         guard canEditClips, let target = item.representedObject as? EmptyClipTarget else { return }
-        onCreateEmptyClip?(target.slot, target.time)
+        onCreateEmptyClip?(target.layerID, target.time)
     }
 
     private struct KeyMenuTarget {
@@ -528,8 +550,8 @@ final class TimelineView: NSView {
     }
 
     private func editGraphKey(_ target: KeyMenuTarget, delete: Bool = false, interpolation: ImageInterpolation = .single) {
-        guard visualMode, canEditClips, let slot = visuals.slot(of: target.clipID),
-              var clip = visuals.clip(target.clipID), var curve = clip.curve(target.parameter),
+        guard visualMode, canEditClips, let layerID = visuals.layerID(of: target.clipID),
+              visuals.canEdit(layerID), var clip = visuals.clip(target.clipID), var curve = clip.curve(target.parameter),
               let index = curve.keys.firstIndex(where: { $0.id == target.keyID }) else { return }
         if delete { clip.removeKey(target.keyID, parameter: target.parameter) }
         else {
@@ -538,7 +560,7 @@ final class TimelineView: NSView {
             clip.setCurve(curve)
         }
         do {
-            let updated = try visuals.updating(clip, slot: slot, duration: duration)
+            let updated = try visuals.updating(clip, layerID: layerID, duration: duration)
             onBeginEdit?()
             onImageCommit?(updated, clip.id)
             selectGraph(clip.displayCurve(target.parameter) == nil ? nil : target.parameter, key: delete ? nil : target.keyID)
@@ -557,9 +579,9 @@ final class TimelineView: NSView {
 
     private func selectClipForMenu(at point: NSPoint) -> Bool {
         if visualMode {
-            guard let slot = slot(at: point), let hit = imageHit(at: point, slot: slot),
+            guard let layerID = layerID(at: point), let hit = imageHit(at: point, layerID: layerID),
                   window?.makeFirstResponder(self) != false else { return false }
-            selectVisualClip(hit.id, slot: slot)
+            selectVisualClip(hit.id, layerID: layerID)
         } else {
             guard let hit = lyricHit(at: point), window?.makeFirstResponder(self) != false else { return false }
             selectLyricClip(hit.id)
@@ -572,12 +594,12 @@ final class TimelineView: NSView {
         onSelect?(id)
     }
 
-    private func selectVisualClip(_ id: UUID, slot: Int) {
-        selectedSlot = slot
+    private func selectVisualClip(_ id: UUID, layerID: UUID) {
+        selectedLayerID = layerID
         selectedImageID = id
         spineLane.clearSelection()
         if selectedKeyID != nil { selectGraph(selectedParameter) }
-        onImageSelect?(id, slot)
+        onImageSelect?(id, layerID)
     }
 
     @objc private func performClipCommand(_ item: NSMenuItem) {
@@ -587,16 +609,16 @@ final class TimelineView: NSView {
     }
 
     private var canRemoveAutomation: Bool {
-        visualMode && canEditClips && onImageCommit != nil
+        visualMode && canEditClips && visuals.canEdit(selectedLayerID) && onImageCommit != nil
     }
 
     @objc private func removeAutomationLane(_ item: NSMenuItem) {
         guard canRemoveAutomation, let target = item.representedObject as? GraphTarget,
               var clip = visuals.clip(target.clipID), clip.displayCurve(target.parameter) != nil,
-              let slot = visuals.slot(of: clip.id) else { return }
+              let layerID = visuals.layerID(of: clip.id) else { return }
         clip.removeAudioAndKeys(target.parameter)
         do {
-            let updated = try visuals.updating(clip, slot: slot, duration: duration)
+            let updated = try visuals.updating(clip, layerID: layerID, duration: duration)
             onBeginEdit?()
             onImageCommit?(updated, clip.id)
         } catch { onError?(error) }
@@ -616,8 +638,9 @@ final class TimelineView: NSView {
     }
 
     private func removeSelectedKey() -> Bool {
-        if visualMode, spineClip(in: selectedSlot) != nil, spineLane.removeSelectedKey() { return true }
-        guard visualMode, expandedLayerSlots.contains(selectedSlot), let parameter = selectedParameter,
+        if visualMode, !visuals.canEdit(selectedLayerID) { return selectedKeyID != nil || spineLane.selectedKeyID != nil }
+        if visualMode, spineClip(in: selectedLayerID) != nil, spineLane.removeSelectedKey() { return true }
+        guard visualMode, expandedLayerIDs.contains(selectedLayerID), let parameter = selectedParameter,
               let id = selectedKeyID, let clip = visuals.clip(selectedImageID) else { return false }
         editGraphKey(KeyMenuTarget(clipID: clip.id, parameter: parameter, keyID: id), delete: true)
         return true
@@ -642,49 +665,64 @@ final class TimelineView: NSView {
         }
     }
 
-    private func automationParameters(in slot: Int) -> [ImageParameter] {
-        guard expandedLayerSlots.contains(slot) else { return [] }
-        return layerParameters[slot] ?? []
+    private func rebuildLayerParameters() {
+            layerParameters = Dictionary(uniqueKeysWithValues: visuals.layers.map { layer in
+                var seen = Set<ImageParameter>()
+                let clips = layer.clips.sorted { ($0.id == selectedImageID ? 0 : 1) < ($1.id == selectedImageID ? 0 : 1) }
+                return (layer.id, clips.flatMap(\.orderedAutomationParameters).filter { seen.insert($0).inserted })
+            })
     }
 
-    private func hasAutomation(in slot: Int) -> Bool {
-        layerParameters[slot]?.isEmpty == false || visuals.layers.first(where: { $0.slot == slot })?.clips.contains(where: { $0.content.spinePlayback?.hasLane == true }) == true
+    private func automationParameters(in layerID: UUID) -> [ImageParameter] {
+        guard expandedLayerIDs.contains(layerID) else { return [] }
+        return layerParameters[layerID] ?? []
     }
-    private func spineClip(in slot: Int) -> VisualClip? {
-        guard expandedLayerSlots.contains(slot), let id = selectedImageID, visuals.slot(of: id) == slot,
+
+    private func hasAutomation(in layerID: UUID) -> Bool {
+        layerParameters[layerID]?.isEmpty == false || visuals.layers.first(where: { $0.id == layerID })?.clips.contains(where: { $0.content.spinePlayback?.hasLane == true }) == true
+    }
+    private func spineClip(in layerID: UUID) -> VisualClip? {
+        guard expandedLayerIDs.contains(layerID), let id = selectedImageID, visuals.layerID(of: id) == layerID,
               let clip = visuals.clip(selectedImageID), clip.content.spinePlayback?.hasLane == true else { return nil }
         return clip
     }
-    private func spineMinimumHeight(_ slot: Int) -> Double {
-        guard let clip = spineClip(in: slot), let descriptor = visuals.asset(clip.assetID)?.kind.spineDescriptor else { return 80 }
+    private func spineMinimumHeight(_ layerID: UUID) -> Double {
+        guard let clip = spineClip(in: layerID), let descriptor = visuals.asset(clip.assetID)?.kind.spineDescriptor else { return 80 }
         if case .selection = clip.content.spinePlayback?.mode { return max(80, Double(descriptor.animations.count) * 18 + 16) }
         return 80
     }
-    private func spineHeight(_ slot: Int) -> Double { spineClip(in: slot) == nil ? 0 : rowHeight(.spine(slot)) }
-    private func spineY(_ slot: Int) -> Double {
-        automationParameters(in: slot).reduce(rowY(slot) + rowHeight(.visual(slot))) { $0 + rowHeight(.automation(slot, $1)) }
+    private func spineHeight(_ layerID: UUID) -> Double { spineClip(in: layerID) == nil ? 0 : rowHeight(.spine(layerID)) }
+    private func spineY(_ layerID: UUID) -> Double {
+        automationParameters(in: layerID).reduce(rowY(layerID) + rowHeight(.visual(layerID))) { $0 + rowHeight(.automation(layerID, $1)) }
     }
     private func configureSpineLane(displayed: VisualTrack) {
-        guard visualMode, let clip = displayed.clip(selectedImageID), let slot = displayed.slot(of: clip.id),
-              expandedLayerSlots.contains(slot), clip.content.spinePlayback?.hasLane == true,
+        guard visualMode, let clip = displayed.clip(selectedImageID), let layerID = displayed.layerID(of: clip.id),
+              expandedLayerIDs.contains(layerID), clip.content.spinePlayback?.hasLane == true,
               let descriptor = displayed.asset(clip.assetID)?.kind.spineDescriptor else { spineLane.configure(nil); return }
         spineLane.duration = duration
-        spineLane.configure(.init(track: displayed, clip: clip, descriptor: descriptor, slot: slot,
-                                  rect: CGRect(x: 0, y: spineY(slot), width: bounds.width, height: spineHeight(slot)),
+        spineLane.configure(.init(track: displayed, clip: clip, descriptor: descriptor, layerID: layerID,
+                                  rect: CGRect(x: 0, y: spineY(layerID), width: bounds.width, height: spineHeight(layerID)),
                                   viewport: graphViewport, geometry: geometry))
     }
 
+    private func heightNodeID(_ row: TimelineHeights.Row) -> UUID? {
+        guard case let .automation(layerID, parameter) = row, parameter.effectKind != nil else { return nil }
+        let layer = visuals.layers.first { $0.id == layerID }
+        let clip = layer?.clips.first { $0.id == selectedImageID && $0.automationParameters.contains(parameter) }
+            ?? layer?.clips.first { $0.automationParameters.contains(parameter) }
+        return clip?.effects?.node(for: parameter)?.id
+    }
     private func rowHeight(_ row: TimelineHeights.Row) -> Double {
         if let resize = rowResize, resize.row == row { return resize.height }
-        if case let .spine(slot) = row { return max(spineMinimumHeight(slot), heights[row]) }
-        return heights[row]
+        if case let .spine(layerID) = row { return max(spineMinimumHeight(layerID), heights[row]) }
+        return heights.height(row, nodeID: heightNodeID(row))
     }
 
-    private func height(of slot: Int) -> Double {
-        automationParameters(in: slot).reduce(rowHeight(.visual(slot)) + spineHeight(slot)) { $0 + rowHeight(.automation(slot, $1)) }
+    private func height(of layerID: UUID) -> Double {
+        automationParameters(in: layerID).reduce(rowHeight(.visual(layerID)) + spineHeight(layerID)) { $0 + rowHeight(.automation(layerID, $1)) }
     }
 
-    private var contentHeight: Double { (1...3).reduce(0) { $0 + height(of: $1) } }
+    private var contentHeight: Double { layoutHeight }
     private var rowsBottom: Double { min(bounds.height - 24, rowsTop + contentHeight - imageScroll) }
     private var maximumRowScroll: Double {
         let bottom = visualMode ? rowsTop + contentHeight : lyricBoundaryY + lyricScroll
@@ -693,14 +731,7 @@ final class TimelineView: NSView {
 
     private var rowBoundaries: [RowBoundary] {
         guard visualMode else { return [RowBoundary(row: .lyrics, y: lyricBoundaryY)] }
-        return (1...3).flatMap { slot -> [RowBoundary] in
-            let image = RowBoundary(row: .visual(slot), y: rowY(slot) + rowHeight(.visual(slot)))
-            let spine = spineHeight(slot) > 0 ? [RowBoundary(row: .spine(slot), y: spineY(slot) + spineHeight(slot))] : []
-            return spine + [image] + automationParameters(in: slot).enumerated().map { index, parameter in
-                let row = TimelineHeights.Row.automation(slot, parameter)
-                return RowBoundary(row: row, y: graphY(slot: slot, index: index) - graphPadding + rowHeight(row))
-            }
-        }
+        return layoutRows.map { RowBoundary(row: $0.row, y: rowsTop - imageScroll + $0.top + $0.height) }
     }
 
     private func boundaryHitRect(_ boundary: RowBoundary) -> NSRect {
@@ -731,7 +762,7 @@ final class TimelineView: NSView {
         guard var resize = rowResize else { return }
         let point = convert(event.locationInWindow, from: nil)
         let range: ClosedRange<Double>
-        if case let .spine(slot) = resize.row { range = spineMinimumHeight(slot)...resize.row.range.upperBound }
+        if case let .spine(layerID) = resize.row { range = spineMinimumHeight(layerID)...resize.row.range.upperBound }
         else { range = resize.row.range }
         resize.height = min(range.upperBound, max(range.lowerBound, resize.initialHeight + point.y - resize.initialY))
         rowResize = resize
@@ -744,36 +775,38 @@ final class TimelineView: NSView {
         if parameter != nil { spineLane.clearSelection() }
         selectedParameter = parameter
         selectedKeyID = key
-        if reveal, let parameter, let slot = selectedImageID.flatMap({ visuals.slot(of: $0) }),
-           let index = automationParameters(in: slot).firstIndex(of: parameter) {
-            revealRows(from: graphY(slot: slot, index: index), height: rowHeight(.automation(slot, parameter)) - graphPadding)
+        if reveal, let parameter, let layerID = selectedImageID.flatMap({ visuals.layerID(of: $0) }),
+           let index = automationParameters(in: layerID).firstIndex(of: parameter) {
+            revealRows(from: graphY(layerID: layerID, index: index), height: rowHeight(.automation(layerID, parameter)) - graphPadding)
         }
         onGraphSelection?()
         needsDisplay = true
     }
 
     func resetGraphDisclosure() {
-        expandedLayerSlots.removeAll()
+        expandedLayerIDs.removeAll()
         imageScroll = 0
         lyricScroll = 0
         updateGraphLayout()
     }
 
-    func revealAutomation(in slot: Int) {
-        setAutomationExpanded(true, in: slot)
-        if spineHeight(slot) > 0 {
-            revealRows(from: spineY(slot), height: min(spineHeight(slot), max(1, rowsBottom - rowsTop)))
+    func revealAutomation(in layerID: UUID) {
+        setAutomationExpanded(true, in: layerID)
+        if spineHeight(layerID) > 0 {
+            revealRows(from: spineY(layerID), height: min(spineHeight(layerID), max(1, rowsBottom - rowsTop)))
         }
     }
 
-    private func setAutomationExpanded(_ expanded: Bool, in slot: Int) {
+    private func setAutomationExpanded(_ expanded: Bool, in layerID: UUID) {
         cancelDrag()
-        if expanded { expandedLayerSlots.insert(slot) }
-        else { expandedLayerSlots.remove(slot) }
+        if expanded { expandedLayerIDs.insert(layerID) }
+        else { expandedLayerIDs.remove(layerID) }
         updateGraphLayout()
-        let firstLaneHeight = automationParameters(in: slot).first.map { rowHeight(.automation(slot, $0)) } ?? 0
-        revealRows(from: rowY(slot), height: rowHeight(.visual(slot)) + firstLaneHeight)
+        let firstLaneHeight = automationParameters(in: layerID).first.map { rowHeight(.automation(layerID, $0)) } ?? 0
+        revealRows(from: rowY(layerID), height: rowHeight(.visual(layerID)) + firstLaneHeight)
     }
+
+    func revealLayer(_ id: UUID) { revealRows(from: rowY(id), height: rowHeight(.visual(id))) }
 
     private func revealRows(from top: Double, height: Double) {
         if top + height > rowsBottom { rowScroll += top + height - rowsBottom }
@@ -782,6 +815,18 @@ final class TimelineView: NSView {
     }
 
     private func updateRowLayout() {
+        layoutRows = []; layerOffsets = [:]; layoutHeight = 0
+        for layer in visuals.layers.reversed() {
+            layerOffsets[layer.id] = layoutHeight
+            var rows: [TimelineHeights.Row] = [.visual(layer.id)]
+            rows += automationParameters(in: layer.id).map { .automation(layer.id, $0) }
+            if spineHeight(layer.id) > 0 { rows.append(.spine(layer.id)) }
+            for row in rows {
+                let height = rowHeight(row)
+                layoutRows.append(LayoutRow(row: row, top: layoutHeight, height: height))
+                layoutHeight += height
+            }
+        }
         rowScroll = min(maximumRowScroll, max(0, rowScroll))
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
@@ -797,13 +842,20 @@ final class TimelineView: NSView {
         }
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            cancelDrag(); layerNameField?.onFinish = nil; layerNameField?.removeFromSuperview(); layerNameField = nil
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         updateRowLayout()
     }
 
     override func scrollWheel(with event: NSEvent) {
-        guard rowResize == nil else { return }
+        guard rowResize == nil, layerDrag == nil, layerNameField == nil else { return }
         let modifiers = event.modifierFlags
         if !modifiers.intersection([.command, .shift, .option]).isEmpty {
             guard isEnabled, frozenGeometry == nil, event.momentumPhase.isEmpty else { return }
@@ -844,47 +896,47 @@ final class TimelineView: NSView {
         if next != viewport.origin { manualOrigin = next }
     }
 
-    private func slot(at point: NSPoint) -> Int? {
+    private func layerID(at point: NSPoint) -> UUID? {
         guard point.y >= rowsTop, point.y < rowsBottom else { return nil }
-        return (1...3).first { slot in
-            let y = rowY(slot)
-            return point.y >= y && point.y < y + height(of: slot)
+        return visuals.layers.map(\.id).first { layerID in
+            let y = rowY(layerID)
+            return point.y >= y && point.y < y + height(of: layerID)
         }
     }
 
-    private func rowY(_ slot: Int) -> Double {
-        rowsTop - imageScroll + (1...3).filter { $0 > slot }.reduce(0) { $0 + height(of: $1) }
+    private func rowY(_ layerID: UUID) -> Double {
+        rowsTop - imageScroll + (layerOffsets[layerID] ?? 0)
     }
 
-    private func disclosureRect(for slot: Int) -> NSRect {
-        let rowHeight = rowHeight(.visual(slot))
+    private func disclosureRect(for layerID: UUID) -> NSRect {
+        let rowHeight = rowHeight(.visual(layerID))
         let height = min(29, rowHeight - 6)
-        return NSRect(x: 55, y: rowY(slot) + (rowHeight - height) / 2, width: 22, height: height)
+        return NSRect(x: 194, y: rowY(layerID) + (rowHeight - height) / 2, width: 22, height: height)
     }
 
-    private func graphY(slot: Int, index: Int) -> Double {
-        automationParameters(in: slot).prefix(index).reduce(rowY(slot) + rowHeight(.visual(slot)) + graphPadding) {
-            $0 + rowHeight(.automation(slot, $1))
+    private func graphY(layerID: UUID, index: Int) -> Double {
+        automationParameters(in: layerID).prefix(index).reduce(rowY(layerID) + rowHeight(.visual(layerID)) + graphPadding) {
+            $0 + rowHeight(.automation(layerID, $1))
         }
     }
 
     private func graphLanes(in displayed: VisualTrack) -> [GraphLane] {
         displayed.layers.flatMap { layer in
-            let parameters = automationParameters(in: layer.slot)
+            let parameters = automationParameters(in: layer.id)
             guard !parameters.isEmpty else { return [GraphLane]() }
             return layer.clips.filter { $0.end >= geometry.origin && $0.start <= geometry.origin + geometry.span }.flatMap { clip in
                 parameters.enumerated().compactMap { index, parameter in
                     guard let curve = clip.displayCurve(parameter) else { return nil }
                     let left = x(at: clip.start)
-                    let rect = NSRect(x: left, y: graphY(slot: layer.slot, index: index),
-                                      width: x(at: clip.end) - left, height: rowHeight(.automation(layer.slot, parameter)) - 2 * graphPadding)
+                    let rect = NSRect(x: left, y: graphY(layerID: layer.id, index: index),
+                                      width: x(at: clip.end) - left, height: rowHeight(.automation(layer.id, parameter)) - 2 * graphPadding)
                     return GraphLane(clip: clip, curve: curve, rect: rect)
                 }
             }
         }
     }
-    private func imageRect(_ clip: VisualClip, slot: Int) -> NSRect {
-        NSRect(x: x(at: clip.start), y: rowY(slot) + 3, width: x(at: clip.end) - x(at: clip.start), height: rowHeight(.visual(slot)) - 7)
+    private func imageRect(_ clip: VisualClip, layerID: UUID) -> NSRect {
+        NSRect(x: x(at: clip.start), y: rowY(layerID) + 3, width: x(at: clip.end) - x(at: clip.start), height: rowHeight(.visual(layerID)) - 7)
     }
     private var graphViewport: NSRect {
         NSRect(x: Self.gutter + TimelineGeometry.inset, y: rowsTop,
@@ -908,27 +960,28 @@ final class TimelineView: NSView {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: NSRect(x: 0, y: rowsTop, width: bounds.width, height: clipBounds.height)).addClip()
         let selectedClip = displayed.clip(selectedImageID)
-        let selectedLayer = selectedImageID.flatMap { displayed.slot(of: $0) }
-        for slot in 1...3 {
-            if slot == (imageDrag?.targetSlot ?? selectedSlot) {
+        let selectedLayer = selectedImageID.flatMap { displayed.layerID(of: $0) }
+        for layerID in visuals.layers.map(\.id) where rowY(layerID) + height(of: layerID) >= rowsTop && rowY(layerID) < rowsBottom {
+            if layerID == (imageDrag?.targetLayerID ?? selectedLayerID) {
                 NSColor.white.withAlphaComponent(0.04).setFill()
-                NSRect(x: 0, y: rowY(slot), width: bounds.width, height: height(of: slot)).fill()
+                NSRect(x: 0, y: rowY(layerID), width: bounds.width, height: height(of: layerID)).fill()
             }
-            let rowCenter = rowY(slot) + rowHeight(.visual(slot)) / 2
-            label("画像\(slot)" + (slot == 3 ? " 前" : slot == 1 ? " 後" : ""),
-                  rect: NSRect(x: 5, y: rowCenter - 8, width: 50, height: 16), color: .lightGray, size: 11)
-            if hasAutomation(in: slot) {
-                let button = disclosureRect(for: slot)
-                label(expandedLayerSlots.contains(slot) ? "v" : ">",
+            drawLayerControls(layerID)
+            let rowCenter = rowY(layerID) + rowHeight(.visual(layerID)) / 2
+            label(visuals.layer(layerID)?.name ?? "レイヤー",
+                  rect: NSRect(x: 70, y: rowCenter - 8, width: 104, height: 16), color: .lightGray, size: 11)
+            if hasAutomation(in: layerID) {
+                let button = disclosureRect(for: layerID)
+                label(expandedLayerIDs.contains(layerID) ? "v" : ">",
                       rect: NSRect(x: button.minX + 6, y: button.midY - 7.5, width: 16, height: 15),
                       color: .white.withAlphaComponent(0.45), size: 12)
             }
-            let clip = selectedLayer == slot ? selectedClip : nil
-            for (index, parameter) in automationParameters(in: slot).enumerated() {
+            let clip = selectedLayer == layerID ? selectedClip : nil
+            for (index, parameter) in automationParameters(in: layerID).enumerated() {
                 let color: NSColor = clip != nil && parameter == selectedParameter ? .cyan : .lightGray
-                let y = graphY(slot: slot, index: index)
+                let y = graphY(layerID: layerID, index: index)
                 label(parameter.title, rect: NSRect(x: 5, y: y, width: 73, height: 16), color: color, size: 11)
-                if showsGraphRange(slot: slot, parameter: parameter), let curve = clip?.displayCurve(parameter) {
+                if showsGraphRange(layerID: layerID, parameter: parameter), let curve = clip?.displayCurve(parameter) {
                     label("最大 " + Self.graphNumber(curve.maximum), rect: NSRect(x: 5, y: y + 17, width: 73, height: 14), color: color, size: 9)
                     label("最小 " + Self.graphNumber(curve.minimum), rect: NSRect(x: 5, y: y + 32, width: 73, height: 14), color: color, size: 9)
                 }
@@ -956,7 +1009,7 @@ final class TimelineView: NSView {
         }
         for layer in displayed.layers {
             for clip in layer.clips {
-                let clipRect = imageRect(clip, slot: layer.slot)
+                let clipRect = imageRect(clip, layerID: layer.id)
                 let rect = clipRect.intersection(clipBounds)
                 guard !rect.isEmpty else { continue }
                 let missing = clip.assetID.map { missingAssets.contains($0) } ?? false
@@ -966,11 +1019,14 @@ final class TimelineView: NSView {
                 let title = (missing ? "⚠ " : "") + (clip.content.sourceIn == nil ? "" : "▶ ") + (displayed.asset(clip.assetID)?.name ?? "空のクリップ")
                 drawClipLabels(title, timing: clipTiming(start: clip.start, end: clip.end), in: clipRect, visible: rect)
                 drawClipGrips(in: clipRect, visible: rect)
+                if !layer.isVisible {
+                    NSColor(calibratedWhite: 0.08, alpha: 0.6).setFill(); rect.fill()
+                }
             }
         }
         let highlight = highlightedKey(in: lanes)
-        if highlight == nil, canEditClips, let point = hoverPoint, let slot = slot(at: point) {
-            drawTrimHighlight(imageHit(at: point, slot: slot))
+        if highlight == nil, canEditClips, let point = hoverPoint, let layerID = layerID(at: point) {
+            drawTrimHighlight(imageHit(at: point, layerID: layerID))
         }
         let bendHighlight = highlightedBend(in: lanes)
         for lane in lanes {
@@ -979,15 +1035,15 @@ final class TimelineView: NSView {
             }
             drawGraph(lane, clippedTo: clipBounds, excluding: highlight?.key.id, highlightedBend: bendID)
         }
-        if let drag = imageDrag, drag.error != nil, let slot = drag.targetSlot, let clip = drag.original.clip(drag.id) {
+        if let drag = imageDrag, drag.error != nil, let layerID = drag.targetLayerID, let clip = drag.original.clip(drag.id) {
             NSColor.systemRed.setStroke()
-            let outline = NSBezierPath(roundedRect: imageRect(clip, slot: slot).insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
+            let outline = NSBezierPath(roundedRect: imageRect(clip, layerID: layerID).insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
             outline.lineWidth = 2; outline.stroke()
         }
         if let candidate = dropCandidate {
             NSColor.cyan.withAlphaComponent(0.35).setFill()
-            NSRect(x: x(at: candidate.start), y: rowY(candidate.slot) + 3, width: x(at: candidate.end) - x(at: candidate.start),
-                   height: rowHeight(.visual(candidate.slot)) - 7).fill()
+            NSRect(x: x(at: candidate.start), y: rowY(candidate.layerID) + 3, width: x(at: candidate.end) - x(at: candidate.start),
+                   height: rowHeight(.visual(candidate.layerID)) - 7).fill()
         }
         NSColor.systemPink.setStroke()
         let head = NSBezierPath(); head.lineWidth = 2; head.move(to: NSPoint(x: x(at: currentTime), y: rowsTop)); head.line(to: NSPoint(x: x(at: currentTime), y: rowsBottom)); head.stroke()
@@ -1001,28 +1057,29 @@ final class TimelineView: NSView {
             let right = min(clipBounds.maxX, x(at: lyric.end))
             label(lyric.text.replacingOccurrences(of: "\n", with: " "), rect: NSRect(x: left + 3, y: 27, width: right - left - 6, height: 16), color: .systemYellow.withAlphaComponent(0.4), size: 10)
         }
-        let hint = !expandedLayerSlots.isEmpty ? "グラフ：クリックで点を追加、○を上下でカーブ・幅・周期を調整、Deleteで点を削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
+        let hint = !expandedLayerIDs.isEmpty ? "グラフ：クリックで点を追加、○を上下でカーブ・幅・周期を調整、Deleteで点を削除　｜　上下スクロール　Esc：取消" : "本体：左右で時刻移動・上下で段移動　端：開始/終了　Esc：取消"
         label(imageDrag?.error ?? hint, rect: NSRect(x: 14, y: bounds.height - 19, width: bounds.width - 28, height: 16), color: .lightGray, size: 10)
     }
     private func imageMouseDown(_ event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let frozen = geometry
         configureSpineLane(displayed: visuals)
-        if spineLane.mouseDown(point) { needsDisplay = true; return }
+        if visuals.canEdit(selectedLayerID), spineLane.mouseDown(point) { needsDisplay = true; return }
         if graphMouseDown(at: point, geometry: frozen) { return }
-        if let slot = slot(at: point) {
-            if hasAutomation(in: slot), disclosureRect(for: slot).contains(point) {
-                setAutomationExpanded(!expandedLayerSlots.contains(slot), in: slot)
+        if let layerID = layerID(at: point) {
+            if hasAutomation(in: layerID), disclosureRect(for: layerID).contains(point) {
+                setAutomationExpanded(!expandedLayerIDs.contains(layerID), in: layerID)
                 return
             }
-            selectedSlot = slot
-            if let hit = imageHit(at: point, slot: slot) {
-                selectVisualClip(hit.id, slot: slot)
+            selectedLayerID = layerID
+            if let hit = imageHit(at: point, layerID: layerID) {
+                selectVisualClip(hit.id, layerID: layerID)
+                guard visuals.canEdit(layerID) else { return }
                 onBeginEdit?()
-                imageDrag = ImageDrag(original: visuals, geometry: frozen, id: hit.id, part: hit.part, initialX: point.x, draft: visuals, targetSlot: slot, error: nil)
+                imageDrag = ImageDrag(original: visuals, geometry: frozen, id: hit.id, part: hit.part, initialX: point.x, draft: visuals, targetLayerID: layerID, error: nil)
                 return
             }
-            selectedImageID = nil; onImageSelect?(nil, slot)
+            selectedImageID = nil; onImageSelect?(nil, layerID)
         }
         guard point.x >= Self.gutter else { return }
         onBeginEdit?(); scrubGeometry = frozen; seek(at: point.x, geometry: frozen)
@@ -1033,13 +1090,13 @@ final class TimelineView: NSView {
         if keyDrag != nil { updateKeyDrag(to: point); return }
         if var drag = imageDrag {
             drag.hasDragged = true
-            drag.targetSlot = drag.part == .move ? slot(at: point) : drag.original.slot(of: drag.id)
+            drag.targetLayerID = drag.part == .move ? layerID(at: point) : drag.original.layerID(of: drag.id)
             do {
-                guard slot(at: point) != nil, let destination = drag.targetSlot, point.x >= Self.gutter, point.x <= bounds.width - TimelineGeometry.inset else {
+                guard layerID(at: point) != nil, let destination = drag.targetLayerID, point.x >= Self.gutter, point.x <= bounds.width - TimelineGeometry.inset else {
                     throw StudioError.message("画像行の上で離してください。範囲外では移動を取り消します。")
                 }
-                if drag.part == .move, destination != drag.original.slot(of: drag.id), let clip = drag.original.clip(drag.id) {
-                    drag.draft = try drag.original.updating(clip, slot: destination, duration: duration)
+                if drag.part == .move, destination != drag.original.layerID(of: drag.id), let clip = drag.original.clip(drag.id) {
+                    drag.draft = try drag.original.updating(clip, layerID: destination, duration: duration)
                 } else {
                     drag.draft = try drag.original.dragging(id: drag.id, part: drag.part, delta: (point.x - drag.initialX) / drag.geometry.pointsPerSecond, duration: duration, grid: snapGrid)
                 }
@@ -1077,18 +1134,18 @@ final class TimelineView: NSView {
         dropGeometry = geometry
         return draggingUpdated(sender)
     }
-    func fileDrop(at point: NSPoint, pasteboard: NSPasteboard) throws -> (url: URL, slot: Int, start: Double, end: Double) {
+    func fileDrop(at point: NSPoint, pasteboard: NSPasteboard) throws -> (url: URL, layerID: UUID, start: Double, end: Double) {
         guard visualMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil, rowResize == nil, let url = droppedURL(pasteboard),
               point.x >= Self.gutter + TimelineGeometry.inset, point.x <= bounds.width - TimelineGeometry.inset,
-              let slot = slot(at: point), point.y < rowY(slot) + rowHeight(.visual(slot)) else { throw StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行の空白にドロップしてください。") }
-        let range = try visuals.placement(at: geometry.time(at: point.x - Self.gutter), slot: slot, duration: duration, grid: snapGrid)
-        return (url, slot, range.start, range.end)
+              let layerID = layerID(at: point), point.y < rowY(layerID) + rowHeight(.visual(layerID)) else { throw StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行の空白にドロップしてください。") }
+        let range = try visuals.placement(at: geometry.time(at: point.x - Self.gutter), layerID: layerID, duration: duration, grid: snapGrid)
+        return (url, layerID, range.start, range.end)
     }
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         dropCandidate = nil; needsDisplay = true
         do {
             let value = try fileDrop(at: convert(sender.draggingLocation, from: nil), pasteboard: sender.draggingPasteboard)
-            dropCandidate = (value.slot, value.start, value.end)
+            dropCandidate = (value.layerID, value.start, value.end)
             return .copy
         } catch { return [] }
     }
@@ -1100,10 +1157,182 @@ final class TimelineView: NSView {
             onError?(StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行の空白にドロップしてください。")); draggingExited(sender); return false
         }
         onBeginEdit?()
-        onDropImage?(url, candidate.slot, candidate.start)
+        onDropImage?(url, candidate.layerID, candidate.start)
         draggingExited(sender)
         return true
     }
+    var onLayerAction: ((UUID, VisualLayerAction) -> Void)?
+    var onLayerPreview: ((VisualTrack) -> Void)?
+    var onLayerCommit: ((VisualTrack, UUID) -> Void)?
+    private var layerDrag: LayerDrag?
+    private var layerScrollTimer: Timer?
+    private var layerNameField: LayerNameField?
+    private struct LayerDrag {
+        let original: VisualTrack
+        let id: UUID
+        let initial: NSPoint
+        let image: NSImage
+        let grabOffset: Double
+        var point: NSPoint
+        var insertionY: Double?
+        var changed = false
+    }
+    private var addLayerRect: NSRect { NSRect(x: 5, y: 24, width: Self.gutter - 10, height: 21) }
+    private func headerRect(_ id: UUID) -> NSRect {
+        NSRect(x: 0, y: rowY(id), width: Self.gutter, height: rowHeight(.visual(id)))
+    }
+    struct LayerDragPresentation {
+        let sourceRect: NSRect
+        let floatingRect: NSRect
+    }
+    private var layerDragViewport: NSRect {
+        NSRect(x: bounds.minX, y: rowsTop, width: bounds.width, height: max(0, bounds.height - rowsTop - 24))
+    }
+    private func layerGroupRect(_ id: UUID) -> NSRect {
+        NSRect(x: bounds.minX, y: rowY(id), width: bounds.width, height: height(of: id))
+    }
+    var layerDragPresentation: LayerDragPresentation? {
+        guard let drag = layerDrag, drag.changed else { return nil }
+        return LayerDragPresentation(sourceRect: layerGroupRect(drag.id),
+            floatingRect: NSRect(x: bounds.minX, y: drag.point.y - drag.grabOffset,
+                                 width: drag.image.size.width, height: drag.image.size.height))
+    }
+    private func drawLayerDragPresentation() {
+        guard let drag = layerDrag, let presentation = layerDragPresentation else { return }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSBezierPath(rect: layerDragViewport).addClip()
+        NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.12, alpha: 0.7).setFill()
+        presentation.sourceRect.fill()
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.2)
+        shadow.shadowBlurRadius = 4; shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.set()
+        drag.image.draw(in: presentation.floatingRect, from: .zero, operation: .sourceOver,
+                        fraction: 0.85, respectFlipped: true, hints: nil)
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.white.withAlphaComponent(0.4).setStroke()
+        NSBezierPath(rect: presentation.floatingRect.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        if let y = drag.insertionY, layerDragViewport.contains(drag.point) {
+            NSColor.systemYellow.setFill()
+            NSRect(x: bounds.minX, y: y - 1, width: bounds.width, height: 2).fill()
+        }
+    }
+
+    private func drawLayerControls(_ id: UUID) {
+        guard let layer = visuals.layer(id) else { return }
+        let y = headerRect(id).midY - 8
+        if let drag = layerDrag, let index = visuals.layers.firstIndex(where: { $0.id == drag.id }),
+           drag.id == id || (index > 0 && visuals.layers[index - 1].id == id && visuals.layer(drag.id)?.clips.contains(where: { $0.effects?.belowMask != nil }) == true) {
+            NSColor.systemYellow.withAlphaComponent(0.15).setFill(); headerRect(id).fill()
+        }
+        for (text, x) in [("≡", 5.0), (layer.isVisible ? "●" : "○", 25.0), (layer.isLocked ? "🔒" : "🔓", 47.0), ("⋯", 174.0)] {
+            label(text, rect: NSRect(x: x, y: y, width: 21, height: 17), color: .lightGray, size: 12)
+        }
+    }
+    private func layerHeaderDown(_ event: NSEvent, point: NSPoint) -> Bool {
+        guard point.x < Self.gutter else { return false }
+        if addLayerRect.contains(point) { onLayerAction?(selectedLayerID, .add(above: true)); return true }
+        guard let id = layerID(at: point), headerRect(id).contains(point) else { return false }
+        if hasAutomation(in: id), disclosureRect(for: id).contains(point) {
+            setAutomationExpanded(!expandedLayerIDs.contains(id), in: id); return true
+        }
+        if point.x >= 174 { if let menu = layerMenu(id) { NSMenu.popUpContextMenu(menu, with: event, for: self) }; return true }
+        if point.x >= 47 && point.x < 70 { onLayerAction?(id, .lock); return true }
+        if point.x >= 25 && point.x < 47 { onLayerAction?(id, .visibility); return true }
+        if point.x < 25, visuals.canEdit(id) {
+            onBeginEdit?()
+            let source = layerGroupRect(id).intersection(layerDragViewport)
+            guard !source.isEmpty, let bitmap = bitmapImageRepForCachingDisplay(in: source) else { return true }
+            cacheDisplay(in: source, to: bitmap)
+            let image = NSImage(size: source.size); image.addRepresentation(bitmap)
+            layerDrag = LayerDrag(original: visuals, id: id, initial: point, image: image,
+                                  grabOffset: point.y - source.minY, point: point)
+            let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let drag = self.layerDrag, drag.changed else { return }
+                    let delta = drag.point.y < self.rowsTop + 25 ? -8.0 : drag.point.y > self.bounds.height - 49 ? 8.0 : 0
+                    guard delta != 0 else { return }
+                    self.rowScroll += delta; self.updateRowLayout(); self.updateLayerDrag(drag.point)
+                }
+            }
+            layerScrollTimer = timer; RunLoop.main.add(timer, forMode: .common)
+            return true
+        }
+        if event.clickCount == 2 { beginLayerRename(id); return true }
+        if selectedLayerID != id { selectedImageID = nil; onImageSelect?(nil, id) }
+        selectedLayerID = id; needsDisplay = true
+        return true
+    }
+    private func updateLayerDrag(_ point: NSPoint) {
+        guard var drag = layerDrag else { return }
+        drag.point = point
+        guard drag.changed || hypot(point.x - drag.initial.x, point.y - drag.initial.y) >= 5 else { layerDrag = drag; return }
+        drag.changed = true
+        if point.x >= 0, point.x <= bounds.width, let target = layerID(at: point), target != drag.id {
+            let above = point.y < rowY(target) + height(of: target) / 2
+            if let draft = try? drag.original.movingLayer(drag.id, relativeTo: target, above: above) {
+                visuals = draft
+                drag.insertionY = rowY(drag.id)
+                onLayerPreview?(draft); onImagePreview?(draft)
+            }
+        }
+        layerDrag = drag; NSCursor.closedHand.set(); needsDisplay = true
+    }
+    private func finishLayerDrag(_ point: NSPoint) {
+        guard let drag = layerDrag else { return }
+        let valid = point.x >= 0 && point.x <= bounds.width && point.y >= rowsTop && point.y < bounds.height - 24
+        if valid { updateLayerDrag(point) }
+        let result = visuals
+        layerScrollTimer?.invalidate(); layerScrollTimer = nil; layerDrag = nil
+        visuals = drag.original
+        NSCursor.arrow.set()
+        if valid, result != drag.original { onLayerCommit?(result, selectedLayerID) }
+        else if drag.changed { onLayerPreview?(drag.original); onImagePreview?(drag.original) }
+        needsDisplay = true
+    }
+    private func layerMenu(_ id: UUID) -> NSMenu? {
+        guard let layer = visuals.layer(id) else { return nil }
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let actions: [(String, VisualLayerAction)] = [("上にレイヤーを追加", .add(above: true)), ("下にレイヤーを追加", .add(above: false)), ("前へ移動", .move(forward: true)), ("後ろへ移動", .move(forward: false)), ("名前変更…", .rename), (layer.isVisible ? "非表示にする" : "表示する", .visibility), (layer.isLocked ? "ロック解除" : "ロック", .lock), ("レイヤーを削除…", .delete)]
+        for (title, action) in actions {
+            let item = menu.addItem(withTitle: title, action: #selector(performLayerAction(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = LayerMenuTarget(id: id, action: action)
+            switch action {
+            case .add: item.isEnabled = visuals.layers.count < VisualTrack.maximumLayers
+            case .lock: break
+            case .delete: item.isEnabled = !layer.isLocked && visuals.layers.count > 1
+            case .move(let forward): item.isEnabled = !layer.isLocked && (forward ? visuals.layers.last?.id : visuals.layers.first?.id) != id
+            default: item.isEnabled = !layer.isLocked
+            }
+        }
+        return menu
+    }
+    private struct LayerMenuTarget { let id: UUID; let action: VisualLayerAction }
+    @objc private func performLayerAction(_ item: NSMenuItem) {
+        guard canEditClips, let target = item.representedObject as? LayerMenuTarget else { return }
+        if case .rename = target.action { beginLayerRename(target.id) }
+        else { onLayerAction?(target.id, target.action) }
+    }
+    func beginLayerRename(_ id: UUID) {
+        guard isEnabled, visuals.canEdit(id), let layer = visuals.layer(id) else { return }
+        layerNameField?.removeFromSuperview()
+        let field = LayerNameField(string: layer.name)
+        let rect = headerRect(id)
+        field.frame = NSRect(x: 70, y: rect.midY - 11, width: 104, height: 22)
+        field.onFinish = { [weak self, weak field] name in
+            guard let self else { return }
+            field?.removeFromSuperview(); self.layerNameField = nil
+            guard let name else { return }
+            do {
+                let result = try self.visuals.editingLayer(id) { $0.name = name.trimmingCharacters(in: .whitespacesAndNewlines) }
+                self.onLayerCommit?(result, self.selectedLayerID)
+            } catch { self.onError?(error) }
+        }
+        layerNameField = field; addSubview(field); field.selectText(nil)
+    }
+
 }
 
 private extension TimelineView {
@@ -1274,27 +1503,27 @@ private extension TimelineView {
 
     private func graphLabel(at point: NSPoint) -> (target: GraphTarget, localY: Double)? {
         guard point.x >= 0, point.x < Self.gutter,
-              let slot = slot(at: point), let clip = visuals.clip(selectedImageID),
-              visuals.slot(of: clip.id) == slot else { return nil }
-        for (index, parameter) in automationParameters(in: slot).enumerated() {
-            let localY = point.y - graphY(slot: slot, index: index)
-            if (0...(rowHeight(.automation(slot, parameter)) - 2 * graphPadding)).contains(localY), clip.displayCurve(parameter) != nil {
+              let layerID = layerID(at: point), let clip = visuals.clip(selectedImageID),
+              visuals.layerID(of: clip.id) == layerID else { return nil }
+        for (index, parameter) in automationParameters(in: layerID).enumerated() {
+            let localY = point.y - graphY(layerID: layerID, index: index)
+            if (0...(rowHeight(.automation(layerID, parameter)) - 2 * graphPadding)).contains(localY), clip.displayCurve(parameter) != nil {
                 return (GraphTarget(clipID: clip.id, parameter: parameter), localY)
             }
         }
         return nil
     }
 
-    private func showsGraphRange(slot: Int, parameter: ImageParameter) -> Bool {
-        rowHeight(.automation(slot, parameter)) >= 54
+    private func showsGraphRange(layerID: UUID, parameter: ImageParameter) -> Bool {
+        rowHeight(.automation(layerID, parameter)) >= 54
     }
 
     private func graphMouseDown(at point: NSPoint, geometry: TimelineGeometry) -> Bool {
         if let label = graphLabel(at: point) {
             let parameter = label.target.parameter
             selectGraph(parameter, key: selectedParameter == parameter ? selectedKeyID : nil)
-            if let slot = visuals.slot(of: label.target.clipID),
-               showsGraphRange(slot: slot, parameter: parameter), label.localY >= 17 {
+            if let layerID = visuals.layerID(of: label.target.clipID),
+               showsGraphRange(layerID: layerID, parameter: parameter), label.localY >= 17 {
                 onGraphRangeEdit?(label.localY < 32)
             }
             return true
@@ -1304,12 +1533,13 @@ private extension TimelineView {
         let hit = graphKey(at: point, in: lanes)
         let bend = hit == nil ? graphBend(at: point, in: lanes) : nil
         guard let lane = hit?.lane ?? bend?.lane ?? lanes.first(where: { $0.rect.contains(point) }),
-              let slot = visuals.slot(of: lane.clip.id) else { return false }
+              let layerID = visuals.layerID(of: lane.clip.id) else { return false }
+        guard visuals.canEdit(layerID) else { return true }
         let key = hit?.key
         if selectedImageID != lane.clip.id {
-            selectedSlot = slot
+            selectedLayerID = layerID
             selectedImageID = lane.clip.id
-            onImageSelect?(lane.clip.id, slot)
+            onImageSelect?(lane.clip.id, layerID)
         }
         if hit == nil, bend == nil, let modulation = lane.clip.audioModulations[lane.curve.parameter], modulation.enabled {
             let time = geometry.time(at: point.x - Self.gutter)
@@ -1333,7 +1563,7 @@ private extension TimelineView {
             return
         }
         guard var drag = keyDrag, let key = drag.key,
-              let slot = drag.original.slot(of: drag.lane.clip.id) else { return }
+              let layerID = drag.original.layerID(of: drag.lane.clip.id) else { return }
         var clip = drag.lane.clip
         var curve = drag.lane.curve
         let rawTime = clip.start + key.time + (point.x - drag.initial.x) / drag.geometry.pointsPerSecond
@@ -1344,7 +1574,7 @@ private extension TimelineView {
         do {
             try curve.move(id: key.id, to: time - clip.start, value: value)
             clip.setCurve(curve)
-            drag.draft = try drag.original.updating(clip, slot: slot, duration: duration)
+            drag.draft = try drag.original.updating(clip, layerID: layerID, duration: duration)
             onSeek?(time)
         } catch {
             drag.draft = nil
@@ -1358,14 +1588,14 @@ private extension TimelineView {
     private func updateBendDrag(to point: NSPoint) {
         guard var drag = keyDrag, let id = drag.bendKeyID,
               let midpoint = drag.lane.curve.midpoint(after: id),
-              let slot = drag.original.slot(of: drag.lane.clip.id) else { return }
+              let layerID = drag.original.layerID(of: drag.lane.clip.id) else { return }
         var clip = drag.lane.clip
         var curve = drag.lane.curve
         let value = drag.lane.value(at: drag.lane.y(at: midpoint.value) + point.y - drag.initial.y)
         if point.y != drag.initial.y { curve.adjustMidpoint(after: id, handleValue: value) }
         clip.setCurve(curve)
         drag.changed = true
-        do { drag.draft = try drag.original.updating(clip, slot: slot, duration: duration) }
+        do { drag.draft = try drag.original.updating(clip, layerID: layerID, duration: duration) }
         catch { drag.draft = nil; onError?(error) }
         keyDrag = drag
         onImagePreview?(drag.draft ?? drag.original)
@@ -1401,10 +1631,10 @@ private extension TimelineView {
             if let key = drag.lane.curve.key(near: time - clip.start) {
                 selectGraph(parameter, key: key.id)
                 onSeek?(clip.start + key.time)
-            } else if let slot = visuals.slot(of: clip.id) {
+            } else if let layerID = visuals.layerID(of: clip.id) {
                 let keyID = clip.setKey(parameter, at: time, value: drag.lane.value(at: drag.initial.y))
                 do {
-                    let updated = try visuals.updating(clip, slot: slot, duration: duration)
+                    let updated = try visuals.updating(clip, layerID: layerID, duration: duration)
                     onImageCommit?(updated, clip.id)
                     selectGraph(parameter, key: keyID)
                 } catch { onError?(error) }
@@ -1412,4 +1642,22 @@ private extension TimelineView {
         }
         needsDisplay = true
     }
+
+}
+
+@MainActor
+private final class LayerNameField: NSTextField, NSTextFieldDelegate {
+    var onFinish: ((String?) -> Void)?
+    init(string: String) {
+        super.init(frame: .zero); stringValue = string; delegate = self
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func controlTextDidEndEditing(_ obj: Notification) { finish(stringValue) }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
+        if selector == #selector(NSResponder.cancelOperation(_:)) { finish(nil); return true }
+        if selector == #selector(NSResponder.insertNewline(_:)) { finish(stringValue); return true }
+        return false
+    }
+    private func finish(_ value: String?) { let action = onFinish; onFinish = nil; action?(value) }
 }

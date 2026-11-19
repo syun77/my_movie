@@ -13,7 +13,7 @@ final class ChromaticAberrationTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip)), clip)
         clip.effects?.chromaticAberration?.amount = .nan
         XCTAssertFalse(clip.effects?.isValid == true)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).chromaticAberration)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).chromaticAberration)
     }
 
     func testReferencePulseTrimAndPersistence() throws {
@@ -77,10 +77,10 @@ final class ChromaticAberrationTests: XCTestCase {
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let views = all(editor)
         let add = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "色収差"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "色収差"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.chromaticAberration)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         for parameter in [ImageParameter.chromaticAmount, .chromaticAngle] {
             let field = try XCTUnwrap(views.compactMap { $0 as? DragValueField }.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
             XCTAssertEqual(field.doubleValue, parameter.effect?.initial)

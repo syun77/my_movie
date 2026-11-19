@@ -67,7 +67,7 @@ final class FocusLinesTests: XCTestCase {
         XCTAssertEqual(synced.evaluatedEffects(at: 0.3)?.focusLines?.opacity, 0)
         synced.audioModulations[.focusCount] = AudioModulation(source: .beat, amount: 0.5)
         XCTAssertEqual(synced.evaluatedEffects(at: 0)?.focusLines?.count, 101)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).focusLines)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).focusLines)
     }
     func testRenderedInkMasksScaleAndOpacity() throws {
         let canvas = try EffectTestCanvas()
@@ -94,11 +94,12 @@ final class FocusLinesTests: XCTestCase {
         clip.fixedValues[.opacity] = 100
         clip.effects?.mask = .init(geometry: ShapeGeometry(width: 0))
         try canvas.draw([(background, 1), (clip, 2)])
-        XCTAssertLessThan(canvas.pixel(x, y)[0], 20, "自画像マスクは集中線に作用しない")
+        XCTAssertEqual(canvas.pixel(x, y), [255, 255, 255, 255], "後段マスクは集中線も切り抜く")
         var owner = canvas.clip; owner.id = UUID()
-        owner.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below))
+        owner.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)))
         try canvas.draw([(background, 1), (clip, 2), (owner, 3)])
         XCTAssertEqual(canvas.pixel(x, y), [255, 255, 255, 255])
+        clip.effects?.mask = nil
         clip.effects?.focusLines?.color = .white
         background.effects?.solidBackground?.color = .black
         try canvas.draw([(background, 1), (clip, 2)])
@@ -124,10 +125,10 @@ final class FocusLinesTests: XCTestCase {
         editor.onCommit = { clip.effects = $0; load() }
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let add = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "集中線"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "集中線"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.focusLines)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         let fields = all(editor).compactMap { $0 as? DragValueField }
         for parameter in ImageEffects.FocusLines.parameters {
             let field = try XCTUnwrap(fields.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })

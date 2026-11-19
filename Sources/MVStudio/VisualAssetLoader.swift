@@ -19,17 +19,20 @@ actor VisualAssetLoader {
     }
 
     func validateUsed(track: VisualTrack, projectURL: URL, cancellation: ExportCancellation? = nil, includeSpine: Bool = true) async throws {
-        for id in Set(track.clips.compactMap(\.assetID)) {
+        for id in Set(track.visibleClips.compactMap(\.assetID)).union(track.visibleClips.flatMap { $0.activeParticleAssetIDs }) {
             try Task.checkCancellation(); try cancellation?.check()
             guard let asset = track.asset(id) else { throw StudioError.message("素材が見つかりません。") }
             if !includeSpine, asset.kind.spineDescriptor != nil { continue }
             let info: (kind: VisualAssetKind, thumbnail: CGImage)
             do { info = try await inspect(asset.reference.resolve(projectURL: projectURL), atlasURL: asset.kind.spineDescriptor?.atlasReference.resolve(projectURL: projectURL)) }
             catch is CancellationError { throw CancellationError() }
-            catch { throw StudioError.message("素材を確認してください: \(asset.name)（素材管理から置き換え可能）\n" + error.localizedDescription) }
+            catch {
+                let usages = track.particleUses(id).map { "粒子画像: 素材\(track.layer(track.layerID(of: $0.id))?.name ?? "レイヤー") \(TimelineGeometry.label($0.start))–\(TimelineGeometry.label($0.end))" }.joined(separator: "\n")
+                throw StudioError.message("素材を確認してください: \(asset.name)（素材管理から置き換え可能）\n" + usages + "\n" + error.localizedDescription)
+            }
             try Task.checkCancellation(); try cancellation?.check()
             guard info.kind.sameType(as: asset.kind),
-                  track.uses(id).allSatisfy({ clip in
+                  track.visibleClips.filter({ $0.assetID == id }).allSatisfy({ clip in
                       guard info.kind.accepts(clip.content) else { return false }
                       guard clip.content.sourceIn != nil, let length = info.kind.videoDuration else { return true }
                       return clip.sourceEnd <= length + 1e-9

@@ -20,6 +20,7 @@ final class PreviewView: NSView, MTKViewDelegate {
         }
     }
 
+    let handles = PreviewHandleView()
     private let surface = MTKView()
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private var renderer: MetalSceneRenderer?
@@ -45,11 +46,15 @@ final class PreviewView: NSView, MTKViewDelegate {
         } catch {
             showError(error)
         }
-        for child in [surface, errorLabel] {
+        for child in [surface, handles, errorLabel] {
             child.translatesAutoresizingMaskIntoConstraints = false
             addSubview(child)
         }
         NSLayoutConstraint.activate([
+            handles.leadingAnchor.constraint(equalTo: leadingAnchor),
+            handles.trailingAnchor.constraint(equalTo: trailingAnchor),
+            handles.topAnchor.constraint(equalTo: topAnchor),
+            handles.bottomAnchor.constraint(equalTo: bottomAnchor),
             surface.leadingAnchor.constraint(equalTo: leadingAnchor),
             surface.trailingAnchor.constraint(equalTo: trailingAnchor),
             surface.topAnchor.constraint(equalTo: topAnchor),
@@ -63,6 +68,7 @@ final class PreviewView: NSView, MTKViewDelegate {
     required init?(coder: NSCoder) { nil }
 
     func invalidateFrame() {
+        handles.refresh()
         dirty = true
         if !inFlight { surface.needsDisplay = true }
     }

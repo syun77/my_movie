@@ -24,7 +24,7 @@ final class ImageEffectsTests: XCTestCase {
         clip.effects?.colorCorrection?.brightness = 0
         clip.effects?.colorCorrection?.hue = .nan
         XCTAssertFalse(try XCTUnwrap(clip.effects).isValid)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).colorCorrection)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).colorCorrection)
     }
 
     func testShakeMultiplicationPersistenceAndTrim() throws {
@@ -88,8 +88,7 @@ final class ImageEffectsTests: XCTestCase {
         legacy["version"] = 4
         var layers = try XCTUnwrap(legacy["visualLayers"] as? [[String: Any]])
         var clips = try XCTUnwrap(layers[0]["clips"] as? [[String: Any]])
-        let effects = try XCTUnwrap(clips[0]["effects"] as? [String: Any])
-        var savedParticles = try XCTUnwrap(effects["particles"] as? [String: Any])
+        var savedParticles = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(particles)) as? [String: Any])
         savedParticles.removeValue(forKey: "curveStrength")
         savedParticles.removeValue(forKey: "emitters")
         let defaulted = try JSONDecoder().decode(ImageEffects.Particles.self, from: JSONSerialization.data(withJSONObject: savedParticles))

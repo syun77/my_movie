@@ -1,5 +1,7 @@
 # 放射光線
 
+演出の適用順・前段/後段の作用範囲は [演出チェーン](EFFECT_CHAIN.md) に従う。
+
 作成日・実装日: 2026-11-19。
 
 ## 目的と確定要件
@@ -70,11 +72,11 @@
 
 色を線形sRGBへ変換し、芯・にじみ・コアのRGB光量へ演出不透明度×クリップ不透明度を掛ける。既存の加算pipelineと同じくRGBのsource/destinationはone/one、alphaはzero/oneとして合成先alphaを維持する。中間の浮動小数点面では1超の光量を保持し、既存のSDR出力変換で収める。白背景では光線が見えにくくなることや、高光量で白飛びすることは加算の性質として扱う。黒い板は描かない。
 
-所有段の素材・既存追加描画の後、上段素材・スペクトラム・歌詞より前に置く。素材の変形・シェイク・色補正・ブラー・自画像マスクには追従しない画面座標の演出。上段からの下向きマスクは段全体に適用し、放射光線も対象とする。人物の背後へ置くには別段に透過人物を配置する。
+所有段の素材・既存追加描画の後、上段素材・スペクトラム・歌詞より前に置く。基本素材変形と独立した画面座標で生成し、後段のシェイク・色補正・ブラー・自クリップマスクに従う。上段からの下向きマスクは段全体に適用し、放射光線も対象とする。人物の背後へ置くには別段に透過人物を配置する。
 
 ## 保存・編集との接続
 
-`ImageEffects.radialRays: RadialRays?` に設定、isEnabled、seed、phaseOffsetを保存する。未追加はnil。現在のProjectFile version10内で新規optional演出として扱い、既存の集中線と保存名を共有しない。不正な非有限値・範囲外値を検証する。保存項目はlength/squash、キー識別子はraysLength/raysSquash。幅/高さ形式の互換読込は設けない。
+`ImageEffects.radialRays: RadialRays?` に設定、isEnabled、seed、phaseOffsetを保存する。未追加はnil。現在のProjectFile version13内で新規optional演出として扱い、既存の集中線と保存名を共有しない。不正な非有限値・範囲外値を検証する。保存項目はlength/squash、キー識別子はraysLength/raysSquash。幅/高さ形式の互換読込は設けない。
 
 ImageParameter / EffectAutomationへ14数値の範囲・既定値・読書きを登録し、ParameterEvaluatorの手動値→項目別音楽同期→範囲制限→本数丸めを共有する。色と更新頻度以外を描画専用経路で評価し直さない。
 

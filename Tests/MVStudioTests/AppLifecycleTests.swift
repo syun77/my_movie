@@ -151,15 +151,15 @@ final class AppLifecycleTests: XCTestCase {
 
         var savedHeights = TimelineHeights()
         savedHeights.viewport = 245
-        savedHeights[.visual(2)] = 110
+        savedHeights[.visual(editor.timeline.visuals.layers[1].id)] = 110
         editor.restoreTimelineHeights(savedHeights)
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.timeline.frame.height, 245, accuracy: 1)
-        XCTAssertEqual(editor.timeline.heights[.visual(2)], 110)
+        XCTAssertEqual(editor.timeline.heights[.visual(editor.timeline.visuals.layers[1].id)], 110)
         editor.restoreTimelineHeights(TimelineHeights())
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(editor.timeline.frame.height, originalTimelineHeight, accuracy: 1)
-        XCTAssertEqual(editor.timeline.heights[.visual(2)], 46)
+        XCTAssertEqual(editor.timeline.heights[.visual(editor.timeline.visuals.layers[1].id)], 46)
         XCTAssertEqual(layoutCommits, 4, "復元時は保存通知を送らない")
     }
 }

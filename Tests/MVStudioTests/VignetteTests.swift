@@ -15,7 +15,7 @@ final class VignetteTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(VisualClip.self, from: JSONEncoder().encode(clip)), clip)
         clip.effects?.vignette?.strength = .nan
         XCTAssertFalse(clip.effects?.isValid == true)
-        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{}".utf8)).vignette)
+        XCTAssertNil(try JSONDecoder().decode(ImageEffects.self, from: Data("{\"nodes\":[],\"isBypassed\":false}".utf8)).vignette)
     }
 
     func testRenderingAndCacheInvalidation() throws {
@@ -182,10 +182,10 @@ final class VignetteTests: XCTestCase {
         func all(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(all) }
         let views = all(editor)
         let add = try XCTUnwrap(views.compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "Vignette（周辺減光）"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "Vignette（周辺減光）"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertNotNil(clip.effects?.vignette)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(try XCTUnwrap(add.menu?.effectItem(titled: item.title + "（追加済み）")).isEnabled)
         for parameter in [ImageParameter.vignetteStrength, .vignetteSize, .vignetteSoftness] {
             let field = try XCTUnwrap(views.compactMap { $0 as? DragValueField }.first { $0.identifier?.rawValue == "visuals.value." + parameter.rawValue })
             XCTAssertEqual(field.doubleValue, parameter.effect?.initial)

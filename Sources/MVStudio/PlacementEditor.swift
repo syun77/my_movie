@@ -13,6 +13,7 @@ final class PlacementEditor: NSViewController {
     var onVisibleSpanChange: ((Double) -> Void)?
     var onSnapDivisionChange: ((TimelineSnapDivision) -> Void)?
     var onWholeSongChange: ((Bool) -> Void)?
+    var onTabChange: (() -> Void)?
     var onModeChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
     private let tabs = NSSegmentedControl(labels: ["歌詞", "画像・演出", "スペクトラム"], trackingMode: .selectOne, target: nil, action: nil)
@@ -115,6 +116,7 @@ final class PlacementEditor: NSViewController {
     }
 
     func restoreTab(_ tab: Tab) {
+        if selectedTab != tab { onTabChange?() }
         cancelTimelineEdit()
         if selectedTab == .spectrum && tab != .spectrum { spectrum.endColorEditing() }
         selectedTab = tab
@@ -267,6 +269,7 @@ final class PlacementEditor: NSViewController {
 
     func canEditClip(_ command: ClipEditCommand, pasteboard: NSPasteboard) -> Bool {
         guard available, timeline.canEditClips else { return false }
+        if visualMode, command != .copy, !visuals.track.canEdit(timeline.selectedLayerID) { return false }
         if command == .paste {
             return pasteSource(from: pasteboard) != nil
         }
@@ -274,7 +277,7 @@ final class PlacementEditor: NSViewController {
     }
 
     func editClip(_ command: ClipEditCommand, pasteboard: NSPasteboard) {
-        guard available, timeline.canEditClips else { return }
+        guard canEditClip(command, pasteboard: pasteboard) else { return }
         do {
             switch command {
             case .copy, .cut:
@@ -285,18 +288,26 @@ final class PlacementEditor: NSViewController {
                 switch pasteSource(from: pasteboard) {
                 case let .lyrics(clip):
                     try insertLyricCopy(clip, at: timeline.currentTime)
-                case let .visual(clip, url, kind):
+                case let .visual(clip, url, kind, particleAssets):
                     guard let projectURL = visuals.projectURL else { return }
                     var track = visuals.track
                     var source = clip
                     if let url { source.assetID = track.register(url: url, projectURL: projectURL, kind: kind) }
-                    try insertImageCopy(source, in: track, at: timeline.currentTime, slot: timeline.selectedSlot)
+                    var mapped: [UUID: UUID] = [:]
+                    for asset in particleAssets {
+                        mapped[asset.id] = track.register(url: asset.reference.resolve(projectURL: URL(fileURLWithPath: "/")), projectURL: projectURL, kind: .still)
+                    }
+                    for node in source.effects?.nodes ?? [] {
+                        guard let id = node.particleAppearance?.assetID, let replacement = mapped[id] else { continue }
+                        source.effects?.editNode(node.id) { $0.particleAppearance?.assetID = replacement }
+                    }
+                    try insertImageCopy(source, in: track, at: timeline.currentTime, layerID: timeline.selectedLayerID)
                 case nil: break
                 }
             case .duplicate:
                 if visualMode {
-                    guard let clip = selectedImage, let slot = visuals.track.slot(of: clip.id) else { return }
-                    try insertImageCopy(clip, in: visuals.track, at: clip.end, slot: slot)
+                    guard let clip = selectedImage, let layerID = visuals.track.layerID(of: clip.id) else { return }
+                    try insertImageCopy(clip, in: visuals.track, at: clip.end, layerID: layerID)
                 } else if let clip = selectedLyric {
                     try insertLyricCopy(clip, at: clip.end)
                 }
@@ -308,7 +319,7 @@ final class PlacementEditor: NSViewController {
         let source = ClipClipboard.read(from: pasteboard)
         switch source {
         case .lyrics where !visualMode: return source
-        case let .visual(_, url, _) where visualMode && visuals.projectURL != nil && (url?.isFileURL ?? true): return source
+        case let .visual(_, url, _, _) where visualMode && visuals.projectURL != nil && (url?.isFileURL ?? true): return source
         default: return nil
         }
     }
@@ -316,8 +327,13 @@ final class PlacementEditor: NSViewController {
     private func copySelection(to pasteboard: NSPasteboard) throws -> Bool {
         if visualMode {
             guard let clip = selectedImage else { return false }
+            let particleAssets = visuals.track.assets.filter { clip.particleAssetIDs.contains($0.id) }.map { asset -> VisualAsset in
+                var copy = asset
+                copy.reference = AssetReference(url: asset.reference.resolve(projectURL: visuals.projectURL ?? URL(fileURLWithPath: "/")), projectURL: URL(fileURLWithPath: "/"))
+                return copy
+            }
             if clip.assetID == nil {
-                try ClipClipboard.visual(clip, assetURL: nil).write(to: pasteboard)
+                try ClipClipboard.visual(clip, assetURL: nil, particleAssets: particleAssets).write(to: pasteboard)
                 return true
             }
             guard let asset = visuals.track.asset(clip.assetID) else { return false }
@@ -328,7 +344,7 @@ final class PlacementEditor: NSViewController {
                 guard !asset.reference.relative else { return false }
                 url = URL(fileURLWithPath: asset.reference.path)
             }
-            try ClipClipboard.visual(clip, assetURL: url, kind: asset.kind.rebased(from: visuals.projectURL ?? URL(fileURLWithPath: "/"), to: URL(fileURLWithPath: "/"))).write(to: pasteboard)
+            try ClipClipboard.visual(clip, assetURL: url, kind: asset.kind.rebased(from: visuals.projectURL ?? URL(fileURLWithPath: "/"), to: URL(fileURLWithPath: "/")), particleAssets: particleAssets).write(to: pasteboard)
         } else {
             guard let clip = selectedLyric else { return false }
             try ClipClipboard.lyrics(clip).write(to: pasteboard)
@@ -351,9 +367,10 @@ final class PlacementEditor: NSViewController {
         lyrics.commit(track, selectedID: clip.id)
     }
 
-    private func insertImageCopy(_ source: VisualClip, in track: VisualTrack, at time: Double, slot: Int) throws {
+    private func insertImageCopy(_ source: VisualClip, in track: VisualTrack, at time: Double, layerID: UUID) throws {
         var clip = source
         clip.id = UUID()
+        for node in clip.effects?.allNodes ?? [] { clip.effects?.editNode(node.id) { $0.id = UUID() } }
         clip.start = time
         clip.end = time + (source.end - source.start)
         for curve in clip.curves.indices {
@@ -362,7 +379,7 @@ final class PlacementEditor: NSViewController {
             }
         }
         if var playback = clip.content.spinePlayback { playback.renewKeyIDs(); clip.content = .spine(playback) }
-        let updated = try track.inserting(clip, slot: slot, duration: duration)
+        let updated = try track.inserting(clip, layerID: layerID, duration: duration)
         visuals.commit(updated, selectedID: clip.id)
     }
 

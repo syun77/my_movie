@@ -16,6 +16,7 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
     )
 
     private var fields: [SpectrumLayout.Field: DragValueField] = [:]
+    private var handleLayout: SpectrumLayout?
     private var layout = SpectrumLayout()
 
     override func loadView() {
@@ -31,14 +32,16 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
         }
 
         presets.button.identifier = NSUserInterfaceItemIdentifier("spectrum.presets")
+        let positionX = numberField(.x, title: "X")
+        let positionY = numberField(.y, title: "Y")
         let root = NSStackView(views: [
             row([shown, presets.button]),
             row([label("表示形式"), shape, label("色", width: 22), color]),
             row([label("分解度"), resolution]),
             row([label("サイズ"), label("幅", width: 20), numberField(.width, title: "幅"),
                  label("高さ", width: 28), numberField(.height, title: "高さ")]),
-            row([label("位置"), label("X", width: 20), numberField(.x, title: "X"),
-                 label("Y", width: 28), numberField(.y, title: "Y")]),
+            row([label("位置"), PreviewHandleLabel("X", field: positionX), positionX,
+                 PreviewHandleLabel("Y", field: positionY), positionY]),
             NSTextField(labelWithString: "サイズと位置は1080p基準のpx。原点は映像の左上。"),
             row([label("バーの余白"), numberField(.barGap, title: "バーの余白"), NSTextField(labelWithString: "%")])
         ])
@@ -68,6 +71,7 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
 
     private func numberField(_ parameter: SpectrumLayout.Field, title: String) -> DragValueField {
         let field = DragValueField(frame: .zero)
+        if parameter == .x || parameter == .y { field.previewHandleProvider = { [weak self] in self?.previewHandleTarget() } }
         field.identifier = NSUserInterfaceItemIdentifier("spectrum.\(parameter)")
         field.setAccessibilityLabel(title)
         field.alignment = .right
@@ -164,5 +168,38 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
     @objc private func changeSettings() {
         updateGapAvailability()
         onChange?(currentSettings)
+    }
+}
+
+@MainActor
+extension SpectrumEditor {
+    func previewHandleTarget() -> PreviewHandleTarget? {
+        guard fields[.x]?.isEnabled == true else { return nil }
+        let valid: () -> Bool = { [weak self] in self?.fields[.x]?.isEnabled == true && self?.shown.state == .on }
+        return PreviewHandleTarget(id: "spectrum.position", title: "スペクトラムの位置", isValid: valid, isVisible: valid,
+            position: { [weak self] in
+                guard let self else { return .zero }
+                let value = self.handleLayout ?? self.layout
+                return CGPoint(x: value.x, y: value.y)
+            }, begin: { [weak self] in
+                guard valid(), let self else { return nil }
+                let original = self.layout
+                var draft = original
+                return PreviewHandleEdit(update: { [weak self] point in
+                    guard let self, valid() else { return }
+                    let xRange = SpectrumLayout.Field.x.range, yRange = SpectrumLayout.Field.y.range
+                    draft.x = min(xRange.upperBound, max(xRange.lowerBound, Int(point.x.rounded())))
+                    draft.y = min(yRange.upperBound, max(yRange.lowerBound, Int(point.y.rounded())))
+                    self.handleLayout = draft
+                    self.fields[.x]?.integerValue = draft.x; self.fields[.y]?.integerValue = draft.y
+                    self.onLayoutPreview?(draft)
+                }, finish: { [weak self] commit in
+                    guard let self else { return }
+                    self.handleLayout = nil
+                    self.onLayoutPreview?(nil)
+                    if commit, valid(), draft != original { self.layout = draft; self.changeSettings() }
+                    self.fields[.x]?.integerValue = self.layout.x; self.fields[.y]?.integerValue = self.layout.y
+                })
+            })
     }
 }

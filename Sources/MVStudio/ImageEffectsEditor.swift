@@ -2,6 +2,11 @@ import AppKit
 
 @MainActor
 final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
+    var particleThumbnails: [UUID: NSImage] = [:]
+    var missingParticleImages = Set<UUID>()
+    var onImportParticle: ((UUID, URL) -> Void)?
+    private var particleEditors: [EffectKind: ParticleAppearanceEditor] = [:]
+    var handleTarget: ((ImageParameter) -> PreviewHandleTarget?)?
     var onDeleteEmitter: ((ImageEffects, Int) -> Void)?
     var onCreateAutomation: ((ImageParameter) -> Void)?
     var onEditMusic: ((ImageParameter) -> Void)?
@@ -9,67 +14,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     var onRemoveAutomation: ((ImageParameter) -> Void)?
     var onCommit: ((ImageEffects) -> Void)?
     var onPreview: ((ImageEffects?) -> Void)?
-    private enum Kind: Int, CaseIterable {
-        case lensFlare, crossGlare, chromaticAberration, vignette, warpFlight, radialFocus, zoomLoop, octgrams, radialBlur, blur, bloom, particles, embers, snow, orbs, focusLines, sharpFocus, straightLines, radialRays, shake, colorCorrection, solidBackground, shape, mask
-
-        var title: String {
-            switch self {
-            case .shape: return "図形"
-            case .mask: return "マスク"
-            case .solidBackground: return "単色背景"
-            case .radialBlur: return "放射ブラー"
-            case .blur: return "ガウスブラー"
-            case .lensFlare: return "レンズフレア"
-            case .crossGlare: return "クロスグレア"
-            case .bloom: return "ブルーム"
-            case .particles: return "光の粒子"
-            case .embers: return "舞い上がる火の粉"
-            case .snow: return "雪"
-            case .radialFocus: return "集中線２"
-            case .zoomLoop: return "拡大ループ"
-            case .octgrams: return "八芒星"
-            case .warpFlight: return "ワープ航行"
-        case .orbs: return "光の粒子2"
-            case .focusLines: return "集中線"
-        case .sharpFocus: return "集中線３"
-        case .straightLines: return "直線効果線"
-        case .radialRays: return "放射光線"
-            case .shake: return "シェイク"
-            case .chromaticAberration: return "色収差"
-            case .vignette: return "Vignette（周辺減光）"
-        case .colorCorrection: return "色調補正"
-            }
-        }
-
-        func exists(in effects: ImageEffects) -> Bool {
-            switch self {
-            case .shape: return effects.shape != nil
-            case .mask: return effects.mask != nil
-            case .solidBackground: return effects.solidBackground != nil
-            case .radialBlur: return effects.radialBlur != nil
-            case .blur: return effects.blur != nil
-            case .lensFlare: return effects.lensFlare != nil
-            case .crossGlare: return effects.crossGlare != nil
-            case .bloom: return effects.bloom != nil
-            case .particles: return effects.particles != nil
-            case .embers: return effects.embers != nil
-            case .snow: return effects.snow != nil
-            case .radialFocus: return effects.radialFocus != nil
-            case .zoomLoop: return effects.zoomLoop != nil
-            case .octgrams: return effects.octgrams != nil
-            case .warpFlight: return effects.warpFlight != nil
-        case .orbs: return effects.orbs != nil
-            case .focusLines: return effects.focusLines != nil
-        case .sharpFocus: return effects.sharpFocus != nil
-        case .straightLines: return effects.straightLines != nil
-        case .radialRays: return effects.radialRays != nil
-            case .shake: return effects.shake != nil
-            case .chromaticAberration: return effects.chromaticAberration != nil
-            case .vignette: return effects.vignette != nil
-        case .colorCorrection: return effects.colorCorrection != nil
-            }
-        }
-    }
+    private typealias Kind = EffectKind
 
     private struct NumberInput {
         let field: DragValueField
@@ -81,7 +26,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private let disclosure = NSButton(title: "▸ 追加演出", target: nil, action: nil)
     private let outside = NSTextField(labelWithString: "クリップ区間外")
     private let add = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let selection = NSPopUpButton()
+    private let chainList = EffectChainList()
+    private let bypass = NSButton(checkboxWithTitle: "チェーンをバイパス", target: nil, action: nil)
+    private let inputLabel = NSTextField(labelWithString: "素材・基本変形 ↓ 上から下へ適用")
+    private let outputLabel = NSTextField(labelWithString: "↓ クリップ出力（不透明度・直下段マスク）")
+    private let outputMaskButton = NSButton(title: "直下段のマスクを設定", target: nil, action: nil)
+    private var detailsOpen = true
     private let enabled = NSButton(checkboxWithTitle: "有効", target: nil, action: nil)
     private let remove = NSButton(title: "削除", target: nil, action: nil)
     private let focusColor = NSColorWell()
@@ -91,12 +41,17 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private let straightColor = NSColorWell()
     private let straightShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let sharpColor = NSColorWell()
+    private let binarizationDarkColor = NSColorWell()
+    private let binarizationLightColor = NSColorWell()
+    private let binarizationSwap = NSButton(title: "色を入れ替え", target: nil, action: nil)
+    private let sobelColor = NSColorWell()
+    private let sobelMode = NSPopUpButton()
     private let shapeColor = NSColorWell()
     private let shapeKind = NSPopUpButton()
     private let maskKind = NSPopUpButton()
-    private let maskTarget = NSPopUpButton()
     private let flareAutomatic = NSButton(checkboxWithTitle: "自動移動", target: nil, action: nil)
     private let maskInverted = NSButton(checkboxWithTitle: "反転", target: nil, action: nil)
+    private let belowTarget = NSTextField(wrappingLabelWithString: "")
     private let maskStatus = NSTextField(wrappingLabelWithString: "")
     private let backgroundNotice = NSButton(checkboxWithTitle: "単色背景が有効", target: nil, action: nil)
     private let copyShape = NSButton(title: "図形をマスクへコピー", target: nil, action: nil)
@@ -116,7 +71,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private var effects = ImageEffects()
     private var editable = false
     private var expanded = false
-    private lazy var toolbar = row([selection, enabled, remove, add])
+    private lazy var toolbar = row([enabled, remove, add])
     var time = 0.0 { didSet { updateOutside(); updateMaskStatus() } }
 
     init() {
@@ -129,20 +84,14 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         outside.textColor = .secondaryLabelColor
         outside.font = .systemFont(ofSize: 11)
         add.identifier = NSUserInterfaceItemIdentifier("visuals.effects.add")
-        add.addItem(withTitle: "＋ 演出を追加")
-        add.item(at: 0)?.tag = -1
-        add.menu?.autoenablesItems = false
-        for kind in Kind.allCases {
-            let item = NSMenuItem(title: kind.title, action: #selector(addEffect(_:)), keyEquivalent: "")
-            item.target = self; item.tag = kind.rawValue
-            add.menu?.addItem(item)
-        }
-        selection.target = self; selection.action = #selector(selectEffect)
-        selection.setAccessibilityLabel("設定する演出")
+        add.setAccessibilityLabel("演出をカテゴリから追加")
         enabled.target = self; enabled.action = #selector(toggleEffect)
         remove.target = self; remove.action = #selector(removeEffect)
         for (well, action, label) in [(color, #selector(changeColor), "光の粒子の色"),
                                       (backgroundColor, #selector(changeBackgroundColor), "単色背景の色"),
+                                      (binarizationDarkColor, #selector(changeBinarizationColor(_:)), "2値化の暗部の色"),
+                                      (binarizationLightColor, #selector(changeBinarizationColor(_:)), "2値化の明部の色"),
+                                      (sobelColor, #selector(changeSobelColor), "Sobelの輪郭色"),
                                       (shapeColor, #selector(changeShapeColor), "図形の色"),
                                       (sharpColor, #selector(changeSharpColor), "集中線３の色"),
                                       (straightColor, #selector(changeStraightColor), "直線効果線の色"),
@@ -168,9 +117,27 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         typealias Chromatic = ImageEffects.ChromaticAberration
         contents[.chromaticAberration] = row(number("ずれ量 px", .chromaticAmount, \.chromaticAberration, \.amount, Chromatic().amount, Chromatic.amountRange)
             + number("角度 °", .chromaticAngle, \.chromaticAberration, \.angle, Chromatic().angle, Chromatic.angleRange))
+        sobelColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.sobel.color")
+        sobelMode.identifier = NSUserInterfaceItemIdentifier("visuals.effects.sobel.mode")
+        sobelMode.addItems(withTitles: ImageEffects.SobelChromatic.Mode.allCases.map(\.title))
+        sobelMode.setAccessibilityLabel("Sobelの表示モード")
+        sobelMode.target = self; sobelMode.action = #selector(changeSobelMode)
+        contents[.sobelChromatic] = NSStackView(views:
+            [row([NSTextField(labelWithString: "表示モード"), sobelMode])]
+            + ImageEffects.SobelChromatic.parameters.map { row(numeric($0)) }
+            + [row([NSTextField(labelWithString: "輪郭色"), sobelColor])])
         contents[.vignette] = row(number("強さ %", .vignetteStrength, \.vignette, \.strength, 70, 0...100)
             + number("範囲 %", .vignetteSize, \.vignette, \.size, 70, 0...100)
             + number("ぼかし %", .vignetteSoftness, \.vignette, \.softness, 60, 0...100))
+        binarizationDarkColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.binarization.darkColor")
+        binarizationLightColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.binarization.lightColor")
+        binarizationSwap.identifier = NSUserInterfaceItemIdentifier("visuals.effects.binarization.swap")
+        binarizationSwap.target = self; binarizationSwap.action = #selector(swapBinarizationColors)
+        contents[.binarization] = NSStackView(views: [
+            row(numeric(.binarizationThreshold) + numeric(.binarizationAmount)),
+            row([NSTextField(labelWithString: "暗部"), binarizationDarkColor,
+                 NSTextField(labelWithString: "明部"), binarizationLightColor, binarizationSwap])
+        ])
         typealias Correction = ImageEffects.ColorCorrection
         contents[.colorCorrection] = row(number("色相 °", .colorHue, \.colorCorrection, \.hue, Correction().hue, Correction.hueRange)
             + number("明度 %", .colorBrightness, \.colorCorrection, \.brightness, Correction().brightness, Correction.brightnessRange)
@@ -235,17 +202,57 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         contents[.zoomLoop] = NSStackView(views: ImageEffects.ZoomLoop.parameters.map { row(numeric($0)) })
         contents[.octgrams] = NSStackView(views: ImageEffects.Octgrams.parameters.map { row(numeric($0)) })
         contents[.warpFlight] = NSStackView(views: ImageEffects.WarpFlight.parameters.map { row(numeric($0)) })
+        for kind in [Kind.particles, .embers, .snow, .orbs] {
+            let editor = ParticleAppearanceEditor()
+            particleEditors[kind] = editor
+            editor.onChange = { [weak self] value in
+                guard let self, self.editable else { return }
+                var result = self.effects; result.setAppearance(value, for: kind); self.onCommit?(result)
+            }
+            editor.onImport = { [weak self] url in
+                guard let self, let node = self.effects.nodes.first(where: { $0.kind == kind }) else { return }
+                self.onImportParticle?(node.id, url)
+            }
+            contents[kind]?.addArrangedSubview(editor)
+            for parameter in ImageParameter.allCases where parameter.effectKind == kind && parameter.rawValue.contains("Image") {
+                contents[kind]?.addArrangedSubview(row(numeric(parameter)))
+            }
+        }
         buildFocusControls()
         buildSharpControls()
         buildStraightControls()
         buildRaysControls()
         buildShapeControls()
-        for kind in [Kind.lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
+        for kind in [Kind.sobelChromatic, .lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
             contents[kind]?.orientation = .vertical
             contents[kind]?.alignment = .leading
             contents[kind]?.spacing = 4
         }
         addArrangedSubview(row([disclosure, outside]))
+        bypass.target = self; bypass.action = #selector(toggleBypass)
+        bypass.identifier = NSUserInterfaceItemIdentifier("visuals.effects.bypass")
+        outputMaskButton.target = self; outputMaskButton.action = #selector(selectOutputMask)
+        chainList.onSelect = { [weak self] id in
+            guard let self, let node = self.effects.nodes.first(where: { $0.id == id }), self.window?.makeFirstResponder(nil) != false else { return }
+            self.cancelDrag(); self.deactivateColors()
+            if self.selected == node.kind { self.detailsOpen.toggle() } else { self.detailsOpen = true }
+            self.selected = node.kind; self.updateControls()
+        }
+        chainList.onToggle = { [weak self] id in
+            guard let self else { return }
+            var value = self.effects; value.editNode(id) { $0.isEnabled.toggle() }; self.onCommit?(value)
+        }
+        chainList.onMove = { [weak self] id, index, preview in
+            guard let self else { return }
+            var value = self.effects; value.move(id, to: index)
+            if preview { self.onPreview?(value) } else { self.onCommit?(value) }
+        }
+        chainList.onCancel = { [weak self] in self?.onPreview?(nil) }
+        chainList.menuForNode = { [weak self] id in self?.chainMenu(id) ?? NSMenu() }
+        for view in [bypass, inputLabel, chainList, outputLabel, outputMaskButton] {
+            addArrangedSubview(view)
+        }
+        chainList.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         addArrangedSubview(toolbar)
         addArrangedSubview(backgroundNotice)
         for kind in Kind.allCases {
@@ -256,9 +263,17 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
 
     required init?(coder: NSCoder) { nil }
 
+    func updateLayerContext(_ clip: VisualClip?, track: VisualTrack?) {
+        let index = clip.flatMap { clip in track?.layers.firstIndex { $0.clips.contains { $0.id == clip.id } } }
+        let name = index.flatMap { $0 > 0 ? track?.layers[$0 - 1].name : nil }
+        belowTarget.stringValue = "対象: " + (name ?? "なし（直下のレイヤーがありません）")
+    }
+
     func load(_ clip: VisualClip?, editable: Bool, track: VisualTrack? = nil) {
+        updateLayerContext(clip, track: track)
         if let track { self.track = track }
-        if clip?.id != shownClip?.id { selectedEmitter = 0 }
+        if clip?.id != shownClip?.id || !editable { cancelDrag() }
+        if clip?.id != shownClip?.id { selectedEmitter = 0; selected = nil; detailsOpen = true }
         if clip?.id != shownClip?.id || !editable { deactivateColors() }
         shownClip = clip
         effects = clip?.effects ?? ImageEffects()
@@ -268,7 +283,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
 
     @discardableResult
     func cancelDrag() -> Bool {
-        numbers.contains { $0.field.cancelNumberDrag() }
+        chainList.cancelDrag() || numbers.contains { $0.field.cancelNumberDrag() }
     }
 
     private func row(_ views: [NSView]) -> NSStackView {
@@ -310,13 +325,17 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                         update: @escaping (ImageEffects, Double) -> ImageEffects) -> [NSView] {
         let field = DragValueField(frame: .zero)
         field.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        field.previewHandleProvider = { [weak self] in
+            guard let parameter = parameter() else { return nil }
+            return self?.handleTarget?(parameter)
+        }
         field.alignment = .right
         field.knobRange = range
         field.setAccessibilityLabel(accessibilityLabel ?? title)
         field.delegate = self
         let step: Double
         switch parameter() {
-        case .raysSquash: step = 0.25
+        case .raysSquash, .sobelWidth: step = 0.25
         case .raysThickness: step = 0.1
         case .straightThickness: step = 0.5
         default: step = 1
@@ -341,7 +360,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             field.onRemoveMusic = { [weak self] in if let parameter = parameter() { self?.onRemoveMusic?(parameter) } }
         }
         numbers.append(NumberInput(field: field, parameter: parameter, read: read, write: write))
-        let group = NSStackView(views: [NSTextField(labelWithString: title), field])
+        let group = NSStackView(views: [PreviewHandleLabel(title, field: field), field])
         group.orientation = .vertical
         group.alignment = .leading
         group.spacing = 2
@@ -363,29 +382,37 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     }
 
     private func updateControls() {
-        let kinds = Kind.allCases.filter { $0.exists(in: effects) }
-        if selected.map({ !kinds.contains($0) }) ?? true { selected = kinds.first }
-        if selection.itemArray.map(\.tag) != kinds.map(\.rawValue) {
-            selection.removeAllItems()
-            for kind in kinds {
-                selection.addItem(withTitle: kind.title)
-                selection.lastItem?.tag = kind.rawValue
-            }
+        for (kind, editor) in particleEditors {
+            editor.load(effects.appearance(kind) ?? ParticleAppearance(), assets: track.assets,
+                        thumbnails: particleThumbnails, missing: missingParticleImages, editable: editable)
         }
-        if let selected { selection.selectItem(withTag: selected.rawValue) }
+        let kinds = effects.allNodes.map(\.kind)
+        if selected.map({ !kinds.contains($0) }) ?? true { selected = kinds.first }
+        let menu = additionMenu()
+        let title = NSMenuItem(title: "＋ 演出を追加", action: nil, keyEquivalent: "")
+        title.tag = -1
+        menu.insertItem(title, at: 0)
+        add.menu = menu
         for kind in Kind.allCases {
-            add.menu?.item(withTag: kind.rawValue)?.isEnabled = editable && !kind.exists(in: effects)
-            contents[kind]?.isHidden = !expanded || selected != kind
+            contents[kind]?.isHidden = !expanded || !detailsOpen || selected != kind
         }
         disclosure.isEnabled = editable || expanded
         disclosure.title = expanded ? "▾ 追加演出" : "▸ 追加演出"
+        for view in [bypass, inputLabel, chainList, outputLabel, outputMaskButton] { view.isHidden = !expanded }
+        bypass.state = effects.isBypassed ? .on : .off; bypass.isEnabled = editable
+        outputMaskButton.isEnabled = editable
+        chainList.detailsOpen = detailsOpen
+        chainList.nodes = effects.nodes
+        chainList.editable = editable
+        chainList.selectedID = effects.nodes.first { $0.kind == selected }?.id
         toolbar.isHidden = !expanded
-        selection.isEnabled = editable && !kinds.isEmpty
-        add.isEnabled = editable && kinds.count < Kind.allCases.count
-        enabled.isEnabled = selection.isEnabled
-        remove.isEnabled = selection.isEnabled
+        add.isEnabled = editable
+        enabled.isEnabled = editable && !kinds.isEmpty
+        remove.isEnabled = enabled.isEnabled
         switch selected {
+        case .binarization: enabled.state = effects.binarization?.isEnabled == true ? .on : .off
         case .shape: enabled.state = effects.shape?.isEnabled == true ? .on : .off
+        case .belowMask: enabled.state = effects.belowMask?.isEnabled == true ? .on : .off
         case .mask: enabled.state = effects.mask?.isEnabled == true ? .on : .off
         case .solidBackground: enabled.state = effects.solidBackground?.isEnabled == true ? .on : .off
         case .radialBlur: enabled.state = effects.radialBlur?.isEnabled == true ? .on : .off
@@ -398,6 +425,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .snow: enabled.state = effects.snow?.isEnabled == true ? .on : .off
         case .shake: enabled.state = effects.shake?.isEnabled == true ? .on : .off
         case .chromaticAberration: enabled.state = effects.chromaticAberration?.isEnabled == true ? .on : .off
+        case .sobelChromatic: enabled.state = effects.sobelChromatic?.isEnabled == true ? .on : .off
         case .vignette: enabled.state = effects.vignette?.isEnabled == true ? .on : .off
         case .colorCorrection: enabled.state = effects.colorCorrection?.isEnabled == true ? .on : .off
         case .focusLines: enabled.state = effects.focusLines?.isEnabled == true ? .on : .off
@@ -412,7 +440,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case nil: enabled.state = .off
         }
         if let particles = effects.particles, !color.isActive { color.color = particles.color.nsColor }
-        color.isEnabled = editable
+        color.isEnabled = editable && !(effects.appearance(.particles).map { $0.usesImage && $0.colorMode == .original } ?? false)
         if let focus = effects.focusLines, !focusColor.isActive { focusColor.color = focus.color.nsColor }
         focusColor.isEnabled = editable
         if let sharp = effects.sharpFocus, !sharpColor.isActive { sharpColor.color = sharp.color.nsColor }
@@ -428,12 +456,29 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         backgroundColor.isEnabled = editable
         flareAutomatic.state = effects.lensFlare?.automaticMotion == true ? .on : .off
         flareAutomatic.isEnabled = editable && effects.lensFlare != nil
+        if let value = effects.binarization {
+            if !binarizationDarkColor.isActive { binarizationDarkColor.color = value.darkColor.nsColor }
+            if !binarizationLightColor.isActive { binarizationLightColor.color = value.lightColor.nsColor }
+        }
+        binarizationDarkColor.isEnabled = editable
+        binarizationLightColor.isEnabled = editable
+        binarizationSwap.isEnabled = editable && effects.binarization != nil
+        if let value = effects.sobelChromatic {
+            sobelMode.selectItem(at: ImageEffects.SobelChromatic.Mode.allCases.firstIndex(of: value.mode) ?? 0)
+            if !sobelColor.isActive { sobelColor.color = value.edgeColor.nsColor }
+        }
+        sobelMode.isEnabled = editable && effects.sobelChromatic != nil
+        sobelColor.isEnabled = sobelMode.isEnabled && effects.sobelChromatic?.mode != .chromatic
         updateShapeControls()
         updateEmitterControls()
         for input in numbers {
             let value = input.read(effects)
             let automaticPosition = effects.lensFlare?.automaticMotion == true && input.parameter().map { [ImageParameter.flareX, .flareY].contains($0) } == true
-            input.field.isEnabled = editable && value != nil && !automaticPosition
+            let appearance = input.parameter()?.effectKind.flatMap { effects.appearance($0) }
+            let imageDisabled = input.parameter().map { $0.rawValue.contains("Image") && appearance?.usesImage != true } ?? false
+            let saturationDisabled = input.parameter() == .orbsSaturation && appearance?.usesImage == true && appearance?.colorMode == .original
+            let sobelDisabled = input.parameter().map { $0.effectKind == .sobelChromatic && effects.sobelChromatic?.uses($0) == false } ?? false
+            input.field.isEnabled = editable && value != nil && !automaticPosition && !imageDisabled && !saturationDisabled && !sobelDisabled
             input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }
             input.field.hasMusic = input.parameter().flatMap { shownClip?.audioModulations[$0] } != nil
             input.field.hasAutomation = input.parameter().flatMap { shownClip?.curve($0) } != nil
@@ -492,80 +537,37 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         updateControls()
     }
 
-    @objc private func selectEffect() {
-        let kind = Kind(rawValue: selection.selectedTag())
-        guard window?.makeFirstResponder(nil) != false else { return }
-        cancelDrag()
-        deactivateColors()
-        selected = kind
-        updateControls()
-    }
-
-    @objc private func addEffect(_ sender: NSMenuItem) {
-        guard editable, let kind = Kind(rawValue: sender.tag), !kind.exists(in: effects),
-              window?.makeFirstResponder(nil) != false else { return }
-        var result = effects
-        switch kind {
-        case .shape: result.shape = .init()
-        case .mask: result.mask = .init()
-        case .solidBackground: result.solidBackground = .init()
-        case .radialBlur: result.radialBlur = .init()
-            case .blur: result.blur = .init()
-        case .lensFlare: result.lensFlare = .init()
-        case .crossGlare: result.crossGlare = .init()
-        case .bloom: result.bloom = .init()
-        case .particles: result.particles = .init()
-        case .embers: result.embers = .init()
-        case .snow: result.snow = .init()
-        case .shake: result.shake = .init()
-        case .chromaticAberration: result.chromaticAberration = .init()
-        case .vignette: result.vignette = .init()
-        case .colorCorrection: result.colorCorrection = .init()
-        case .focusLines: result.focusLines = .init()
-        case .sharpFocus: result.sharpFocus = .init()
-        case .straightLines: result.straightLines = .init()
-        case .radialRays: result.radialRays = .init()
-        case .radialFocus: result.radialFocus = .init()
-        case .zoomLoop: result.zoomLoop = .init()
-        case .octgrams: result.octgrams = .init()
-        case .warpFlight: result.warpFlight = .init()
-        case .orbs: result.orbs = .init()
+    private func additionMenu(after anchor: UUID? = nil) -> NSMenu {
+        let clipID = shownClip?.id
+        return EffectCategory.additionMenu(effects: effects, editable: editable) { [weak self] kind in
+            guard let self, self.editable, let clipID, self.shownClip?.id == clipID,
+                  !kind.exists(in: self.effects), self.window?.makeFirstResponder(nil) != false else { return }
+            self.cancelDrag()
+            guard self.editable, self.shownClip?.id == clipID, !kind.exists(in: self.effects) else { return }
+            var result = self.effects
+            let insertion: Int
+            if let anchor {
+                guard let index = result.nodes.firstIndex(where: { $0.id == anchor }) else { return }
+                insertion = index + 1
+            } else {
+                insertion = result.nodes.count
+            }
+            self.deactivateColors()
+            result.set(kind, payload: kind.initial)
+            if let node = result.nodes.last { result.move(node.id, to: insertion) }
+            self.selected = kind
+            self.detailsOpen = true
+            self.expanded = true
+            self.onCommit?(result)
         }
-        selected = kind
-        onCommit?(result)
     }
 
     @objc private func toggleEffect() {
         let isEnabled = enabled.state == .on
         guard editable, window?.makeFirstResponder(nil) != false else { return }
         var result = effects
-        switch selected {
-        case .shape: result.shape?.isEnabled = isEnabled
-        case .mask: result.mask?.isEnabled = isEnabled
-        case .solidBackground: result.solidBackground?.isEnabled = isEnabled
-        case .radialBlur: result.radialBlur?.isEnabled = isEnabled
-            case .blur: result.blur?.isEnabled = isEnabled
-        case .lensFlare: result.lensFlare?.isEnabled = isEnabled
-        case .crossGlare: result.crossGlare?.isEnabled = isEnabled
-        case .bloom: result.bloom?.isEnabled = isEnabled
-        case .particles: result.particles?.isEnabled = isEnabled
-        case .embers: result.embers?.isEnabled = isEnabled
-        case .snow: result.snow?.isEnabled = isEnabled
-        case .shake: result.shake?.isEnabled = isEnabled
-        case .chromaticAberration: result.chromaticAberration?.isEnabled = isEnabled
-        case .vignette: result.vignette?.isEnabled = isEnabled
-        case .colorCorrection: result.colorCorrection?.isEnabled = isEnabled
-        case .focusLines: result.focusLines?.isEnabled = isEnabled
-        case .sharpFocus: result.sharpFocus?.isEnabled = isEnabled
-        case .straightLines: result.straightLines?.isEnabled = isEnabled
-        case .radialRays: result.radialRays?.isEnabled = isEnabled
-        case .radialFocus: result.radialFocus?.isEnabled = isEnabled
-        case .zoomLoop: result.zoomLoop?.isEnabled = isEnabled
-        case .octgrams: result.octgrams?.isEnabled = isEnabled
-        case .warpFlight: result.warpFlight?.isEnabled = isEnabled
-        case .orbs: result.orbs?.isEnabled = isEnabled
-        case nil: return
-        }
+        guard let kind = selected, let node = result.allNodes.first(where: { $0.kind == kind }) else { return }
+        result.editNode(node.id) { $0.isEnabled = isEnabled }
         onCommit?(result)
     }
 
@@ -573,37 +575,15 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         guard editable, window?.makeFirstResponder(nil) != false else { return }
         deactivateColors()
         var result = effects
-        switch selected {
-        case .shape: result.shape = nil
-        case .mask: result.mask = nil
-        case .solidBackground: result.solidBackground = nil
-        case .radialBlur: result.radialBlur = nil
-            case .blur: result.blur = nil
-        case .lensFlare: result.lensFlare = nil
-        case .crossGlare: result.crossGlare = nil
-        case .bloom: result.bloom = nil
-        case .particles: result.particles = nil
-        case .embers: result.embers = nil
-        case .snow: result.snow = nil
-        case .shake: result.shake = nil
-        case .chromaticAberration: result.chromaticAberration = nil
-        case .vignette: result.vignette = nil
-        case .colorCorrection: result.colorCorrection = nil
-        case .focusLines: result.focusLines = nil
-        case .sharpFocus: result.sharpFocus = nil
-        case .straightLines: result.straightLines = nil
-        case .radialRays: result.radialRays = nil
-        case .radialFocus: result.radialFocus = nil
-        case .zoomLoop: result.zoomLoop = nil
-        case .octgrams: result.octgrams = nil
-        case .warpFlight: result.warpFlight = nil
-        case .orbs: result.orbs = nil
-        case nil: return
-        }
+        guard let selected else { return }
+        result.set(selected, payload: nil)
         onCommit?(result)
     }
 
     private func deactivateColors() {
+        binarizationDarkColor.deactivate()
+        binarizationLightColor.deactivate()
+        sobelColor.deactivate()
         focusColor.deactivate()
         sharpColor.deactivate()
         straightColor.deactivate()
@@ -611,6 +591,40 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         shapeColor.deactivate()
         color.deactivate()
         backgroundColor.deactivate()
+    }
+
+    @objc private func changeSobelMode() {
+        let modes = ImageEffects.SobelChromatic.Mode.allCases
+        guard editable, selected == .sobelChromatic, modes.indices.contains(sobelMode.indexOfSelectedItem),
+              window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag()
+        var result = effects
+        result.sobelChromatic?.mode = modes[sobelMode.indexOfSelectedItem]
+        onCommit?(result)
+    }
+
+    @objc private func changeSobelColor() {
+        guard editable, selected == .sobelChromatic, sobelColor.isEnabled else { return }
+        var result = effects
+        result.sobelChromatic?.edgeColor = RGBColor(sobelColor.color)
+        onCommit?(result)
+    }
+
+    @objc private func changeBinarizationColor(_ sender: NSColorWell) {
+        guard editable, selected == .binarization else { return }
+        var result = effects
+        if sender === binarizationDarkColor { result.binarization?.darkColor = RGBColor(sender.color) }
+        else { result.binarization?.lightColor = RGBColor(sender.color) }
+        onCommit?(result)
+    }
+
+    @objc private func swapBinarizationColors() {
+        guard editable, selected == .binarization, window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag()
+        deactivateColors()
+        var result = effects
+        result.binarization?.swapColors()
+        onCommit?(result)
     }
 
     @objc private func changeFlareAutomatic() {
@@ -729,6 +743,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
 
     private func buildStraightControls() {
         straightColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.straightColor")
+        straightShuffle.identifier = NSUserInterfaceItemIdentifier("visuals.effects.straightShuffle")
         straightShuffle.target = self
         straightShuffle.action = #selector(shuffleStraightLines)
         let basic: [ImageParameter] = [.straightAngle, .straightCount, .straightLength, .straightThickness, .straightSpeed]
@@ -767,10 +782,6 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             picker.target = self; picker.action = #selector(changeShapeOptions)
             picker.setAccessibilityLabel(label)
         }
-        maskTarget.addItems(withTitles: ImageEffects.Mask.Target.allCases.map(\.title))
-        maskTarget.target = self; maskTarget.action = #selector(changeShapeOptions)
-        maskTarget.identifier = NSUserInterfaceItemIdentifier("visuals.effects.maskTarget")
-        maskTarget.menu?.autoenablesItems = false
         maskInverted.target = self; maskInverted.action = #selector(changeShapeOptions)
         backgroundNotice.target = self; backgroundNotice.action = #selector(toggleBackgroundNotice)
         copyShape.target = self; copyShape.action = #selector(copyShapeToMask)
@@ -794,24 +805,49 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         contents[.shape] = NSStackView(views: [row([NSTextField(labelWithString: "種類"), shapeKind, shapeColor])]
             + geometryRows(false) + [row(numeric(.shapeOpacity))])
         contents[.mask] = NSStackView(views: [row([NSTextField(labelWithString: "種類"), maskKind, maskInverted]),
-                                                 row([maskTarget])]
+                                                 NSTextField(labelWithString: "この位置までの結果全体を切り抜きます")]
             + geometryRows(true) + [row(numeric(.maskFeather) + numeric(.maskStrength)), row([copyShape]), maskStatus])
+        let belowKind = NSPopUpButton()
+        belowKind.addItems(withTitles: ShapeGeometry.Kind.allCases.map(\.title))
+        belowKind.target = self; belowKind.action = #selector(changeBelowMaskKind(_:))
+        belowKind.identifier = NSUserInterfaceItemIdentifier("visuals.effects.belowMaskKind")
+        let invert = NSButton(checkboxWithTitle: "反転", target: self, action: #selector(toggleBelowMaskInvert(_:)))
+        invert.identifier = NSUserInterfaceItemIdentifier("visuals.effects.belowMaskInvert")
+        let points = number("星の頂点数", initial: 5, range: ShapeGeometry.pointsRange, parameter: { nil },
+                            read: { $0.belowMask?.geometry.points }, update: { effects, number in
+            var result = effects; result.belowMask?.geometry.points = number; return result
+        })
+        contents[.belowMask] = NSStackView(views: [row([belowKind, invert])]
+            + [row(numeric(.belowMaskWidth) + numeric(.belowMaskHeight)),
+               row(numeric(.belowMaskX) + numeric(.belowMaskY)), row(numeric(.belowMaskRotation)),
+               row(points + numeric(.belowMaskInnerRatio)), row(numeric(.belowMaskFeather) + numeric(.belowMaskStrength)), belowTarget,
+               NSTextField(wrappingLabelWithString: "直下固定段のクリップ全体を切り抜きます。チェーンのバイパスとは独立しています。")])
+        contents[.belowMask]?.orientation = .vertical
+        contents[.belowMask]?.alignment = .leading
         backgroundNotice.isHidden = true
     }
 
     private func updateShapeControls() {
+        if let content = contents[.belowMask] {
+            if let picker = content.subviews.flatMap({ $0.subviews }).first(where: { $0.identifier?.rawValue == "visuals.effects.belowMaskKind" }) as? NSPopUpButton {
+                picker.selectItem(at: ShapeGeometry.Kind.allCases.firstIndex(of: effects.belowMask?.geometry.kind ?? .rectangle) ?? 0)
+                picker.isEnabled = editable
+            }
+            if let invert = content.subviews.flatMap({ $0.subviews }).first(where: { $0.identifier?.rawValue == "visuals.effects.belowMaskInvert" }) as? NSButton {
+                invert.state = effects.belowMask?.inverted == true ? .on : .off; invert.isEnabled = editable
+            }
+        }
+
         if let shape = effects.shape {
             shapeKind.selectItem(at: ShapeGeometry.Kind.allCases.firstIndex(of: shape.geometry.kind) ?? 0)
             if !shapeColor.isActive { shapeColor.color = shape.color.nsColor }
         }
         if let mask = effects.mask {
             maskKind.selectItem(at: ShapeGeometry.Kind.allCases.firstIndex(of: mask.geometry.kind) ?? 0)
-            maskTarget.selectItem(at: ImageEffects.Mask.Target.allCases.firstIndex(of: mask.target) ?? 0)
             maskInverted.state = mask.inverted ? .on : .off
         }
-        for control in [shapeKind, maskKind, maskTarget, maskInverted, shapeColor, backgroundNotice] as [NSControl] { control.isEnabled = editable }
+        for control in [shapeKind, maskKind, maskInverted, shapeColor, backgroundNotice] as [NSControl] { control.isEnabled = editable }
         copyShape.isEnabled = editable && effects.shape != nil && effects.mask != nil
-        maskTarget.item(at: 1)?.isEnabled = (shownClip.flatMap { track.slot(of: $0.id) } ?? 1) > 1
         shapeStarRows.forEach { $0.isHidden = effects.shape?.geometry.kind != .star }
         maskStarRows.forEach { $0.isHidden = effects.mask?.geometry.kind != .star }
         backgroundNotice.isHidden = !expanded || (selected != .shape && selected != .mask) || effects.solidBackground == nil
@@ -821,12 +857,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     }
 
     private func updateMaskStatus() {
-        guard let mask = effects.mask else { return }
-        if mask.target == .image { maskStatus.stringValue = "粒子は対象外"; return }
-        let slot = shownClip.flatMap { track.slot(of: $0.id) } ?? 1
-        let target = track.layers.first { $0.slot == slot - 1 }?.clips.first { $0.start <= time && time < $0.end }
-        let inside = shownClip.map { $0.start <= time && time < $0.end } ?? false
-        maskStatus.stringValue = inside && target != nil ? "直下のクリップ全体（粒子を含む）に適用" : "対象なし（直下の段に有効なクリップがありません）"
+        maskStatus.stringValue = "この位置までの素材・粒子・発光に適用"
+
     }
 
     @objc private func changeShapeOptions() {
@@ -837,7 +869,6 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             result.shape?.geometry.kind = ShapeGeometry.Kind.allCases[shapeKind.indexOfSelectedItem]
         } else if selected == .mask {
             result.mask?.geometry.kind = ShapeGeometry.Kind.allCases[maskKind.indexOfSelectedItem]
-            result.mask?.target = ImageEffects.Mask.Target.allCases[maskTarget.indexOfSelectedItem]
             result.mask?.inverted = maskInverted.state == .on
         }
         onCommit?(result)
@@ -865,4 +896,45 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         onCommit?(result)
     }
 
+}
+
+
+extension ImageEffectsEditor {
+    @objc private func toggleBypass() {
+        guard editable else { return }
+        cancelDrag()
+        var value = effects; value.isBypassed = bypass.state == .on; onCommit?(value)
+    }
+    @objc private func selectOutputMask() {
+        guard editable else { return }
+        cancelDrag(); detailsOpen = true; selected = .belowMask
+        if effects.belowMask == nil {
+            var value = effects; value.belowMask = .init(); onCommit?(value)
+        } else { updateControls() }
+    }
+    @objc private func changeBelowMaskKind(_ sender: NSPopUpButton) {
+        guard editable else { return }
+        var value = effects; value.belowMask?.geometry.kind = ShapeGeometry.Kind.allCases[sender.indexOfSelectedItem]; onCommit?(value)
+    }
+    @objc private func toggleBelowMaskInvert(_ sender: NSButton) {
+        guard editable else { return }
+        var value = effects; value.belowMask?.inverted = sender.state == .on; onCommit?(value)
+    }
+    private func chainMenu(_ id: UUID) -> NSMenu {
+        let menu = NSMenu(); menu.autoenablesItems = false
+        guard let index = effects.nodes.firstIndex(where: { $0.id == id }) else { return menu }
+        for (title, target) in [("上へ移動", index - 1), ("下へ移動", index + 1)] {
+            menu.addItem(EffectMenuItem(title, enabled: effects.nodes.indices.contains(target)) { [weak self] in
+                guard let self else { return }; self.cancelDrag()
+                var value = self.effects; value.move(id, to: target); self.onCommit?(value)
+            })
+        }
+        let insert = NSMenuItem(title: "この後に追加", action: nil, keyEquivalent: "")
+        insert.submenu = additionMenu(after: id); menu.addItem(insert)
+        menu.addItem(EffectMenuItem("削除") { [weak self] in
+            guard let self else { return }; var value = self.effects
+            value.nodes.removeAll { $0.id == id }; self.onCommit?(value)
+        })
+        return menu
+    }
 }

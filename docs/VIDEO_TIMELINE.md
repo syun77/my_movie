@@ -8,7 +8,7 @@ AVFoundationを利用する。すでにAVAudioPlayerによる主音声再生、�
 
 最初はローカルのMP4／MOVの映像を0.1〜16倍速・順方向で再生する。コンテナの拡張子だけで対応を判断せず、映像トラックの読込・実デコードを検証する。SDRのH.264／HEVCを優先検証対象とし、HDR・透過動画・保護された素材・ネットワークURLは初期対象外とする。未対応素材は読み込み前に理由を示す。
 
-画像と動画を同じ3段に混在可能にし、同段の重なり禁止・別段の重なり許可・既存の合成順を維持する。主音声の長さを作品長とする。配置・移動・両端トリム、停止画表示、シーク、保存・復元、Undo/Redoを最小範囲に含める。ループ、逆再生、動画音声のミックス、プロキシ生成、連続サムネイルは後続機能とする。
+画像と動画を同じ可変レイヤーに混在可能にし、同段の重なり禁止・別段の重なり許可・既存の合成順を維持する。主音声の長さを作品長とする。配置・移動・両端トリム、停止画表示、シーク、保存・復元、Undo/Redoを最小範囲に含める。ループ、逆再生、動画音声のミックス、プロキシ生成、連続サムネイルは後続機能とする。
 
 動画の初期設定は自動アニメOFF。既存の固定変形・手動キー・演出は共通描画へ接続して利用する。動画を別のAVPlayerLayerとして重ねず、歌詞・スペクトラム・画像と同じMetal合成に参加させる。
 
@@ -18,7 +18,7 @@ AVFoundationを利用する。すでにAVAudioPlayerによる主音声再生、�
 | --- | --- |
 | App.swift | AVAudioPlayer.currentTimeを30Hzのtickで取得。再生・停止・シークを共通Transportへ集約する |
 | refreshPreviewImages / PreviewKey | 静止画の内容キャッシュと動画の時刻指定フレーム要求を分離。処理中1件と最新待機1件へ集約する |
-| VisualTrack / VisualClip | 画像・動画の3段配置・編集をVisualTrack / VisualClipで共有する |
+| VisualTrack / VisualClip | 画像・動画の可変段配置・編集をVisualTrack / VisualClipで共有する |
 | ImageAssetStore | ImageIOによる静止画キャッシュ。動画デコーダーの責務を追加せず、静止画専用として残す |
 | PreviewView / MetalSceneRenderer | VisualRenderLayer / VisualFrameがCGImageまたは動画のCVPixelBuffer由来のCIImageを保持する |
 | VisualEditor / VisualAssetManager / PlacementEditor / TimelineView | 素材種別・動画用の素材開始時刻・動画ラベルを追加し、配置操作を共有する |
@@ -27,7 +27,7 @@ AVFoundationを利用する。すでにAVAudioPlayerによる主音声再生、�
 
 ## 3. データモデルと時刻の定義
 
-共通モデルはVisualAsset（id、reference、kind）、VisualTrack（assets、3段のlayers）、VisualClip（id、assetID、start、end、content、変形・キー・演出）とする。contentはstill／video(sourceIn, speed)の関連値付きenumとし、静止画へ無意味な動画設定を持たせない。参照先のkindとcontentの一致を検証する。プレイヤー、デコーダー、バッファ、読込状態は永続モデルに含めない。
+共通モデルはVisualAsset（id、reference、kind）、VisualTrack（assets、背面→前面の可変長layers）、VisualClip（id、assetID、start、end、content、変形・キー・演出）とする。contentはstill／video(sourceIn, speed)の関連値付きenumとし、静止画へ無意味な動画設定を持たせない。参照先のkindとcontentの一致を検証する。プレイヤー、デコーダー、バッファ、読込状態は永続モデルに含めない。
 
 動画メタデータは実ファイルから非同期取得する。対象映像トラックの有効timeRange、preferredTransform、サイズ、色特性、可変フレームレートを確認する。初期版は複数映像トラックから再生可能な先頭トラックを選び、その選択規則を固定する。実装時は対象SDKの非同期load APIを利用する。
 
@@ -95,9 +95,9 @@ preferredTransformを適用して縦動画・回転動画の表示サイズと�
 
 ## 7. 保存・履歴とMP4出力
 
-ProjectFileをversion 10とし、visualAssets／visualLayersと動画contentを保存する。保存・履歴・クリップボード・素材参照確認・行高さ・レーン選択の関連型を一括で更新し、画像専用モデルの互換ラッパーは残さない。既存のAssetReferenceによる相対／絶対参照を共有する。
+ProjectFileをversion 15とし、visualAssets／visualLayersと動画contentを保存する。保存・履歴・クリップボード・素材参照確認・行高さ・レーン選択の関連型を一括で更新し、画像専用モデルの互換ラッパーは残さない。既存のAssetReferenceによる相対／絶対参照を共有する。
 
-旧形式との互換性は要求しない。初期案は既存の「バックアップして新規作成」経路を用い、旧プロジェクトを黙って上書きしない。既存version 4／5からの移行を実装する場合も読込境界一箇所だけに集約する。実ファイルのメタデータは復元時に再検証し、素材尺不足・欠損・未対応はモデルを保持して警告する。復旧操作が終わるまで不正な変更を確定しない。
+v12〜14は [保存形式の世代管理](PROJECT_MIGRATION.md) に従って読込境界で変換する。元データをバックアップしてから現行形式で保存する。対応範囲外の形式は元ファイルを保持して停止する。実ファイルのメタデータは復元時に再検証し、素材尺不足・欠損・未対応はモデルを保持して警告する。復旧操作が終わるまで不正な変更を確定しない。
 
 MP4出力はVisualFrameProviderの専用インスタンスを使い、n/30秒ごとに画像と動画の有効クリップを取得する。動画内の参照時刻はsourceIn + (n/30 - clip.start) * speedとし、PTSに対応する映像をデコードする。画像・動画を段順に並べ、変形・演出・歌詞・スペクトラムを同じMetalSceneRendererで描画する。デコード・GPU完了を待ってすべての出力フレームを書き込み、プレビューの間引きや遅延停止は適用しない。
 

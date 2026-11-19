@@ -6,7 +6,7 @@ import XCTest
 final class ShapeTests: XCTestCase {
     func testValidationPersistenceAutomationAndTrim() throws {
         var clip = VisualClip(assetID: nil, start: 1, end: 5, audioModulations: [:],
-                              effects: ImageEffects(shape: .init(), mask: .init(target: .below)))
+                              effects: ImageEffects(shape: .init(), mask: .init(), belowMask: .init()))
         for parameter in [ImageParameter.shapeWidth, .shapeHeight, .shapeX, .shapeY, .shapeRotation, .shapeInnerRatio,
                           .shapeOpacity, .maskWidth, .maskHeight, .maskX, .maskY, .maskRotation, .maskInnerRatio,
                           .maskFeather, .maskStrength] {
@@ -18,7 +18,7 @@ final class ShapeTests: XCTestCase {
         }
         let before = clip.evaluatedEffects(at: 2.5)
         clip.trimStart(to: 2)
-        XCTAssertEqual(clip.evaluatedEffects(at: 2.5), before)
+        XCTAssertEqual(clip.evaluatedEffects(at: 2.5)?.allNodes.map(\.payload), before?.allNodes.map(\.payload))
         XCTAssertTrue(clip.curves.allSatisfy { $0.keys.first?.time == -1 })
         var track = VisualTrack()
         track.layers[2].clips = [clip]
@@ -28,7 +28,7 @@ final class ShapeTests: XCTestCase {
         let data = try JSONEncoder().encode(project)
         let restored = try JSONDecoder().decode(ProjectFile.self, from: data)
         try restored.validate()
-        XCTAssertEqual(restored.version, 10)
+        XCTAssertEqual(restored.version, ProjectFile.currentVersion)
         XCTAssertEqual(restored.visuals, track)
         var old = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         old["version"] = 9
@@ -70,7 +70,7 @@ final class ShapeTests: XCTestCase {
         func click(_ button: NSButton) { XCTAssertTrue(button.sendAction(button.action, to: button.target)) }
         let add = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
         func addEffect(_ title: String) throws {
-            let item = try XCTUnwrap(add.menu?.item(withTitle: title))
+            let item = try XCTUnwrap(add.menu?.effectItem(titled: title))
             XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         }
         click(try button("▸ 追加演出"))
@@ -86,7 +86,7 @@ final class ShapeTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.03))
         XCTAssertEqual(clip.effects?.shape?.color, RGBColor(red: 1, green: 0, blue: 0))
         color.deactivate(); NSColorPanel.shared.orderOut(nil)
-        try addEffect("マスク")
+        try addEffect("このクリップのマスク")
         clip.effects?.shape?.geometry.kind = .star
         clip.effects?.shape?.geometry.width = 700
         load()
@@ -98,17 +98,12 @@ final class ShapeTests: XCTestCase {
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/my-movie-mask-inspector.png"))
         clip.effects?.shape?.geometry.width = 900; load()
         XCTAssertEqual(clip.effects?.mask?.geometry.width, 700)
-        let target = try XCTUnwrap(all(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.maskTarget" })
-        XCTAssertEqual(target.item(at: 1)?.isEnabled, true)
-        target.selectItem(at: 1); XCTAssertTrue(target.sendAction(target.action, to: target.target))
-        XCTAssertEqual(clip.effects?.mask?.target, .below)
-        editor.time = 1.5
-        XCTAssertTrue(all(editor).compactMap { $0 as? NSTextField }.contains { $0.stringValue.hasPrefix("対象なし") })
-        track.layers[1].clips = []; track.layers[0].clips = [clip]; editor.load(clip, editable: true, track: track)
-        XCTAssertEqual(target.item(at: 1)?.isEnabled, false)
-        XCTAssertEqual(clip.effects?.mask?.target, .below)
+        click(try button("直下段のマスクを設定"))
+        XCTAssertNotNil(clip.effects?.belowMask)
+        XCTAssertNotNil(clip.effects?.mask)
         click(try button("削除"))
-        XCTAssertNil(clip.effects?.mask)
+        XCTAssertNil(clip.effects?.belowMask)
+        XCTAssertNotNil(clip.effects?.mask)
         XCTAssertNotNil(clip.effects?.shape)
     }
 
@@ -172,10 +167,10 @@ final class ShapeTests: XCTestCase {
         var back = full.clip
         back.effects = ImageEffects(solidBackground: .init(color: RGBColor(red: 0, green: 0, blue: 1)))
         var middle = full.clip; middle.id = UUID()
-        middle.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(width: 0), target: .below),
+        middle.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(width: 0)),
                                       solidBackground: .init(color: RGBColor(red: 1, green: 0, blue: 0)))
         var upper = full.clip; upper.id = UUID()
-        upper.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(kind: .ellipse), target: .below))
+        upper.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(kind: .ellipse)))
         try full.draw([])
         let background = full.pixel(100, 100)
         let layers = [(back, 1), (middle, 2), (upper, 3)]
@@ -185,7 +180,9 @@ final class ShapeTests: XCTestCase {
         for (x, y) in [(960, 540), (100, 100), (960, 200)] {
             for channel in 0..<3 { XCTAssertEqual(Double(full.pixel(x, y)[channel]), Double(half.pixel(x / 2, y / 2)[channel]), accuracy: 2) }
         }
-        upper.effects?.mask?.target = .image
+        let copiedBelow = upper.effects?.belowMask
+        upper.effects?.mask = copiedBelow
+        upper.effects?.belowMask = nil
         upper.effects?.mask?.strength = 0
         try full.draw([(upper, 3)])
         let noGuide = full.pixel(1160, 540)
@@ -195,11 +192,13 @@ final class ShapeTests: XCTestCase {
         let exported = full.pixel(1160, 540)
         try full.draw([(upper, 3)], guide: upper.id, video: true)
         XCTAssertEqual(full.pixel(1160, 540), exported)
-        upper.effects?.mask?.target = .below
-        upper.effects?.mask?.strength = 100
-        _ = upper.setKey(.maskX, at: 0, value: 500)
-        _ = upper.setKey(.maskX, at: 1, value: 1400)
-        middle.effects?.mask = nil
+        let copiedOwn = upper.effects?.mask
+        upper.effects?.belowMask = copiedOwn
+        upper.effects?.mask = nil
+        upper.effects?.belowMask?.strength = 100
+        _ = upper.setKey(.belowMaskX, at: 0, value: 500)
+        _ = upper.setKey(.belowMaskX, at: 1, value: 1400)
+        middle.effects?.belowMask = nil
         try full.draw([(middle, 2), (upper, 3)], time: 0)
         XCTAssertGreaterThan(full.pixel(500, 540)[2], 250)
         XCTAssertLessThan(full.pixel(1400, 540)[2], 20)
@@ -211,7 +210,7 @@ final class ShapeTests: XCTestCase {
         XCTAssertLessThan(full.pixel(1400, 540)[2], 20)
         back.effects?.snow = .init(seed: 42)
         back.effects?.orbs = .init()
-        middle.effects?.mask = .init(geometry: ShapeGeometry(kind: .star, width: 1200, height: 900), target: .below, feather: 20)
+        middle.effects?.belowMask = .init(geometry: ShapeGeometry(kind: .star, width: 1200, height: 900), feather: 20)
         middle.effects?.particles = .init(seed: 42)
         upper.effects?.orbs = .init()
         var encoding: [Double] = [], gpu: [Double] = []
@@ -229,7 +228,7 @@ final class ShapeTests: XCTestCase {
         var lower = render.clip; lower.id = UUID()
         lower.effects = ImageEffects(solidBackground: .init(color: RGBColor(red: 1, green: 0, blue: 0)))
         var owner = render.clip; owner.id = UUID()
-        owner.effects = ImageEffects(mask: .init(geometry: ShapeGeometry(kind: .ellipse), target: .below))
+        owner.effects = ImageEffects(belowMask: .init(geometry: ShapeGeometry(kind: .ellipse)))
         try render.draw([(back, 1), (lower, 2), (owner, 3)])
         XCTAssertGreaterThan(render.pixel(960, 540)[2], 250)
         XCTAssertGreaterThan(render.pixel(100, 100)[0], 250)
@@ -253,16 +252,16 @@ final class ShapeTests: XCTestCase {
         try render.draw([(back, 1), (lower, 2)])
         let samples = stride(from: 100, to: 1900, by: 130).flatMap { x in stride(from: 100, to: 1000, by: 110).map { (x, $0) } }
         let baseline = samples.map { render.pixel($0.0, $0.1) }
-        owner.effects?.mask?.strength = 0
+        owner.effects?.belowMask?.strength = 0
         try render.draw([(back, 1), (lower, 2), (owner, 3)])
         for (index, point) in samples.enumerated() {
             for channel in 0..<3 { XCTAssertEqual(Double(render.pixel(point.0, point.1)[channel]), Double(baseline[index][channel]), accuracy: 2) }
         }
-        owner.effects?.mask?.strength = 100; owner.effects?.mask?.geometry.width = 0
+        owner.effects?.belowMask?.strength = 100; owner.effects?.belowMask?.geometry.width = 0
         try render.draw([(back, 1), (lower, 2), (owner, 3)])
         for point in samples { XCTAssertEqual(render.pixel(point.0, point.1), [255, 0, 0, 255]) }
         lower.effects?.mask = .init(geometry: ShapeGeometry(width: 0))
         try render.draw([(back, 1), (lower, 2)])
-        XCTAssertTrue(samples.contains { render.pixel($0.0, $0.1) != [255, 0, 0, 255] }, "自画像マスクは粒子を切らない")
+        XCTAssertTrue(samples.allSatisfy { render.pixel($0.0, $0.1) == [255, 0, 0, 255] }, "後段マスクは粒子も切り抜く")
     }
 }

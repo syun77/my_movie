@@ -102,49 +102,17 @@ fragment float4 maskGuide(Quad in [[stage_in]], constant ShapeUniforms &shape [[
     return float4(float3(0.15, 0.7, 1) * alpha, alpha);
 }
 
-float4 sampleImageLayer(float2 point, texture2d<float> image, texture2d<float> glow, texture2d<float> glare, constant float &glareIntensity, constant float4 &settings) {
-    float2 uv = (point - 0.5) * settings.xy + 0.5;
-    // Core Image stores the bottom of its extent in the first texture row.
+fragment float4 imageLayer(Quad in [[stage_in]], texture2d<float> image [[texture(0)]], constant float4 &settings [[buffer(0)]]) {
+    float2 uv = (in.uv - 0.5) * settings.xy + 0.5;
     uv.y = 1 - uv.y;
     constexpr sampler transparentSampler(coord::normalized, address::clamp_to_zero, filter::linear);
-    float4 pixel = image.sample(transparentSampler, uv);
-    if (settings.z > 0) {
-        float4 halo = glow.sample(transparentSampler, uv) * settings.z;
-        pixel.rgb += halo.rgb;
-        pixel.a += (1 - pixel.a) * min(halo.a, 1.0);
-    }
-    if (glareIntensity > 0) {
-        float4 rays = glare.sample(transparentSampler, uv) * glareIntensity;
-        pixel.rgb += rays.rgb;
-        pixel.a += (1 - pixel.a) * saturate(rays.a);
-    }
-    return pixel;
-}
-
-fragment float4 imageLayer(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
-                           texture2d<float> glare [[texture(2)]], constant float &glareIntensity [[buffer(4)]],
-                           texture2d<float> glow [[texture(1)]], constant float4 &settings [[buffer(0)]], constant ShapeUniforms &mask [[buffer(1)]]) {
-    return sampleImageLayer(in.uv, image, glow, glare, glareIntensity, settings) * settings.w * maskFactor(in.uv * float2(1920, 1080), mask);
+    return image.sample(transparentSampler, uv) * settings.w;
 }
 
 float2 zoomLoopPoint(float2 point, float2 center, float scale, float angle) {
     float2 p = (point - center) * float2(1920, 1080);
     float c = cos(angle), s = sin(angle);
     return float2(c * p.x - s * p.y, s * p.x + c * p.y) * scale / float2(1920, 1080) + center;
-}
-
-fragment float4 zoomLoopImage(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
-                              texture2d<float> glare [[texture(2)]], constant float &glareIntensity [[buffer(4)]],
-                           texture2d<float> glow [[texture(1)]], constant float4 &settings [[buffer(0)]],
-                              constant ShapeUniforms &mask [[buffer(1)]], constant float4 &animation [[buffer(2)]],
-                              constant float2 &center [[buffer(3)]]) {
-    float phase = fract(animation.x * 0.3);
-    float2 point = zoomLoopPoint(in.uv, center, exp(-phase * 3.7) / animation.y, -0.5 * phase);
-    float2 next = zoomLoopPoint(point, center, exp(3.7), 0.5);
-    float4 animated = mix(sampleImageLayer(point, image, glow, glare, glareIntensity, settings), sampleImageLayer(next, image, glow, glare, glareIntensity, settings), phase);
-    animated.rgb *= animation.z;
-    float4 pixel = mix(sampleImageLayer(in.uv, image, glow, glare, glareIntensity, settings), animated, animation.w);
-    return pixel * settings.w * maskFactor(in.uv * float2(1920, 1080), mask);
 }
 
 float3 linearFromSRGB(float3 value) {
@@ -257,9 +225,10 @@ kernel void bloomHighlights(texture2d<float, access::read> image [[texture(0)]],
                             constant float &threshold [[buffer(0)]], uint2 point [[thread_position_in_grid]]) {
     if (point.x >= image.get_width() || point.y >= image.get_height()) return;
     float4 pixel = image.read(point);
-    float3 color = pixel.rgb / max(pixel.a, 1e-6);
+    float carrier = max(pixel.a, min(1.0, max(pixel.r, max(pixel.g, pixel.b))));
+    float3 color = pixel.rgb / max(carrier, 1e-6);
     float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
-    float mask = saturate((luma - threshold) / (1 - threshold)) * pixel.a;
+    float mask = saturate((luma - threshold) / (1 - threshold)) * carrier;
     emission.write(float4(color * mask, mask), point);
 }
 
@@ -632,4 +601,113 @@ fragment float4 raysLight(RaysVertex in [[stage_in]], constant float4 &ink [[buf
         light = (core + 0.35 * halo) * fade;
     }
     return float4(color * light * in.style.y * ink.a, 0);
+}
+
+// Chain surfaces use Core Image's bottom-up rows, including generated radiance at alpha zero.
+fragment float4 chainCopy(Quad in [[stage_in]], texture2d<float> image [[texture(0)]], constant float2 &settings [[buffer(0)]]) {
+    float2 uv = in.uv;
+    if (settings.y > 0) uv.y = 1 - uv.y;
+    return image.sample(linearSampler, uv) * settings.x;
+}
+
+fragment float4 chainMask(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
+                          constant ShapeUniforms &shape [[buffer(0)]], constant float4 &geometry [[buffer(1)]]) {
+    float2 point = (float2(in.uv.x, 1 - in.uv.y) * geometry.xy - geometry.z) / geometry.w;
+    return image.sample(linearSampler, in.uv) * maskFactor(point, shape);
+}
+
+float4 chainLoopSample(float2 point, texture2d<float> image, constant float4 &geometry) {
+    float2 pixel = point * float2(1920, 1080) * geometry.w + geometry.z;
+    float2 uv = pixel / geometry.xy;
+    uv.y = 1 - uv.y;
+    constexpr sampler transparentSampler(coord::normalized, address::clamp_to_zero, filter::linear);
+    return image.sample(transparentSampler, uv);
+}
+
+fragment float4 chainLoop(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
+                          constant float4 &animation [[buffer(0)]], constant float4 &geometry [[buffer(1)]],
+                          constant float2 &center [[buffer(2)]]) {
+    float2 point = (float2(in.uv.x, 1 - in.uv.y) * geometry.xy - geometry.z) / geometry.w / float2(1920, 1080);
+    float phase = fract(animation.x * 0.3);
+    float2 first = zoomLoopPoint(point, center, exp(-phase * 3.7) / animation.y, -0.5 * phase);
+    float2 second = zoomLoopPoint(first, center, exp(3.7), 0.5);
+    float4 animated = mix(chainLoopSample(first, image, geometry), chainLoopSample(second, image, geometry), phase);
+    animated.rgb *= animation.z;
+    return mix(chainLoopSample(point, image, geometry), animated, animation.w);
+}
+
+struct ImageParticleInstance { float4 geometry; float4 motion; float4 color; };
+struct ImageParticleVertex {
+    float4 position [[position]];
+    float2 uv;
+    float opacity;
+    float3 tint;
+};
+vertex ImageParticleVertex imageParticleQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+                                            constant ImageParticleInstance *instances [[buffer(0)]]) {
+    ImageParticleInstance p = instances[instanceID];
+    float2 corner = corners[vertexID];
+    float2 offset = (corner - 0.5) * p.geometry.zw;
+    float s = sin(p.motion.y), c = cos(p.motion.y);
+    offset = float2(c * offset.x - s * offset.y, s * offset.x + c * offset.y);
+    float2 position = (p.geometry.xy + offset) / float2(1920, 1080) * 2 - 1;
+    return {float4(position.x, -position.y, 0, 1), float2(corner.x, 1 - corner.y), p.motion.x, p.color.rgb};
+}
+fragment float4 imageParticle(ImageParticleVertex in [[stage_in]], texture2d<float> image [[texture(0)]]) {
+    float4 pixel = image.sample(linearSampler, in.uv);
+    return float4(pixel.rgb * in.tint, pixel.a) * saturate(in.opacity);
+}
+
+struct SobelChromaticUniforms {
+    float4 canvas;
+    float4 offsets;
+    float4 settings;
+    float4 edgeColor;
+};
+
+static float sobelBrightness(float4 color) {
+    float carrier = max(color.a, min(1.0f, max(color.r, max(color.g, color.b))));
+    if (carrier <= 0) return 0;
+    float3 linear = clamp(color.rgb / carrier, 0.0f, 1.0f);
+    float3 encoded = select(12.92f * linear, 1.055f * pow(linear, float3(1.0f / 2.4f)) - 0.055f,
+                            linear > 0.0031308f);
+    return dot(encoded, float3(0.3f, 0.59f, 0.11f)) * carrier;
+}
+
+kernel void sobelChromatic(texture2d<float, access::sample> source [[texture(0)]],
+                           texture2d<float, access::write> output [[texture(1)]],
+                           constant SobelChromaticUniforms &u [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= output.get_width() || gid.y >= output.get_height()) return;
+    constexpr sampler sampling(coord::pixel, address::clamp_to_zero, filter::linear);
+    float2 position = float2(gid) + 0.5f;
+    float4 original = source.sample(sampling, position);
+    float4 result = float4(0);
+    if (u.settings.z > 0) {
+        float3 offsets = float3(u.offsets.x, 0, u.offsets.y) * u.canvas.w;
+        float values[9];
+        float coverage = original.a;
+        for (int y = 0; y < 3; ++y) {
+            for (int x = 0; x < 3; ++x) {
+                if (x == 1 && y == 1) { values[4] = 0; continue; }
+                float4 pixel = source.sample(sampling, position + float2(offsets[x], offsets[y]));
+                values[y * 3 + x] = sobelBrightness(pixel);
+                coverage = max(coverage, pixel.a);
+            }
+        }
+        float2 gradient = float2(values[0] + 2 * values[3] + values[6] - values[2] - 2 * values[5] - values[8],
+                                 values[0] + 2 * values[1] + values[2] - values[6] - 2 * values[7] - values[8]);
+        float edge = min(4.0f, dot(gradient, gradient) * u.settings.y);
+        result = float4(u.edgeColor.rgb * edge, coverage);
+    }
+    if (u.settings.w > 0) {
+        float2 uv = (position - u.canvas.z) / u.canvas.xy;
+        float radius = clamp(length(uv - 0.5f) / sqrt(0.5f), 0.0f, 1.0f);
+        float distance = radius * radius * radius * u.offsets.z * u.canvas.w;
+        float4 red = source.sample(sampling, position + distance * float2(-1, -1) / sqrt(2.0f));
+        float4 green = source.sample(sampling, position + distance * float2(-1, 3) / sqrt(10.0f));
+        float4 blue = source.sample(sampling, position + distance * float2(u.offsets.w, 0));
+        result.rgb += float3(red.r, green.g, blue.b);
+        result.a = max(result.a, max(red.a, max(green.a, blue.a)));
+    }
+    output.write(mix(original, result, u.settings.x), gid);
 }

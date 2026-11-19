@@ -113,7 +113,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         _ = clip.setKey(.scale, at: 25, value: 120)
         visuals.layers[2].clips = [clip]
         editor.visuals.load(visuals, projectURL: nil)
-        editor.timeline.revealAutomation(in: 3)
+        editor.timeline.revealAutomation(in: editor.timeline.visuals.layers[2].id)
         try wheel(-2)
         XCTAssertEqual(editor.visibleSpan, 12, accuracy: 1e-9)
         try await waitForZoom(editor)
@@ -135,7 +135,7 @@ final class TimelineDisplaySettingsTests: XCTestCase {
         XCTAssertEqual(editor.timeline.visibleSpan, 421)
         try await waitForZoom(editor)
         XCTAssertEqual(editor.timeline.visibleSpan, 300)
-        XCTAssertTrue(editor.timeline.expandedLayerSlots.contains(3))
+        XCTAssertTrue(editor.timeline.expandedLayerIDs.contains(editor.timeline.visuals.layers[2].id))
         XCTAssertEqual(editor.visuals.track, visuals)
 
         try wheel(1)

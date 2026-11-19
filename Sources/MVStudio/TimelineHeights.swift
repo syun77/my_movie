@@ -3,9 +3,9 @@ import Foundation
 struct TimelineHeights: Codable, Equatable {
     enum Row: Equatable {
         case lyrics
-        case visual(Int)
-        case automation(Int, ImageParameter)
-        case spine(Int)
+        case visual(UUID)
+        case automation(UUID, ImageParameter)
+        case spine(UUID)
 
         var defaultHeight: Double {
             switch self {
@@ -29,18 +29,19 @@ struct TimelineHeights: Codable, Equatable {
     static let viewportRange: ClosedRange<Double> = 112...10_000
     var viewport: Double?
     private var lyrics: Double?
-    private var visuals: [Int: Double] = [:]
-    private var spine: [Int: Double] = [:]
-    private var automation: [Int: [ImageParameter: Double]] = [:]
+    private var visuals: [UUID: Double] = [:]
+    private var spine: [UUID: Double] = [:]
+    private var nodeAutomation: [String: Double]?
+    private var automation: [UUID: [ImageParameter: Double]] = [:]
 
     subscript(row: Row) -> Double {
         get {
             let height: Double?
             switch row {
             case .lyrics: height = lyrics
-            case .visual(let slot): height = visuals[slot]
-            case .spine(let slot): height = spine[slot]
-            case .automation(let slot, let parameter): height = automation[slot]?[parameter]
+            case .visual(let layerID): height = visuals[layerID]
+            case .spine(let layerID): height = spine[layerID]
+            case .automation(let layerID, let parameter): height = automation[layerID]?[parameter]
             }
             return height ?? row.defaultHeight
         }
@@ -48,23 +49,39 @@ struct TimelineHeights: Codable, Equatable {
             let height = newValue == row.defaultHeight ? nil : newValue
             switch row {
             case .lyrics: lyrics = height
-            case .visual(let slot): visuals[slot] = height
-            case .spine(let slot): spine[slot] = height
-            case .automation(let slot, let parameter):
-                var lanes = automation[slot] ?? [:]
+            case .visual(let layerID): visuals[layerID] = height
+            case .spine(let layerID): spine[layerID] = height
+            case .automation(let layerID, let parameter):
+                var lanes = automation[layerID] ?? [:]
                 lanes[parameter] = height
-                automation[slot] = lanes.isEmpty ? nil : lanes
+                automation[layerID] = lanes.isEmpty ? nil : lanes
             }
         }
     }
 
+    private func nodeKey(_ id: UUID, _ parameter: ImageParameter) -> String { id.uuidString + "/" + parameter.rawValue }
+    func height(_ row: Row, nodeID: UUID?) -> Double {
+        guard case let .automation(_, parameter) = row, let nodeID else { return self[row] }
+        return nodeAutomation?[nodeKey(nodeID, parameter)] ?? self[row]
+    }
+    mutating func setHeight(_ height: Double, for row: Row, nodeID: UUID?) {
+        guard case let .automation(_, parameter) = row, let nodeID else { self[row] = height; return }
+        var values = nodeAutomation ?? [:]
+        values[nodeKey(nodeID, parameter)] = height
+        nodeAutomation = values.isEmpty ? nil : values
+    }
+
     var isValid: Bool {
-        (viewport.map(Self.viewportRange.contains) ?? true)
+        (nodeAutomation?.allSatisfy { key, value in
+            let parts = key.split(separator: "/")
+            return parts.count == 2 && UUID(uuidString: String(parts[0])) != nil
+                && ImageParameter(rawValue: String(parts[1]))?.effectKind != nil && Row.automation(UUID(), .x).range.contains(value)
+        } ?? true) && (viewport.map(Self.viewportRange.contains) ?? true)
             && Row.lyrics.range.contains(self[.lyrics])
-            && visuals.allSatisfy { (1...3).contains($0.key) && Row.visual($0.key).range.contains($0.value) }
-            && spine.allSatisfy { (1...3).contains($0.key) && Row.spine($0.key).range.contains($0.value) }
-            && automation.allSatisfy { slot, lanes in
-                (1...3).contains(slot) && lanes.allSatisfy { Row.automation(slot, $0.key).range.contains($0.value) }
+            && visuals.allSatisfy { Row.visual($0.key).range.contains($0.value) }
+            && spine.allSatisfy { Row.spine($0.key).range.contains($0.value) }
+            && automation.allSatisfy { layerID, lanes in
+                lanes.allSatisfy { Row.automation(layerID, $0.key).range.contains($0.value) }
             }
     }
 }

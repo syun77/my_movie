@@ -18,7 +18,7 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
         root.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16); root.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView!.addSubview(root)
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor), root.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor), root.topAnchor.constraint(equalTo: panel.contentView!.topAnchor), root.bottomAnchor.constraint(equalTo: panel.contentView!.bottomAnchor)])
-        for (id, title, width) in [("image", "素材", 56.0), ("name", "ファイル名", 280.0), ("status", "状態", 150.0), ("uses", "使用数", 80.0)] {
+        for (id, title, width) in [("image", "素材", 56.0), ("name", "ファイル名", 280.0), ("status", "状態", 150.0), ("uses", "使用数", 150.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); column.title = title; column.width = width; table.addTableColumn(column)
         }
         table.dataSource = self; table.delegate = self; table.rowHeight = 45
@@ -46,13 +46,14 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
     func numberOfRows(in tableView: NSTableView) -> Int { assets.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let asset = assets[row], uses = editor?.track.uses(asset.id).count ?? 0
+        let particleUses = editor?.track.particleUses(asset.id).count ?? 0
         switch tableColumn?.identifier.rawValue {
         case "image":
             let view = NSImageView(); view.image = editor?.thumbnails[asset.id]; view.imageScaling = .scaleProportionallyUpOrDown
             return view
         case "name": return NSTextField(labelWithString: (asset.kind.title + ": ") + asset.name)
-        case "status": return NSTextField(labelWithString: editor?.missing.contains(asset.id) == true ? "見つからない/読込不能" : editor?.thumbnails[asset.id] == nil ? "確認中" : uses == 0 ? "未配置" : "読込済み")
-        default: return NSTextField(labelWithString: "\(uses)配置")
+        case "status": return NSTextField(labelWithString: editor?.missing.contains(asset.id) == true ? "見つからない/読込不能" : editor?.thumbnails[asset.id] == nil ? "確認中" : uses == 0 && particleUses == 0 ? "未使用" : "読込済み")
+        default: return NSTextField(labelWithString: "配置\(uses) / 粒子\(particleUses)")
         }
     }
     func tableViewSelectionDidChange(_ notification: Notification) { updateDetail() }
@@ -69,13 +70,14 @@ final class VisualAssetManager: NSWindowController, NSTableViewDataSource, NSTab
     @objc private func remove() {
         guard let asset = selected, let editor else { return }
         let uses = editor.track.uses(asset.id)
-        if !uses.isEmpty {
+        let particleUses = editor.track.particleUses(asset.id)
+        if !uses.isEmpty || !particleUses.isEmpty {
             let alert = NSAlert(); alert.messageText = "使用中の素材を削除しますか？"
-            alert.informativeText = "\(asset.name)の\(uses.count)件の配置も削除します。元ファイルは残します。\n" + editor.usageDescription(asset.id)
+            alert.informativeText = "\(asset.name)の\(uses.count)件の配置を削除し、粒子画像の参照\(particleUses.count)件を解除して既存形状へ戻します。元ファイルは残します。\n" + editor.usageDescription(asset.id)
             alert.addButton(withTitle: "キャンセル"); alert.addButton(withTitle: "配置も削除して素材を削除")
             guard alert.runModal() == .alertSecondButtonReturn else { return }
         }
-        editor.deleteAsset(asset.id, includingPlacements: !uses.isEmpty)
+        editor.deleteAsset(asset.id, includingPlacements: !uses.isEmpty || !particleUses.isEmpty)
     }
     @objc private func closeSheet() { guard let window, let parent = window.sheetParent else { return }; parent.endSheet(window) }
 }

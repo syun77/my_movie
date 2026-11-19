@@ -1,6 +1,7 @@
 import AppKit
 
 final class StudioWindow: NSWindow {
+    weak var previewHandles: PreviewHandleView?
     weak var clipEditor: PlacementEditor?
     var onBeginInteraction: (() -> Void)?
     var onEndInteraction: (() -> Void)?
@@ -68,8 +69,34 @@ final class StudioWindow: NSWindow {
         }
     }
 
+    private func handlePreviewSelection(_ event: NSEvent) {
+        guard let contentView else { return }
+        let point = contentView.convert(event.locationInWindow, from: nil)
+        var hit = contentView.hitTest(point)
+        if let field = DragValueField.fields(in: contentView).first(where: {
+            !$0.isHiddenOrHasHiddenAncestor && $0.currentEditor() != nil && $0.bounds.contains($0.convert(event.locationInWindow, from: nil))
+        }) { hit = field }
+        while let view = hit {
+            if view is PreviewHandleView { return }
+            if view is PreviewView { previewHandles?.clear(); return }
+            if let field = view as? DragValueField, field.isEnabled {
+                previewHandles?.activate(field.previewHandleProvider?()); return
+            }
+            if let label = view as? PreviewHandleLabel, let field = label.valueField, field.isEnabled {
+                previewHandles?.activate(field.previewHandleProvider?()); return
+            }
+            if view is TimelineView { previewHandles?.cancelDrag(); return }
+            if view === clipEditor?.inspector { previewHandles?.clear(); return }
+            hit = view.superview
+        }
+        previewHandles?.cancelDrag()
+    }
+
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown { onBeginInteraction?() }
+        if event.type == .leftMouseDown {
+            onBeginInteraction?()
+            handlePreviewSelection(event)
+        }
         defer { if event.type == .leftMouseDown || event.type == .leftMouseUp { onEndInteraction?() } }
         guard attachedSheet == nil, NSApp.modalWindow == nil else {
             super.sendEvent(event)
@@ -94,6 +121,7 @@ final class StudioWindow: NSWindow {
         let text = firstResponder as? NSTextView
         let isTyping = text?.isEditable == true
         if event.keyCode == 53, cancelNumberDrags() || onEscapeInteraction?() == true { return }
+        if event.keyCode == 53, !isTyping, previewHandles?.escape() == true { return }
         if event.keyCode == 53, isTyping, let text {
             if onEscapeText?(text) == true { return }
             text.unmarkText()

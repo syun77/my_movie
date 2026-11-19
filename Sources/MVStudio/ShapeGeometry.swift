@@ -43,13 +43,8 @@ extension ImageEffects {
         var isValid: Bool { geometry.isValid && color.isValid && (0...100).contains(opacity) }
     }
     struct Mask: Codable, Equatable, Sendable {
-        enum Target: String, CaseIterable, Codable, Sendable {
-            case image, below
-            var title: String { self == .image ? "このクリップの画像" : "直下のレイヤーのクリップ" }
-        }
         var isEnabled = true
         var geometry = ShapeGeometry()
-        var target: Target = .image
         var inverted = false
         var feather = 0.0
         var strength = 100.0

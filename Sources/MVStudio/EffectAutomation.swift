@@ -9,6 +9,19 @@ extension ImageParameter {
         let read: (ImageEffects) -> Double?
         let write: (ImageEffects, Double) -> ImageEffects
 
+        init(particle kind: EffectKind, field: WritableKeyPath<ParticleAppearance, Double>, title: String,
+             unit: String, initial: Double, range: ClosedRange<Double>) {
+            self.title = kind.title + " " + title; self.unit = unit; self.initial = initial; self.range = range
+            read = { $0.appearance(kind)?[keyPath: field] }
+            write = { effects, value in
+                var result = effects
+                if var appearance = result.appearance(kind) {
+                    appearance[keyPath: field] = value; result.setAppearance(appearance, for: kind)
+                }
+                return result
+            }
+        }
+
         init<T>(_ title: String, _ unit: String, _ group: WritableKeyPath<ImageEffects, T?>,
                 _ value: WritableKeyPath<T, Double>, _ initial: Double, _ range: ClosedRange<Double>) {
             self.title = title; self.unit = unit; self.initial = initial; self.range = range
@@ -40,6 +53,22 @@ extension ImageParameter {
 
     var effect: Effect? {
         switch self {
+        case .particlesImageSize: return Effect(particle: .particles, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
+        case .particlesImageAngle: return Effect(particle: .particles, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
+        case .particlesImageSpread: return Effect(particle: .particles, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
+        case .particlesImageSpin: return Effect(particle: .particles, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
+        case .embersImageSize: return Effect(particle: .embers, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
+        case .embersImageAngle: return Effect(particle: .embers, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
+        case .embersImageSpread: return Effect(particle: .embers, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
+        case .embersImageSpin: return Effect(particle: .embers, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
+        case .snowImageSize: return Effect(particle: .snow, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
+        case .snowImageAngle: return Effect(particle: .snow, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
+        case .snowImageSpread: return Effect(particle: .snow, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
+        case .snowImageSpin: return Effect(particle: .snow, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
+        case .orbsImageSize: return Effect(particle: .orbs, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
+        case .orbsImageAngle: return Effect(particle: .orbs, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
+        case .orbsImageSpread: return Effect(particle: .orbs, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
+        case .orbsImageSpin: return Effect(particle: .orbs, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
         case .flareX: return Effect("レンズフレア 光源X", "px", \.lensFlare, \.x, 1440, -1920...3840)
         case .flareY: return Effect("レンズフレア 光源Y", "px", \.lensFlare, \.y, 270, -1080...2160)
         case .flareSize: return Effect("レンズフレア 大きさ", "%", \.lensFlare, \.size, 100, 25...400)
@@ -114,6 +143,14 @@ extension ImageParameter {
         case .shapeRotation: return Effect("図形 回転", "°", \.shape, \.geometry.rotation, ShapeGeometry().rotation, ShapeGeometry.rotationRange)
         case .shapeInnerRatio: return Effect("図形 星の内径比", "%", \.shape, \.geometry.innerRatio, ShapeGeometry().innerRatio, ShapeGeometry.innerRatioRange)
         case .shapeOpacity: return Effect("図形 不透明度", "%", \.shape, \.opacity, ImageEffects.Shape().opacity, 0...100)
+        case .belowMaskWidth: return Effect("直下段マスク 幅", "px", \.belowMask, \.geometry.width, ShapeGeometry().width, ShapeGeometry.sizeRange)
+        case .belowMaskHeight: return Effect("直下段マスク 高さ", "px", \.belowMask, \.geometry.height, ShapeGeometry().height, ShapeGeometry.sizeRange)
+        case .belowMaskX: return Effect("直下段マスク 中心X", "px", \.belowMask, \.geometry.x, ShapeGeometry().x, ShapeGeometry.positionRange)
+        case .belowMaskY: return Effect("直下段マスク 中心Y", "px", \.belowMask, \.geometry.y, ShapeGeometry().y, ShapeGeometry.positionRange)
+        case .belowMaskRotation: return Effect("直下段マスク 回転", "°", \.belowMask, \.geometry.rotation, ShapeGeometry().rotation, ShapeGeometry.rotationRange)
+        case .belowMaskInnerRatio: return Effect("直下段マスク 星の内径比", "%", \.belowMask, \.geometry.innerRatio, ShapeGeometry().innerRatio, ShapeGeometry.innerRatioRange)
+        case .belowMaskFeather: return Effect("直下段マスク 境界ぼかし", "px", \.belowMask, \.feather, ImageEffects.Mask().feather, 0...200)
+        case .belowMaskStrength: return Effect("直下段マスク 強さ", "%", \.belowMask, \.strength, ImageEffects.Mask().strength, 0...100)
         case .maskWidth: return Effect("マスク 幅", "px", \.mask, \.geometry.width, ShapeGeometry().width, ShapeGeometry.sizeRange)
         case .maskHeight: return Effect("マスク 高さ", "px", \.mask, \.geometry.height, ShapeGeometry().height, ShapeGeometry.sizeRange)
         case .maskX: return Effect("マスク 中心X", "px", \.mask, \.geometry.x, ShapeGeometry().x, ShapeGeometry.positionRange)
@@ -125,8 +162,15 @@ extension ImageParameter {
         case .vignetteStrength: return Effect("Vignette 強さ", "%", \.vignette, \.strength, ImageEffects.Vignette().strength, ImageEffects.Vignette.percentRange)
         case .vignetteSize: return Effect("Vignette 範囲", "%", \.vignette, \.size, ImageEffects.Vignette().size, ImageEffects.Vignette.percentRange)
         case .vignetteSoftness: return Effect("Vignette ぼかし", "%", \.vignette, \.softness, ImageEffects.Vignette().softness, ImageEffects.Vignette.percentRange)
+        case .sobelAmount: return Effect("Sobel 適用率", "%", \.sobelChromatic, \.amount, ImageEffects.SobelChromatic().amount, ImageEffects.SobelChromatic.amountRange)
+        case .sobelStrength: return Effect("Sobel 輪郭の強さ", "%", \.sobelChromatic, \.edgeStrength, ImageEffects.SobelChromatic().edgeStrength, ImageEffects.SobelChromatic.strengthRange)
+        case .sobelWidth: return Effect("Sobel 輪郭の幅", "px", \.sobelChromatic, \.edgeWidth, ImageEffects.SobelChromatic().edgeWidth, ImageEffects.SobelChromatic.widthRange)
+        case .sobelChromaticAmount: return Effect("Sobel 色ずれ量", "px", \.sobelChromatic, \.chromaticAmount, ImageEffects.SobelChromatic().chromaticAmount, ImageEffects.SobelChromatic.chromaticRange)
+        case .sobelSpeed: return Effect("Sobel 動きの速さ", "%", \.sobelChromatic, \.speed, ImageEffects.SobelChromatic().speed, ImageEffects.SobelChromatic.speedRange)
         case .chromaticAmount: return Effect("色収差 ずれ量", "px", \.chromaticAberration, \.amount, ImageEffects.ChromaticAberration().amount, ImageEffects.ChromaticAberration.amountRange)
         case .chromaticAngle: return Effect("色収差 角度", "°", \.chromaticAberration, \.angle, ImageEffects.ChromaticAberration().angle, ImageEffects.ChromaticAberration.angleRange)
+        case .binarizationThreshold: return Effect("2値化 しきい値", "%", \.binarization, \.threshold, ImageEffects.Binarization().threshold, ImageEffects.Binarization.percentRange)
+        case .binarizationAmount: return Effect("2値化 適用率", "%", \.binarization, \.amount, ImageEffects.Binarization().amount, ImageEffects.Binarization.percentRange)
         case .colorHue: return Effect("色調補正 色相", "°", \.colorCorrection, \.hue, ImageEffects.ColorCorrection().hue, ImageEffects.ColorCorrection.hueRange)
         case .colorBrightness: return Effect("色調補正 明度", "%", \.colorCorrection, \.brightness, ImageEffects.ColorCorrection().brightness, ImageEffects.ColorCorrection.brightnessRange)
         case .colorSaturation: return Effect("色調補正 彩度", "%", \.colorCorrection, \.saturation, ImageEffects.ColorCorrection().saturation, ImageEffects.ColorCorrection.saturationRange)

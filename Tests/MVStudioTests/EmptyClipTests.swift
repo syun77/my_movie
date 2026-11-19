@@ -5,26 +5,27 @@ import XCTest
 final class EmptyClipTests: XCTestCase {
     func testPlacementPersistenceValidationAndImageAssignment() throws {
         let grid = TimelineSnapGrid(bpm: 120, origin: 0)
-        let added = try VisualTrack().addingEmpty(at: 1.03, slot: 3, duration: 10, grid: grid)
+        let base = VisualTrack()
+        let added = try base.addingEmpty(at: 1.03, layerID: base.layers[2].id, duration: 10, grid: grid)
         XCTAssertEqual(added.clip.effects?.solidBackground, .init())
         XCTAssertNil(added.clip.assetID)
         XCTAssertEqual(added.clip.start, grid.nearest(1.03))
         XCTAssertEqual(added.track.assets.count, 0)
-        XCTAssertThrowsError(try added.track.addingEmpty(at: 1.5, slot: 3, duration: 10, grid: grid))
+        XCTAssertThrowsError(try added.track.addingEmpty(at: 1.5, layerID: added.track.layers[2].id, duration: 10, grid: grid))
         let restored = try JSONDecoder().decode(VisualTrack.self, from: JSONEncoder().encode(added.track))
         XCTAssertEqual(restored, added.track)
         try restored.validate(duration: 10)
         var clip = added.clip
         clip.content = .video(sourceIn: 0)
-        XCTAssertThrowsError(try restored.updating(clip, slot: 3, duration: 10))
+        XCTAssertThrowsError(try restored.updating(clip, layerID: restored.layers[2].id, duration: 10))
         clip = added.clip
         clip.assetID = UUID()
-        XCTAssertThrowsError(try restored.updating(clip, slot: 3, duration: 10))
+        XCTAssertThrowsError(try restored.updating(clip, layerID: restored.layers[2].id, duration: 10))
         clip = added.clip
         _ = clip.setKey(.rotation, at: 0.5, value: 30)
         var track = restored
         clip.assetID = track.register(url: URL(fileURLWithPath: "/tmp/assigned.png"), projectURL: URL(fileURLWithPath: "/tmp/song.mvproject"))
-        track = try track.updating(clip, slot: 3, duration: 10)
+        track = try track.updating(clip, layerID: track.layers[2].id, duration: 10)
         XCTAssertEqual(track.clip(clip.id)?.curves, clip.curves)
         XCTAssertEqual(track.clip(clip.id)?.start, added.clip.start)
     }
@@ -43,7 +44,7 @@ final class EmptyClipTests: XCTestCase {
         }
         func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap { views($0) } }
         let add = try XCTUnwrap(views(editor).compactMap { $0 as? NSPopUpButton }.first { $0.identifier?.rawValue == "visuals.effects.add" })
-        let item = try XCTUnwrap(add.menu?.item(withTitle: "単色背景"))
+        let item = try XCTUnwrap(add.menu?.effectItem(titled: "単色背景"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         XCTAssertEqual(clip.effects?.solidBackground, .init())
         let color = try XCTUnwrap(views(editor).compactMap { $0 as? NSColorWell }.first { $0.identifier?.rawValue == "visuals.effects.backgroundColor" })
@@ -68,14 +69,15 @@ final class EmptyClipTests: XCTestCase {
         var clip = VisualClip(assetID: nil, start: 0, end: 3, audioModulations: [:],
                               effects: ImageEffects(solidBackground: .init(), snow: .init(seed: 42)))
         let other = VisualClip(assetID: nil, start: 4, end: 6)
-        let track = try VisualTrack().inserting(clip, slot: 3, duration: 10).inserting(other, slot: 3, duration: 10)
+        let base = VisualTrack()
+        let track = try base.inserting(clip, layerID: base.layers[2].id, duration: 10).inserting(other, layerID: base.layers[2].id, duration: 10)
         editor.load(track, projectURL: URL(fileURLWithPath: "/tmp/color-panel.mvproject"))
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap { views($0) } }
         let effects = try XCTUnwrap(views(editor.view).compactMap { $0 as? ImageEffectsEditor }.first)
-        let picker = try XCTUnwrap(views(effects).compactMap { $0 as? NSPopUpButton }.first { $0.itemTitles.contains("単色背景") && !$0.pullsDown })
-        picker.selectItem(withTitle: "単色背景")
-        XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
+        let chain = try XCTUnwrap(views(effects).compactMap { $0 as? EffectChainList }.first)
+        let backgroundNode = try XCTUnwrap(clip.effects?.nodes.first { $0.kind == .solidBackground })
+        chain.onSelect?(backgroundNode.id)
         let well = try XCTUnwrap(views(effects).compactMap { $0 as? NSColorWell }.first { $0.identifier?.rawValue == "visuals.effects.backgroundColor" })
         var changed: VisualTrack?
         editor.onChange = { changed = $0 }
@@ -88,12 +90,11 @@ final class EmptyClipTests: XCTestCase {
         XCTAssertEqual(editor.track.clip(clip.id)?.effects?.solidBackground?.color, RGBColor(red: 1, green: 0, blue: 0))
         XCTAssertEqual(editor.track.clip(clip.id)?.effects?.snow, clip.effects?.snow)
         XCTAssertEqual(changed?.clip(clip.id)?.effects?.solidBackground?.color, RGBColor(red: 1, green: 0, blue: 0))
-        timeline.onImageSelect?(other.id, 3)
+        timeline.onImageSelect?(other.id, timeline.visuals.layers[2].id)
         XCTAssertNil(editor.track.clip(other.id)?.effects, "クリップ切替時に色変更を別の配置へ適用しない")
-        timeline.onImageSelect?(clip.id, 3)
+        timeline.onImageSelect?(clip.id, timeline.visuals.layers[2].id)
         XCTAssertEqual(RGBColor(well.color), RGBColor(red: 1, green: 0, blue: 0))
-        picker.selectItem(withTitle: "単色背景")
-        XCTAssertTrue(picker.sendAction(picker.action, to: picker.target))
+        chain.onSelect?(backgroundNode.id)
         well.activate(true)
         panel.color = .blue
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
@@ -104,7 +105,8 @@ final class EmptyClipTests: XCTestCase {
     }
 
     func testEmptyClipRenderingAndExportValidation() async throws {
-        let track = try VisualTrack().addingEmpty(at: 0, slot: 1, duration: 10, grid: TimelineSnapGrid()).track
+        let base = VisualTrack()
+        let track = try base.addingEmpty(at: 0, layerID: base.layers[0].id, duration: 10, grid: TimelineSnapGrid()).track
         let url = URL(fileURLWithPath: "/tmp/empty-song.mvproject")
         let provider = VisualFrameProvider()
         try await provider.validateUsed(track: track, projectURL: url, cancellation: ExportCancellation())
@@ -128,9 +130,10 @@ final class EmptyClipTests: XCTestCase {
         var clip = VisualClip(assetID: nil, start: 1, end: 3)
         _ = clip.setKey(.rotation, at: 0.5, value: 30)
         clip.effects = ImageEffects(blur: .init(radius: 12))
-        let track = try VisualTrack().inserting(clip, slot: 3, duration: 10)
+        let base = VisualTrack()
+        let track = try base.inserting(clip, layerID: base.layers[2].id, duration: 10)
         editor.visuals.load(track, projectURL: project)
-        editor.timeline.onImageSelect?(clip.id, 3)
+        editor.timeline.onImageSelect?(clip.id, editor.timeline.visuals.layers[2].id)
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
         editor.editClip(.copy, pasteboard: pasteboard)
@@ -139,7 +142,8 @@ final class EmptyClipTests: XCTestCase {
         let pasted = try XCTUnwrap(editor.visuals.track.layers[2].clips.last)
         XCTAssertNil(pasted.assetID)
         XCTAssertEqual(pasted.start, 5)
-        XCTAssertEqual(pasted.effects, clip.effects)
+        XCTAssertEqual(pasted.effects?.allNodes.map(\.payload), clip.effects?.allNodes.map(\.payload))
+        XCTAssertNotEqual(pasted.effects?.nodes.first?.id, clip.effects?.nodes.first?.id)
         XCTAssertEqual(pasted.curves.first?.keys.first?.value, 30)
         XCTAssertNotEqual(pasted.curves.first?.keys.first?.id, clip.curves.first?.keys.first?.id)
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
@@ -185,14 +189,14 @@ final class EmptyClipTests: XCTestCase {
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(first.action), to: first.target, from: first))
         XCTAssertEqual(commits, 1)
         let clip = try XCTUnwrap(editor.track.clips.first)
-        XCTAssertEqual(editor.track.slot(of: clip.id), 3)
+        XCTAssertEqual(editor.track.layerID(of: clip.id), editor.track.layers[2].id)
         XCTAssertNil(clip.assetID)
         XCTAssertEqual(timeline.currentTime, 0.5)
         XCTAssertNil(try menu(time: 1.5, y: 65)?.item(withTitle: "空のクリップを作成"))
         var automated = clip
         _ = automated.setKey(.x, at: clip.start, value: 0)
-        editor.restore(try editor.track.updating(automated, slot: 3, duration: 10))
-        timeline.revealAutomation(in: 3)
+        editor.restore(try editor.track.updating(automated, layerID: editor.track.layers[2].id, duration: 10))
+        timeline.revealAutomation(in: timeline.visuals.layers[2].id)
         let laneItem = try XCTUnwrap(menu(time: 5, y: 120)?.item(withTitle: "空のクリップを作成"))
         XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(laneItem.action), to: laneItem.target, from: laneItem))
         XCTAssertEqual(commits, 2)
