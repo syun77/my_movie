@@ -62,6 +62,14 @@ struct ImageEffects: Codable, Equatable, Sendable {
         get { if case let .warpFlight(value) = nodes.first(where: { $0.kind == .warpFlight })?.payload { return value }; return nil }
         set { set(.warpFlight, payload: newValue.map(EffectPayload.warpFlight)) }
     }
+    var electricBeam: ElectricBeam? {
+        get { if case let .electricBeam(value) = nodes.first(where: { $0.kind == .electricBeam })?.payload { return value }; return nil }
+        set { set(.electricBeam, payload: newValue.map(EffectPayload.electricBeam)) }
+    }
+    var fireOutline: FireOutline? {
+        get { if case let .fireOutline(value) = nodes.first(where: { $0.kind == .fireOutline })?.payload { return value }; return nil }
+        set { set(.fireOutline, payload: newValue.map(EffectPayload.fireOutline)) }
+    }
     var radialFocus: RadialFocus? {
         get { if case let .radialFocus(value) = nodes.first(where: { $0.kind == .radialFocus })?.payload { return value }; return nil }
         set { set(.radialFocus, payload: newValue.map(EffectPayload.radialFocus)) }
@@ -115,7 +123,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
         set { set(.belowMask, payload: newValue.map(EffectPayload.belowMask)) }
     }
 
-    init(shape: Shape? = nil, mask: Mask? = nil, belowMask: Mask? = nil, solidBackground: SolidBackground? = nil, blur: Blur? = nil, radialBlur: RadialBlur? = nil, crossGlare: CrossGlare? = nil, bloom: Bloom? = nil, particles: Particles? = nil, embers: Embers? = nil, snow: Snow? = nil, orbs: Orbs? = nil, zoomLoop: ZoomLoop? = nil, octgrams: Octgrams? = nil, warpFlight: WarpFlight? = nil, radialFocus: RadialFocus? = nil, radialRays: RadialRays? = nil, straightLines: StraightLines? = nil, sharpFocus: SharpFocus? = nil, focusLines: FocusLines? = nil, shake: Shake? = nil, binarization: Binarization? = nil, colorCorrection: ColorCorrection? = nil, chromaticAberration: ChromaticAberration? = nil, lensFlare: LensFlare? = nil, vignette: Vignette? = nil, sobelChromatic: SobelChromatic? = nil) {
+    init(shape: Shape? = nil, mask: Mask? = nil, belowMask: Mask? = nil, solidBackground: SolidBackground? = nil, blur: Blur? = nil, radialBlur: RadialBlur? = nil, crossGlare: CrossGlare? = nil, bloom: Bloom? = nil, particles: Particles? = nil, embers: Embers? = nil, snow: Snow? = nil, orbs: Orbs? = nil, zoomLoop: ZoomLoop? = nil, octgrams: Octgrams? = nil, warpFlight: WarpFlight? = nil, radialFocus: RadialFocus? = nil, radialRays: RadialRays? = nil, straightLines: StraightLines? = nil, sharpFocus: SharpFocus? = nil, focusLines: FocusLines? = nil, shake: Shake? = nil, binarization: Binarization? = nil, colorCorrection: ColorCorrection? = nil, chromaticAberration: ChromaticAberration? = nil, lensFlare: LensFlare? = nil, vignette: Vignette? = nil, sobelChromatic: SobelChromatic? = nil, fireOutline: FireOutline? = nil, electricBeam: ElectricBeam? = nil) {
         self.solidBackground = solidBackground
         self.shape = shape
         self.shake = shake
@@ -138,6 +146,8 @@ struct ImageEffects: Codable, Equatable, Sendable {
         self.octgrams = octgrams
         self.warpFlight = warpFlight
         self.radialFocus = radialFocus
+        self.fireOutline = fireOutline
+        self.electricBeam = electricBeam
         self.focusLines = focusLines
         self.sharpFocus = sharpFocus
         self.straightLines = straightLines
@@ -159,7 +169,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
         return nodes.contains { node in
             guard node.isEnabled else { return false }
             switch node.kind {
-            case .shake, .sobelChromatic, .chromaticAberration, .zoomLoop, .lensFlare, .particles, .embers, .snow, .orbs,
+            case .electricBeam, .fireOutline, .shake, .sobelChromatic, .chromaticAberration, .zoomLoop, .lensFlare, .particles, .embers, .snow, .orbs,
                  .octgrams, .warpFlight, .radialFocus, .focusLines, .sharpFocus, .straightLines, .radialRays: return true
             default: return false
             }
@@ -675,7 +685,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return radialRays?.isValid != false && straightLines?.isValid != false && sharpFocus?.isValid != false && lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+        return electricBeam?.isValid != false && fireOutline?.isValid != false && radialRays?.isValid != false && straightLines?.isValid != false && sharpFocus?.isValid != false && lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
     }
 }
 

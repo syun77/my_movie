@@ -43,6 +43,8 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
     case vignette
     case belowMask
     case sobelChromatic
+    case fireOutline
+    case electricBeam
     var title: String {
         switch self {
         case .shape: return "図形"
@@ -69,6 +71,8 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
         case .colorCorrection: return "色調補正"
         case .chromaticAberration: return "色収差"
         case .lensFlare: return "レンズフレア"
+        case .electricBeam: return "電撃ビーム"
+        case .fireOutline: return "炎アウトライン"
         case .sobelChromatic: return "Sobel＋色収差"
         case .vignette: return "Vignette（周辺減光）"
         case .belowMask: return "直下段のマスク"
@@ -101,6 +105,8 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
         case .colorCorrection: return .colorCorrection(.init())
         case .chromaticAberration: return .chromaticAberration(.init())
         case .lensFlare: return .lensFlare(.init())
+        case .electricBeam: return .electricBeam(.init())
+        case .fireOutline: return .fireOutline(.init())
         case .sobelChromatic: return .sobelChromatic(.init())
         case .vignette: return .vignette(.init())
         case .belowMask: return .belowMask(.init())
@@ -133,6 +139,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
     case colorCorrection(ImageEffects.ColorCorrection)
     case chromaticAberration(ImageEffects.ChromaticAberration)
     case lensFlare(ImageEffects.LensFlare)
+    case electricBeam(ImageEffects.ElectricBeam)
+    case fireOutline(ImageEffects.FireOutline)
     case sobelChromatic(ImageEffects.SobelChromatic)
     case vignette(ImageEffects.Vignette)
     case belowMask(ImageEffects.Mask)
@@ -162,6 +170,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
         case .colorCorrection: return .colorCorrection
         case .chromaticAberration: return .chromaticAberration
         case .lensFlare: return .lensFlare
+        case .electricBeam: return .electricBeam
+        case .fireOutline: return .fireOutline
         case .sobelChromatic: return .sobelChromatic
         case .vignette: return .vignette
         case .belowMask: return .belowMask
@@ -194,6 +204,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
             case let .colorCorrection(value): return value.isEnabled
             case let .chromaticAberration(value): return value.isEnabled
             case let .lensFlare(value): return value.isEnabled
+            case let .electricBeam(value): return value.isEnabled
+            case let .fireOutline(value): return value.isEnabled
             case let .sobelChromatic(value): return value.isEnabled
             case let .vignette(value): return value.isEnabled
             case let .belowMask(value): return value.isEnabled
@@ -225,6 +237,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
             case var .colorCorrection(value): value.isEnabled = newValue; self = .colorCorrection(value)
             case var .chromaticAberration(value): value.isEnabled = newValue; self = .chromaticAberration(value)
             case var .lensFlare(value): value.isEnabled = newValue; self = .lensFlare(value)
+            case var .electricBeam(value): value.isEnabled = newValue; self = .electricBeam(value)
+            case var .fireOutline(value): value.isEnabled = newValue; self = .fireOutline(value)
             case var .sobelChromatic(value): value.isEnabled = newValue; self = .sobelChromatic(value)
             case var .vignette(value): value.isEnabled = newValue; self = .vignette(value)
             case var .belowMask(value): value.isEnabled = newValue; self = .belowMask(value)
@@ -274,6 +288,8 @@ extension ImageParameter {
         case .binarizationThreshold, .binarizationAmount: return .binarization
         case .colorHue, .colorBrightness, .colorSaturation: return .colorCorrection
         case .chromaticAmount, .chromaticAngle: return .chromaticAberration
+        case .beamX, .beamY, .beamAngle, .beamLength, .beamSpread, .beamCount, .beamWidth, .beamBend, .beamGlow, .beamBrightness, .beamSpeed: return .electricBeam
+        case .fireX, .fireY, .fireWidth, .fireHeight, .fireSpread, .fireDetail, .fireSpeed, .fireBrightness, .fireOpacity, .fireHue: return .fireOutline
         case .sobelAmount, .sobelStrength, .sobelWidth, .sobelChromaticAmount, .sobelSpeed: return .sobelChromatic
         case .flareX, .flareY, .flareSize, .flareIntensity: return .lensFlare
         case .vignetteStrength, .vignetteSize, .vignetteSoftness: return .vignette

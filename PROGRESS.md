@@ -1,11 +1,54 @@
-# レイヤー並べ替えの半透明表示（実装中）
+# レイヤーのロックアイコン変更（完了）
+
+- 最終更新: 2026-11-20 JST。
+- 要件: ロック中のレイヤーを🔐で表示する。
+- 対象: TimelineViewの共通ヘッダー描画と仕様図。通常表示とドラッグ表示は同じ描画を使用する。
+- 完了: 共通ヘッダーのロック中表示と仕様図を🔐へ変更。
+- 整理・検証: 表示箇所は共通描画1か所で、通常/追従表示に共通反映することを確認。追加の構造変更は不要。文字置換のみのため新規テストは追加せず、git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-lock-icon-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 変更: TimelineView.swift、docs/VARIABLE_VISUAL_LAYERS.md、AGENTS.md、PROGRESS.md。
+- 次: 最新appを再起動して利用する。
+- 既存未コミット変更を保持。今回の実行中処理・未解決障害なし。
+
+# 電撃ビームの実装（完了）
+
+- 最終更新: 2026-11-20 JST。docs/ELECTRIC_BEAM.mdの実装をユーザー承認。
+- 完了: 専用生成ノード、11数値のキー/音楽同期・色/seed変更・XYハンドル、24Hz時計/左トリム、最大6軌道×64区間のmax union→線形加算、後段加工用余白。原文コード/素材は転用しない。
+- 保存: v16/読込v13〜16。v15→16で既存ノードを保持し、旧版へのelectricBeam混入を拒否。v12→13変換器を削除、固定v16 fixtureと境界試験を更新。
+- 整理: 数値定義をモデルへ集約。専用rendererで一時面1枚と最大50設定のGPU幾何バッファを再利用。移行器の新payload拒否処理を共通化。
+- 検証: 全体266件・外部Spine1件スキップ・失敗0（/tmp/my-movie-beam-full.log）。整理後38件成功（/tmp/my-movie-beam-final-tests.log）、専用8件を含む。HDR/alpha保持のCPU参照比較・透明合成/継ぎ目/画面外ぼかし/時計/トリム/UI/履歴/削除/複製/MP4全フレームを確認。
+- 画像: /tmp/my-movie-beam-preview.pngを目視確認。手動GUIで実素材を使う操作は未実施。
+- 性能: 整理後1080p最大設定1/3/10段GPU最大10.79/22.87/74.46ms。プロセス累積ピークRSS約237MB。最大段数の実時間再生や最小対象Macの保証はしない。GPUメモリ総量とは区別する。
+- 変更: ElectricBeam.swift/ElectricBeamGeometry.swift/ElectricBeamRenderer.swift/ElectricBeamTests.swift/v16.json新規、EffectChain/EffectAutomation/EffectCategory/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/PreviewPositionPair/ProjectFile/ProjectMigrator/Scene.metal、関連試験とREADME/関連仕様/AGENTS。
+- ビルド: 最終./scripts/build-app.sh成功（/tmp/my-movie-beam-build-app.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strict、同梱Scene.metalの最終ソース一致、git diff --check成功。
+- 次: 最新appを再起動し「追加演出 → 効果線 → 電撃ビーム」で利用する。今回の実行中処理・未解決の実装障害なし。
+- 制限環境のMetal不可はmacOSサービス環境で解消。git diff --check成功。既存の炎/Sobel/レイヤー表示変更と別作業の記録を保持。
+
+# 炎アウトラインの実装（完了）
+
+- 最終更新: 2026-11-20 JST。ユーザーがdocs/FIRE_OUTLINE.mdの設計で実装を承認。
+- 完了: 専用生成ノード・10数値のキー/音楽同期・XYハンドル・Metal線形加算・時計/左トリム・保存v15/読込v12〜15。原作の見た目を参考にノイズ/パレットを独自実装。原文コード/素材は転用・同梱しない。
+- 整理: キー/範囲/初期値/検証をFireOutline.fieldsへ集約し共通評価の参照を辞書化。履歴/素材取得/中間面は既存経路を共有。旧形式拒否のエラーを対象演出名へ改善。
+- 変更: FireOutline.swift/FireOutlineTests.swift新規。EffectChain/EffectAutomation/EffectCategory/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/PreviewPositionPair/ProjectMigrator/Scene.metal、カテゴリ試験、README/ARCHITECTURE/IMAGE_EFFECTS/EFFECT_CATEGORIES/FIRE_OUTLINE/AGENTS。
+- 検証: 全体259件・外部Spine1件スキップ・失敗0（/tmp/my-movie-fire-final-tests.log）。新規8件成功。入力通知・ドラッグ1回確定/取消/初期化、透明中央/矩形外・合成/順序/マスク、時計/トリム、音楽同期/キー、位置ハンドル、複製ID/履歴、保存/移行、MP4全フレーム各5画素を確認。
+- 画像: /tmp/my-movie-fire-outline-preview.pngを目視確認。初回の描画試験は既定背景の比較基準、全体試験は数値欄の編集通知を使うよう試験コードを修正し、最終全体実行で解消。
+- 性能: 1080p1/3/50段GPU最大11.07/17.78/296.14ms。最大段数での実時間再生、最小対象Macでの性能は非保証。プロセスRSSは他試験も含むためGPUメモリ量とは区別する。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-fire-build-app.log）。最新dist/MV Studio.app生成。codesign --verify --deep --strict、同梱Scene.metalの最終コード一致、git diff --check成功。
+- 次: 最新appを再起動し「追加演出 → ぼかし・発光 → 炎アウトライン」から利用する。手動GUIでの実素材操作は未実施。今回の実行中処理・未解決障害なし。既存のレイヤー追従表示等の変更・記録を保持。
+
+# レイヤー並べ替えの半透明表示（完了）
 
 - 最終更新: 2026-11-20 JST。
 - 要件: 演出チェーン同様、掴んでいるレイヤーを半透明で追従表示する。
 - 確認: EffectChainListは元行30%・追従行85%。TimelineViewは現在仮順序と挿入線だけ。
 - 方針: 押下時の可視レイヤー群（ヘッダー/クリップ/展開レーン）を取り込み、掴み位置を保って85%で追従。仮順序内の元行は30%へ薄め、挿入線は最前面。既存の確定/取消/保存を維持する。
-- 次: 描画・操作の検証、リファクタリング、最終./scripts/build-app.shと署名確認。
-- 既存未コミット変更を保持。実行中処理なし。
+- 完了: 元行30%・追従85%と枠/影、前面の挿入線。掴み位置/展開レーン/画面内クリップ、取消/確定を保持。再生ヘッドを追従画像から除外。
+- 整理: 取得・表示座標・描画をヘルパーへ分離、表示画像は押下時1回だけ作成。保存モデルは変更なし。
+- 検証: 関連21件成功（/tmp/my-movie-layer-drag-tests-final.log）。実描画の元行減光/追従の半透明、閾値、追従位置、取消/1回確定、時刻維持を検証。PNG /tmp/my-movie-layer-drag-floating.pngを目視確認。git diff --check成功。
+- 変更: TimelineView.swift、VariableLayerTests.swift、docs/VARIABLE_VISUAL_LAYERS.md、AGENTS.md、PROGRESS.md。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-layer-drag-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動し、レイヤーヘッダーの≡を上下ドラッグして利用する。
+- 既存未コミット変更を保持。今回の実行中処理・未解決障害なし。
 
 # Sobel＋色収差の実装（完了）
 

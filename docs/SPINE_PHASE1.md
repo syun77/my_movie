@@ -117,7 +117,7 @@ atlas全体をTextureLoaderで読み、各regionはUVで参照する。regionご
 
 最初の技術検証の完了はA〜C。ユーザーが通常の制作で使える初期機能の完了はDまでとする。Dでは物理UIと速度編集を公開せず、内部値はphysicsEnabled=false・speed=1に固定する。後段機能を先に追加してA〜Cの合否を遅らせない。
 
-初期段階はSPINE_TIMELINE.mdのG1と、normal/atlas/region/weighted mesh/clipに絞ったG2、物理OFFのG3を必須とする。物理ON・全blend・16倍性能を含むG4は後段の条件であり、A〜Cの前提にしない。Dでは通常モデルで3段1080p/30fpsの負荷とメモリを測定する。現在の保存はversion 15で、v8〜10の読込は [保存形式の世代管理](PROJECT_MIGRATION.md) に従う。検証画面だけの変更では保存形式を変更しない。
+初期段階はSPINE_TIMELINE.mdのG1と、normal/atlas/region/weighted mesh/clipに絞ったG2、物理OFFのG3を必須とする。物理ON・全blend・16倍性能を含むG4は後段の条件であり、A〜Cの前提にしない。Dでは通常モデルで3段1080p/30fpsの負荷とメモリを測定する。現在の保存はversion 16で、v8〜10の読込は [保存形式の世代管理](PROJECT_MIGRATION.md) に従う。検証画面だけの変更では保存形式を変更しない。
 
 ## 8. 受入試験と観測項目
 
@@ -156,4 +156,4 @@ arm64の開発ビルドで提供モデル3段・1080pの9時刻を測定し、CP
 
 最終回帰検証は全90テスト成功（SpineTests 6件を含む）。GPU・AppKit・メディアサービスへアクセスできる環境で実施した。
 
-アニメーションの切替/ポーズブレンドのオートメーションは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) として追加実装済み。現在の保存形式はversion 15で、SpinePlaybackは再生モード・専用キーを含む。上記の初期単一再生はsingleモードとして維持する。
+アニメーションの切替/ポーズブレンドのオートメーションは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) として追加実装済み。現在の保存形式はversion 16で、SpinePlaybackは再生モード・専用キーを含む。上記の初期単一再生はsingleモードとして維持する。

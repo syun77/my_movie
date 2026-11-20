@@ -65,7 +65,7 @@ SwiftPMにC++ターゲットSpineRuntimeと、薄いSpineBridgeを追加する�
 
 アニメーション一覧・各尺・スキン一覧・依存ページ一覧はロード結果として保持する。保存したメタデータだけで実ファイルの有効性を判断しない。C++ handle、GPUリソース、解析途中の状態は永続化/Undoスナップショットへ入れない。
 
-現在のProjectFileはversion 15。v12〜14は [保存形式の世代管理](PROJECT_MIGRATION.md) に従って変換する。v7以前・未来・変換不能な形式は元ファイルを保持して拒否する。
+現在のProjectFileはversion 16。v13〜15は [保存形式の世代管理](PROJECT_MIGRATION.md) に従って変換する。v7以前・未来・変換不能な形式は元ファイルを保持して拒否する。
 
 素材置換は全使用クリップを仮検証し、同じ名前のアニメーション/スキンと必要区間を解決できる場合だけ一括確定する。不一致を先頭アニメーションへ勝手に変更しない。新素材として登録してクリップ別に選び直す経路も用意する。クリップ単位の素材変更は選択配置だけへ適用する。
 
@@ -150,7 +150,7 @@ MetalSceneRendererにSpineMetalRendererを接続し、透明な中間ターゲ�
 | VisualAssetLoader / Manager / Editor | 読込・置換・欠損復旧・インスペクター |
 | VisualFrameProvider / VisualRenderLayer / MetalSceneRenderer | 入力enum化、共通演出と段順 |
 | App / PlacementEditor / TimelineView | 再生準備、種別表示、既存配置操作 |
-| ProjectFile / EditHistory / クリップボード | version 15、参照、値スナップショット |
+| ProjectFile / EditHistory / クリップボード | version 16、参照、値スナップショット |
 | VideoExporter / build-app.sh / README | 事前固定・出力、配布物、操作説明 |
 
 1. SPINE_PHASE1.mdのA〜Cとして、提供モデルでatlas（PMA/回転/trim）、region/weighted mesh、移動/回転、凸形/凹形clippingをnormal合成で検証する。特殊blend・tint black・物理ONは後段とする。
@@ -185,7 +185,7 @@ VisualAssetKindは `still / video(duration) / spine(SpineAssetDescriptor)` と�
 
 - SpinePlaybackはanimationName、skinName、sourceIn、speed、loop、physicsEnabledの値型。名前は完全一致で解決し、存在しない名前を保存読込で補正しない。
 - VisualContentは `still / video / spine(SpinePlayback)`。既存sourceTimeは未折返し素材秒を返し、sourceEndによる尺制限はvideoだけへ適用する。Spineのポーズ参照時刻と物理ステップ番号は専用の評価要求で求める。
-- 保存上のversion 15検証は、種別一致、有限値、速度0.1〜16、sourceIn≥0、矩形、共通区間・キーを検査する。ファイル依存の名前・形式検証はロード段階で行い、欠損をプロジェクトJSON破損と混同しない。
+- 保存上のversion 16検証は、種別一致、有限値、速度0.1〜16、sourceIn≥0、矩形、共通区間・キーを検査する。ファイル依存の名前・形式検証はロード段階で行い、欠損をプロジェクトJSON破損と混同しない。
 
 SpineBridgeの公開ヘッダーはCだけでコンパイル可能にする。アプリ独自APIの責務は次に限定し、正式な関数名は固定コミットで確定する。
 

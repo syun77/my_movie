@@ -52,7 +52,7 @@ final class EffectChainTests: XCTestCase {
     }
 
     func testMigrationPreservesNodeIDsAndOutputMask() throws {
-        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v12", withExtension: "json", subdirectory: "Fixtures/Projects"))
+        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v13", withExtension: "json", subdirectory: "Fixtures/Projects"))
         let data = try Data(contentsOf: fixture)
         let url = URL(fileURLWithPath: "/tmp/chain-migrate.mvproject")
         let first = try ProjectMigrator.read(data, at: url)

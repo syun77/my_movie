@@ -14,6 +14,8 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
     case snowCount, snowDiameter, snowFallSpeed, snowWind, snowOpacity
     case vignetteStrength, vignetteSize, vignetteSoftness
+    case beamX, beamY, beamAngle, beamLength, beamSpread, beamCount, beamWidth, beamBend, beamGlow, beamBrightness, beamSpeed
+    case fireX, fireY, fireWidth, fireHeight, fireSpread, fireDetail, fireSpeed, fireBrightness, fireOpacity, fireHue
     case sobelAmount, sobelStrength, sobelWidth, sobelChromaticAmount, sobelSpeed
     case chromaticAmount, chromaticAngle
     case binarizationThreshold, binarizationAmount
@@ -238,6 +240,8 @@ extension VisualClip {
         effects?.octgrams?.phaseOffset += delta
         effects?.warpFlight?.phaseOffset += delta
         effects?.radialFocus?.phaseOffset += delta
+        effects?.electricBeam?.phaseOffset += delta
+        effects?.fireOutline?.phaseOffset += delta
         effects?.sobelChromatic?.phaseOffset += delta
         effects?.chromaticAberration?.phaseOffset += delta
         effects?.shake?.phaseOffset += delta

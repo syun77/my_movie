@@ -711,3 +711,93 @@ kernel void sobelChromatic(texture2d<float, access::sample> source [[texture(0)]
     }
     output.write(mix(original, result, u.settings.x), gid);
 }
+
+struct FireOutlineUniforms {
+    float4 rectangle;
+    float4 pattern;
+    float4 output;
+};
+
+float fireOutlineHash(int2 cell) {
+    uint h = uint(cell.x) * 0x8da6b343u ^ uint(cell.y) * 0xd8163841u;
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15;
+    return float(h & 0x00ffffffu) / 16777215.0;
+}
+float fireOutlineNoise(float2 p) {
+    int2 cell = int2(floor(p));
+    float2 f = fract(p);
+    float2 w = f * f * (3.0 - 2.0 * f);
+    return mix(mix(fireOutlineHash(cell), fireOutlineHash(cell + int2(1, 0)), w.x),
+               mix(fireOutlineHash(cell + int2(0, 1)), fireOutlineHash(cell + int2(1, 1)), w.x), w.y);
+}
+float fireOutlineTurbulence(float2 p) {
+    return (fireOutlineNoise(p) + 0.5 * fireOutlineNoise(p * 2.0 + 17.0)
+            + 0.25 * fireOutlineNoise(p * 4.0 - 9.0)) / 1.75;
+}
+float3 fireOutlineEdge(float3 accumulated, float along, float depth, float direction,
+                       float edge, constant FireOutlineUniforms &u) {
+    float time = u.pattern.z;
+    float d = depth / max(u.pattern.x, 0.000001);
+    float2 p = float2(along * 8.0 * u.pattern.y + direction * time * 0.65 + edge * 13.0,
+                      d * 5.0 - time * 0.8);
+    float warp = fireOutlineTurbulence(p + float2(0, time * 0.12));
+    float turbulence = fireOutlineTurbulence(p + float2(warp * 3.0, -warp * 2.0));
+    float falloff = d * (5.0 + turbulence * 15.0);
+    float squared = falloff * falloff;
+    float intensity = 1.0 / (1.0 + squared * squared);
+    intensity *= smoothstep(0.002, 0.03, intensity);
+    float hue = 0.74 + 0.07 * (1.0 - intensity) + u.pattern.w;
+    float3 spectrum = saturate(abs(fract(hue + float3(0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0);
+    float3 palette = mix(float3(1), spectrum, 0.78);
+    return mix(accumulated, palette, saturate(intensity));
+}
+fragment float4 fireOutline(Quad in [[stage_in]], constant FireOutlineUniforms &u [[buffer(0)]]) {
+    float2 point = in.uv * float2(1920, 1080);
+    float2 low = u.rectangle.xy - u.rectangle.zw * 0.5;
+    float2 q = (point - low) / u.rectangle.zw;
+    if (any(q < 0.0) || any(q > 1.0) || u.pattern.x <= 0.0 || u.output.x <= 0.0) return 0;
+    float2 distance = min(point - low, low + u.rectangle.zw - point);
+    float coverage = saturate(min(distance.x, distance.y) * u.output.y);
+    float3 color = 0;
+    color = fireOutlineEdge(color, q.x, 1.02 - q.y, -1, 0, u);
+    color = fireOutlineEdge(color, q.y, 1.02 - q.x, -1, 1, u);
+    color = fireOutlineEdge(color, q.x, q.y + 0.02, 1, 2, u);
+    color = fireOutlineEdge(color, q.y, q.x + 0.02, 1, 3, u);
+    color = select(color / 12.92, pow((color + 0.055) / 1.055, float3(2.4)), color > 0.04045);
+    return float4(color * u.output.x * coverage, 0);
+}
+
+struct ElectricBeamSegment { float4 endpoints; float4 widths; };
+struct ElectricBeamUniforms { float4 viewport; float4 color; float4 light; };
+struct ElectricBeamVertex {
+    float4 position [[position]];
+    float2 point;
+    float4 endpoints [[flat]];
+    float halfWidth [[flat]];
+};
+vertex ElectricBeamVertex electricBeamQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
+    const device ElectricBeamSegment *segments [[buffer(0)]], constant ElectricBeamUniforms &u [[buffer(1)]]) {
+    const float2 corners[6] = {float2(0,-1), float2(1,-1), float2(0,1), float2(0,1), float2(1,-1), float2(1,1)};
+    ElectricBeamSegment s = segments[instanceID];
+    float2 a = s.endpoints.xy, b = s.endpoints.zw;
+    float2 direction = normalize(b-a), normal = float2(-direction.y, direction.x);
+    float radius = s.widths.x + u.light.x + 1.0/u.viewport.w;
+    float2 corner = corners[vertexID];
+    float2 p = mix(a-direction*radius, b+direction*radius, corner.x) + normal*corner.y*radius;
+    // Intermediate surfaces share Core Image's vertical orientation.
+    float2 ndc = (p*u.viewport.w + u.viewport.z)/u.viewport.xy*2.0 - 1.0;
+    ElectricBeamVertex out;
+    out.position = float4(ndc,0,1); out.point = p; out.endpoints = s.endpoints; out.halfWidth = s.widths.x;
+    return out;
+}
+fragment float4 electricBeamLight(ElectricBeamVertex in [[stage_in]], constant ElectricBeamUniforms &u [[buffer(1)]]) {
+    float2 a = in.endpoints.xy, delta = in.endpoints.zw-a;
+    float f = clamp(dot(in.point-a,delta)/max(dot(delta,delta),1e-12),0.0,1.0);
+    float distance = length(in.point-(a+f*delta));
+    float aa = 0.5/u.viewport.w;
+    // Pixel footprint coverage retains subpixel cores without widening their energy.
+    float core = clamp((in.halfWidth + aa-distance)/(2.0*aa),0.0,min(1.0,in.halfWidth/aa));
+    float glow = u.light.x > 0 ? pow(1.0-smoothstep(in.halfWidth,in.halfWidth+u.light.x,distance),3.0)*0.35 : 0.0;
+    float3 rgb = (mix(u.color.rgb,float3(1),0.75)*core + u.color.rgb*glow)*u.light.y;
+    return float4(rgb,0);
+}

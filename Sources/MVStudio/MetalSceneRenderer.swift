@@ -17,6 +17,7 @@ final class MetalSceneRenderer {
     private let queue: MTLCommandQueue
     private let filters: CIContext
     private let sobelChromaticRenderer: SobelChromaticRenderer
+    private let electricBeamRenderer: ElectricBeamRenderer
     private let radialBlurRenderer: RadialBlurRenderer
     private let crossGlareRenderer: CrossGlareRenderer
     private let chainEmissionPipeline: MTLRenderPipelineState
@@ -38,6 +39,7 @@ final class MetalSceneRenderer {
     private let octPipeline: MTLRenderPipelineState
     private let warpPipeline: MTLRenderPipelineState
     private let lensFlarePipeline: MTLRenderPipelineState
+    private let fireOutlinePipeline: MTLRenderPipelineState
     private let radialFocusPipeline: MTLRenderPipelineState
     private let raysPipeline: MTLRenderPipelineState
     private let straightPipeline: MTLRenderPipelineState
@@ -107,6 +109,7 @@ final class MetalSceneRenderer {
         guard let bloomFunction = library.makeFunction(name: "bloomHighlights") else { throw Self.renderError }
         highlight = try device.makeComputePipelineState(function: bloomFunction)
         sobelChromaticRenderer = try SobelChromaticRenderer(device: device, library: library)
+        electricBeamRenderer = try ElectricBeamRenderer(device: device, library: library)
         radialBlurRenderer = try RadialBlurRenderer(device: device, library: library)
         crossGlareRenderer = try CrossGlareRenderer(device: device, library: library)
         func pipeline(_ vertex: String, _ fragment: String, format: MTLPixelFormat = .rgba16Float,
@@ -140,6 +143,7 @@ final class MetalSceneRenderer {
         octPipeline = try pipeline("fullscreen", "octgrams")
         warpPipeline = try pipeline("fullscreen", "warpFlight")
         lensFlarePipeline = try pipeline("fullscreen", "lensFlare", additive: true)
+        fireOutlinePipeline = try pipeline("fullscreen", "fireOutline", additive: true)
         radialFocusPipeline = try pipeline("fullscreen", "radialFocus", additive: true)
         raysPipeline = try pipeline("raysQuad", "raysLight", additive: true)
         straightPipeline = try pipeline("straightQuad", "straightInk")
@@ -322,6 +326,12 @@ final class MetalSceneRenderer {
                                  zoom: warp.zoom, brightness: warp.brightness, opacity: Float(warp.opacity / 100) * opacity,
                                  encoder: encoder)
         }
+        if let fire = clip.effects?.fireOutline, fire.isVisible, opacity > 0 {
+            encoder.setRenderPipelineState(fireOutlinePipeline)
+            var uniforms = fire.uniforms(at: localTime, scale: scale, opacity: opacity)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout.size(ofValue: uniforms), index: 0)
+            quad(encoder)
+        }
         if let radial = clip.effects?.radialFocus, radial.isEnabled, radial.opacity > 0, radial.brightness > 0, opacity > 0 {
             drawRadialFocus(radial, at: localTime, opacity: opacity, encoder: encoder)
         }
@@ -497,6 +507,9 @@ final class MetalSceneRenderer {
         for node in nodes {
             var filtered: CIImage?
             switch node.payload {
+            case let .electricBeam(v):
+                try electricBeamRenderer.render(into: current, effect: v, localTime: key.localTime,
+                                                scale: scale, padding: padding, commands: commands)
             case let .colorCorrection(v): filtered = try ChainColorRenderer.apply(v, to: image())
             case let .binarization(v): filtered = try BinarizationRenderer.apply(v, to: image())
             case let .chromaticAberration(v):

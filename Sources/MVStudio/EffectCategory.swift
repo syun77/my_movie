@@ -12,9 +12,9 @@ enum EffectCategory: String, CaseIterable {
     var kinds: [EffectKind] {
         switch self {
         case .color: return [.colorCorrection, .binarization, .vignette, .chromaticAberration, .sobelChromatic]
-        case .blur: return [.blur, .radialBlur, .bloom, .crossGlare, .lensFlare]
+        case .blur: return [.blur, .radialBlur, .bloom, .crossGlare, .lensFlare, .fireOutline]
         case .particles: return [.particles, .orbs, .embers, .snow]
-        case .lines: return [.focusLines, .radialFocus, .sharpFocus, .straightLines, .radialRays]
+        case .lines: return [.focusLines, .radialFocus, .sharpFocus, .straightLines, .radialRays, .electricBeam]
         case .motion: return [.shake, .zoomLoop, .octgrams, .warpFlight]
         case .geometry: return [.solidBackground, .shape, .mask]
         }

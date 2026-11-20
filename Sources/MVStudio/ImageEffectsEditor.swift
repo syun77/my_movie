@@ -38,6 +38,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private let raysColor = NSColorWell()
     private let raysShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let raysFit = NSButton(title: "画面比率に合わせる", target: nil, action: nil)
+    private let beamColor = NSColorWell()
+    private let beamShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let straightColor = NSColorWell()
     private let straightShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let sharpColor = NSColorWell()
@@ -94,6 +96,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                                       (sobelColor, #selector(changeSobelColor), "Sobelの輪郭色"),
                                       (shapeColor, #selector(changeShapeColor), "図形の色"),
                                       (sharpColor, #selector(changeSharpColor), "集中線３の色"),
+                                      (beamColor, #selector(changeBeamColor), "電撃ビームの色"),
                                       (straightColor, #selector(changeStraightColor), "直線効果線の色"),
                                       (raysColor, #selector(changeRaysColor), "放射光線の色"),
                                       (focusColor, #selector(changeFocusColor), "集中線の色")] {
@@ -198,6 +201,13 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             row(number("速度 %", .orbsSpeed, \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
                 + number("不透明度 %", .orbsOpacity, \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
         ])
+        beamColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.beamColor")
+        beamShuffle.identifier = NSUserInterfaceItemIdentifier("visuals.effects.beamShuffle")
+        beamShuffle.target = self; beamShuffle.action = #selector(shuffleBeam)
+        contents[.electricBeam] = NSStackView(views: ImageEffects.ElectricBeam.parameters.map { row(numeric($0)) }
+            + [row([NSTextField(labelWithString: "色"), beamColor, beamShuffle]),
+               NSTextField(wrappingLabelWithString: "電撃だけを重ねる場合は単色背景をOFFにします。")])
+        contents[.fireOutline] = NSStackView(views: ImageEffects.FireOutline.parameters.map { row(numeric($0)) })
         contents[.radialFocus] = NSStackView(views: ImageEffects.RadialFocus.parameters.map { row(numeric($0)) })
         contents[.zoomLoop] = NSStackView(views: ImageEffects.ZoomLoop.parameters.map { row(numeric($0)) })
         contents[.octgrams] = NSStackView(views: ImageEffects.Octgrams.parameters.map { row(numeric($0)) })
@@ -223,7 +233,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         buildStraightControls()
         buildRaysControls()
         buildShapeControls()
-        for kind in [Kind.sobelChromatic, .lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
+        for kind in [Kind.electricBeam, .fireOutline, .sobelChromatic, .lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
             contents[kind]?.orientation = .vertical
             contents[kind]?.alignment = .leading
             contents[kind]?.spacing = 4
@@ -337,7 +347,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         switch parameter() {
         case .raysSquash, .sobelWidth: step = 0.25
         case .raysThickness: step = 0.1
-        case .straightThickness: step = 0.5
+        case .straightThickness, .beamWidth: step = 0.5
         default: step = 1
         }
         let write: (ImageEffects, Double) -> ImageEffects = { effects, value in
@@ -432,6 +442,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         case .sharpFocus: enabled.state = effects.sharpFocus?.isEnabled == true ? .on : .off
         case .straightLines: enabled.state = effects.straightLines?.isEnabled == true ? .on : .off
         case .radialRays: enabled.state = effects.radialRays?.isEnabled == true ? .on : .off
+        case .electricBeam: enabled.state = effects.electricBeam?.isEnabled == true ? .on : .off
+        case .fireOutline: enabled.state = effects.fireOutline?.isEnabled == true ? .on : .off
         case .radialFocus: enabled.state = effects.radialFocus?.isEnabled == true ? .on : .off
         case .zoomLoop: enabled.state = effects.zoomLoop?.isEnabled == true ? .on : .off
         case .octgrams: enabled.state = effects.octgrams?.isEnabled == true ? .on : .off
@@ -447,6 +459,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         sharpColor.isEnabled = editable
         if let straight = effects.straightLines, !straightColor.isActive { straightColor.color = straight.color.nsColor }
         straightColor.isEnabled = editable
+        if let beam = effects.electricBeam, !beamColor.isActive { beamColor.color = beam.color.nsColor }
+        beamColor.isEnabled = editable; beamShuffle.isEnabled = editable
         straightShuffle.isEnabled = editable
         if let rays = effects.radialRays, !raysColor.isActive { raysColor.color = rays.color.nsColor }
         raysColor.isEnabled = editable
@@ -586,6 +600,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         sobelColor.deactivate()
         focusColor.deactivate()
         sharpColor.deactivate()
+        beamColor.deactivate()
         straightColor.deactivate()
         raysColor.deactivate()
         shapeColor.deactivate()
@@ -688,6 +703,18 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             row(frequency + numeric(.focusOpacity)),
             row([NSTextField(labelWithString: "色"), focusColor])
         ])
+    }
+
+    @objc private func changeBeamColor() {
+        guard editable, selected == .electricBeam else { return }
+        var result = effects; result.electricBeam?.color = RGBColor(beamColor.color)
+        onCommit?(result)
+    }
+
+    @objc private func shuffleBeam() {
+        guard editable, selected == .electricBeam else { return }
+        var result = effects; result.electricBeam?.seed = UInt32.random(in: .min ... .max)
+        onCommit?(result)
     }
 
     @objc private func changeStraightColor() {

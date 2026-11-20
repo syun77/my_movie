@@ -44,9 +44,9 @@ enum ProjectMigrator {
         if version < ProjectFile.currentVersion { try freezeLegacyDefaults(&root) }
         while let current = root["version"] as? Int, current < ProjectFile.currentVersion {
             switch current {
-            case 12: try migrate12To13(&root)
             case 13: try migrate13To14(&root)
             case 14: try migrate14To15(&root)
+            case 15: try migrate15To16(&root)
             default: throw ProjectFormatError.invalid("version")
             }
             changes.append("v\(current) → v\(current + 1)")
@@ -64,12 +64,22 @@ enum ProjectMigrator {
         return ProjectReadResult(project: project, sourceVersion: version, originalData: data, sourceURL: url, changes: changes)
     }
 
+    private static func migrate15To16(_ root: inout [String: Any]) throws {
+        try rejectPayloads(["electricBeam"], in: &root)
+    }
+
     private static func migrate14To15(_ root: inout [String: Any]) throws {
+        try rejectPayloads(["sobelChromatic", "fireOutline"], in: &root)
+    }
+
+    private static func rejectPayloads(_ kinds: [String], in root: inout [String: Any]) throws {
         try editClips(&root) { clip, path in
             let chain = clip["effectChain"] as? [String: Any]
-            let nodes = chain?["nodes"] as? [[String: Any]] ?? []
-            guard !nodes.contains(where: { ($0["payload"] as? [String: Any])?["sobelChromatic"] != nil }) else {
-                throw ProjectFormatError.invalid(path + ".effectChain.sobelChromatic")
+            for node in chain?["nodes"] as? [[String: Any]] ?? [] {
+                let payload = node["payload"] as? [String: Any] ?? [:]
+                for kind in kinds where payload[kind] != nil {
+                    throw ProjectFormatError.invalid(path + ".effectChain." + kind)
+                }
             }
         }
     }
@@ -99,20 +109,6 @@ enum ProjectMigrator {
                 heights[key] = pairs
             }
             root["timelineHeights"] = heights
-        }
-    }
-
-    private static func migrate12To13(_ root: inout [String: Any]) throws {
-        let defaults = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ParticleAppearance()))
-        try editClips(&root) { clip, path in
-            guard var chain = clip["effectChain"] as? [String: Any], var nodes = chain["nodes"] as? [[String: Any]] else { return }
-            for index in nodes.indices {
-                guard let payload = nodes[index]["payload"] as? [String: Any],
-                      !Set(payload.keys).isDisjoint(with: ["particles", "embers", "snow", "orbs"]) else { continue }
-                guard nodes[index]["particleAppearance"] == nil else { throw ProjectFormatError.invalid(path + ".particleAppearance") }
-                nodes[index]["particleAppearance"] = defaults
-            }
-            chain["nodes"] = nodes; clip["effectChain"] = chain
         }
     }
 

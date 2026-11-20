@@ -1,7 +1,7 @@
 import Foundation
 
 struct ProjectFile: Codable {
-    static let currentVersion = 15
+    static let currentVersion = 16
     static let oldestSupportedVersion = currentVersion - 3
 
     private(set) var version: Int

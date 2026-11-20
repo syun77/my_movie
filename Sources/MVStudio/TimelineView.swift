@@ -1045,8 +1045,10 @@ final class TimelineView: NSView {
             NSRect(x: x(at: candidate.start), y: rowY(candidate.layerID) + 3, width: x(at: candidate.end) - x(at: candidate.start),
                    height: rowHeight(.visual(candidate.layerID)) - 7).fill()
         }
-        NSColor.systemPink.setStroke()
-        let head = NSBezierPath(); head.lineWidth = 2; head.move(to: NSPoint(x: x(at: currentTime), y: rowsTop)); head.line(to: NSPoint(x: x(at: currentTime), y: rowsBottom)); head.stroke()
+        if !capturingLayerDrag {
+            NSColor.systemPink.setStroke()
+            let head = NSBezierPath(); head.lineWidth = 2; head.move(to: NSPoint(x: x(at: currentTime), y: rowsTop)); head.line(to: NSPoint(x: x(at: currentTime), y: rowsBottom)); head.stroke()
+        }
         if let highlight {
             drawKey(highlight.key, in: highlight.lane, at: keyPosition(highlight.key, in: highlight.lane),
                     radius: highlightedKeyRadius, color: .systemYellow)
@@ -1167,6 +1169,7 @@ final class TimelineView: NSView {
     private var layerDrag: LayerDrag?
     private var layerScrollTimer: Timer?
     private var layerNameField: LayerNameField?
+    private var capturingLayerDrag = false
     private struct LayerDrag {
         let original: VisualTrack
         let id: UUID
@@ -1197,6 +1200,16 @@ final class TimelineView: NSView {
             floatingRect: NSRect(x: bounds.minX, y: drag.point.y - drag.grabOffset,
                                  width: drag.image.size.width, height: drag.image.size.height))
     }
+    private func captureLayerGroup(_ id: UUID) -> (NSRect, NSImage)? {
+        let rect = layerGroupRect(id).intersection(layerDragViewport)
+        guard !rect.isEmpty, let bitmap = bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        capturingLayerDrag = true
+        defer { capturingLayerDrag = false }
+        cacheDisplay(in: rect, to: bitmap)
+        let image = NSImage(size: rect.size); image.addRepresentation(bitmap)
+        return (rect, image)
+    }
+
     private func drawLayerDragPresentation() {
         guard let drag = layerDrag, let presentation = layerDragPresentation else { return }
         NSGraphicsContext.saveGraphicsState()
@@ -1227,7 +1240,7 @@ final class TimelineView: NSView {
            drag.id == id || (index > 0 && visuals.layers[index - 1].id == id && visuals.layer(drag.id)?.clips.contains(where: { $0.effects?.belowMask != nil }) == true) {
             NSColor.systemYellow.withAlphaComponent(0.15).setFill(); headerRect(id).fill()
         }
-        for (text, x) in [("≡", 5.0), (layer.isVisible ? "●" : "○", 25.0), (layer.isLocked ? "🔒" : "🔓", 47.0), ("⋯", 174.0)] {
+        for (text, x) in [("≡", 5.0), (layer.isVisible ? "●" : "○", 25.0), (layer.isLocked ? "🔐" : "🔓", 47.0), ("⋯", 174.0)] {
             label(text, rect: NSRect(x: x, y: y, width: 21, height: 17), color: .lightGray, size: 12)
         }
     }
@@ -1243,10 +1256,7 @@ final class TimelineView: NSView {
         if point.x >= 25 && point.x < 47 { onLayerAction?(id, .visibility); return true }
         if point.x < 25, visuals.canEdit(id) {
             onBeginEdit?()
-            let source = layerGroupRect(id).intersection(layerDragViewport)
-            guard !source.isEmpty, let bitmap = bitmapImageRepForCachingDisplay(in: source) else { return true }
-            cacheDisplay(in: source, to: bitmap)
-            let image = NSImage(size: source.size); image.addRepresentation(bitmap)
+            guard let (source, image) = captureLayerGroup(id) else { return true }
             layerDrag = LayerDrag(original: visuals, id: id, initial: point, image: image,
                                   grabOffset: point.y - source.minY, point: point)
             let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in

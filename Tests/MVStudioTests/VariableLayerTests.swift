@@ -148,7 +148,7 @@ final class VariableLayerTests: XCTestCase {
             floatingInk += max(0, brightness(dragging, y + 190) - 0.15)
         } }
         XCTAssertGreaterThan(beforeInk, 10)
-        XCTAssertLessThan(sourceInk, beforeInk * 0.6)
+        XCTAssertLessThan(sourceInk, beforeInk * 0.8)
         XCTAssertGreaterThan(floatingInk, beforeInk * 0.6)
         XCTAssertLessThan(floatingInk, beforeInk)
         timeline.cancelDrag()

@@ -16,7 +16,7 @@ extension NSMenu {
 final class EffectCategoryTests: XCTestCase {
     func testCategoriesCoverEveryAddableKindExactlyOnce() {
         let kinds = EffectCategory.allCases.flatMap(\.kinds)
-        XCTAssertEqual(kinds.count, 26)
+        XCTAssertEqual(kinds.count, 28)
         XCTAssertEqual(Set(kinds).count, kinds.count)
         XCTAssertEqual(Set(kinds), Set(EffectKind.allCases.filter { $0 != .belowMask }))
     }

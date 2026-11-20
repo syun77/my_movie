@@ -52,6 +52,14 @@ extension ImageParameter {
     }
 
     var effect: Effect? {
+        if let field = ImageEffects.ElectricBeam.fieldsByParameter[self] {
+            return Effect("電撃ビーム " + field.title, field.unit, \.electricBeam, field.path,
+                          ImageEffects.ElectricBeam(seed: 0)[keyPath: field.path], field.range)
+        }
+        if let field = ImageEffects.FireOutline.fieldsByParameter[self] {
+            return Effect("炎アウトライン " + field.title, field.unit, \.fireOutline, field.path,
+                          ImageEffects.FireOutline()[keyPath: field.path], field.range)
+        }
         switch self {
         case .particlesImageSize: return Effect(particle: .particles, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
         case .particlesImageAngle: return Effect(particle: .particles, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
