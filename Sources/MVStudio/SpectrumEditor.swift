@@ -35,38 +35,38 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
         let positionX = numberField(.x, title: "X")
         let positionY = numberField(.y, title: "Y")
         let root = NSStackView(views: [
-            row([shown, presets.button]),
-            row([label("表示形式"), shape, label("色", width: 22), color]),
-            row([label("分解度"), resolution]),
-            row([label("サイズ"), label("幅", width: 20), numberField(.width, title: "幅"),
-                 label("高さ", width: 28), numberField(.height, title: "高さ")]),
-            row([label("位置"), PreviewHandleLabel("X", field: positionX), positionX,
-                 PreviewHandleLabel("Y", field: positionY), positionY]),
-            NSTextField(labelWithString: "サイズと位置は1080p基準のpx。原点は映像の左上。"),
-            row([label("バーの余白"), numberField(.barGap, title: "バーの余白"), NSTextField(labelWithString: "%")])
+            InspectorSection("表示・スタイル", id: "spectrum.style", rows: [
+                row([shown, presets.button]),
+                row([label("表示形式"), shape, label("色", width: 22), color]),
+                row([label("分解度"), resolution])
+            ]),
+            InspectorSection("サイズ・位置", id: "spectrum.layout", rows: [
+                row([label("サイズ"), label("幅", width: 20), numberField(.width, title: "幅"),
+                     label("高さ", width: 28), numberField(.height, title: "高さ")]),
+                row([label("位置"), PreviewHandleLabel("X", field: positionX), positionX,
+                     PreviewHandleLabel("Y", field: positionY), positionY]),
+                NSTextField(wrappingLabelWithString: "1080p基準のpx。原点は映像の左上。"),
+                row([label("バーの余白"), numberField(.barGap, title: "バーの余白"), NSTextField(labelWithString: "%")])
+            ])
         ])
+        for section in root.arrangedSubviews { section.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         shape.setAccessibilityLabel("表示形式")
         color.setAccessibilityLabel("色")
         resolution.setAccessibilityLabel("分解度")
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 8
+        root.spacing = 12
         view = root
         fields[.barGap]?.toolTip = "中心間隔に対する余白の割合。\(DragValueField.numberEditingHint)"
         load(SceneSettings())
     }
 
     private func label(_ title: String, width: CGFloat = 72) -> NSTextField {
-        let label = NSTextField(labelWithString: title)
-        label.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return label
+        InspectorSection.label(title, width: width)
     }
 
     private func row(_ views: [NSView]) -> NSStackView {
-        let row = NSStackView(views: views)
-        row.alignment = .centerY
-        row.spacing = 8
-        return row
+        InspectorSection.row(views)
     }
 
     private func numberField(_ parameter: SpectrumLayout.Field, title: String) -> DragValueField {
@@ -76,7 +76,7 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
         field.setAccessibilityLabel(title)
         field.alignment = .right
         field.delegate = self
-        field.widthAnchor.constraint(equalToConstant: 86).isActive = true
+        field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
         let keyPath = parameter.keyPath
         let range = parameter.range
         field.knobRange = Double(range.lowerBound)...Double(range.upperBound)
@@ -124,6 +124,7 @@ final class SpectrumEditor: NSViewController, NSTextFieldDelegate {
     private var selectedShape: SpectrumStyle.Shape { SpectrumStyle.Shape.allCases[shape.indexOfSelectedItem] }
 
     private func updateGapAvailability() {
+        fields[.barGap]?.superview?.isHidden = selectedShape != .bars
         fields[.barGap]?.isEnabled = shape.isEnabled && selectedShape == .bars
     }
 

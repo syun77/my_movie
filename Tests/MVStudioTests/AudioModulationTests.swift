@@ -167,6 +167,24 @@ final class AudioModulationTests: XCTestCase {
         }
     }
 
+    @MainActor func testDetailsFollowSelectedParameterWithoutChangingSettings() throws {
+        _ = NSApplication.shared
+        let editor = AudioModulationEditor(frame: .zero)
+        var clip = VisualClip(start: 0, end: 5)
+        clip.audioModulations[.scale] = .initial(for: .scale)
+        var commits = 0
+        editor.onCommit = { _, _ in commits += 1 }
+        editor.load(clip, editable: true)
+        let amount = try XCTUnwrap(DragValueField.fields(in: editor).first { $0.identifier?.rawValue == "audioModulation.amount" })
+        XCTAssertFalse(amount.isHiddenOrHasHiddenAncestor)
+        editor.select(.x)
+        XCTAssertTrue(amount.isHiddenOrHasHiddenAncestor)
+        editor.select(.scale)
+        XCTAssertFalse(amount.isHiddenOrHasHiddenAncestor)
+        XCTAssertEqual(amount.doubleValue, clip.audioModulations[.scale]?.amount)
+        XCTAssertEqual(commits, 0)
+    }
+
     @MainActor func testInspectorMenuBeatNumbersPreviewAndSyncOnlyLane() throws {
         _ = NSApplication.shared
         let editor = VisualEditor(); _ = editor.view

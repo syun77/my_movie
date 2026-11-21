@@ -31,6 +31,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var timingIsValid = true
     private var selectedID: UUID?
     private var selectedLayerID = UUID()
+    private let graphSettings = NSStackView()
     private let name = NSTextField(labelWithString: "素材行を選択し、画像・動画・Spineを配置してください")
     private let start = DragValueField(frame: .zero)
     private let end = DragValueField(frame: .zero)
@@ -120,7 +121,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var importTask: Task<Void, Never>?
 
     override func loadView() {
-        let root = NSStackView(); root.orientation = .vertical; root.spacing = 6; view = root
+        let root = NSStackView(); root.orientation = .vertical; root.spacing = 12; view = root
         let add = NSButton(title: "＋素材を配置…", target: self, action: #selector(addImage))
         placementButton = add
         let remove = NSButton(title: "配置を削除", target: self, action: #selector(removeClip))
@@ -129,8 +130,10 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         start.delegate = self; end.delegate = self; sourceIn.delegate = self
         sourceIn.identifier = NSUserInterfaceItemIdentifier("visual.sourceIn")
         sourceIn.stringValue = "0"
-        sourceIn.widthAnchor.constraint(equalToConstant: 100).isActive = true
-        sourceRow.addArrangedSubview(NSTextField(labelWithString: "素材開始（秒）")); sourceRow.addArrangedSubview(sourceIn)
+        sourceIn.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
+        sourceRow.spacing = InspectorSection.spacing
+        sourceRow.addArrangedSubview(InspectorSection.label("素材開始")); sourceRow.addArrangedSubview(sourceIn)
+        sourceRow.addArrangedSubview(NSTextField(labelWithString: "秒"))
         sourceIn.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.sourceIn }, initial: { 0 }, normalize: { max(0, $0) }, commit: { [weak self] _ in self?.finishTimingEdit() })
         playbackSpeed.contextMenuProvider = { [weak self] in self?.makePlaybackSpeedMenu() ?? NSMenu() }
         playbackSpeed.delegate = self
@@ -138,9 +141,11 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         playbackSpeed.stringValue = "1"
         playbackSpeed.knobRange = VisualClip.playbackSpeedRange
         playbackSpeed.knobInitialValue = 1
-        playbackSpeed.widthAnchor.constraint(equalToConstant: 100).isActive = true
-        speedRow.addArrangedSubview(NSTextField(labelWithString: "再生速度（倍）"))
+        playbackSpeed.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
+        speedRow.spacing = InspectorSection.spacing
+        speedRow.addArrangedSubview(InspectorSection.label("再生速度"))
         speedRow.addArrangedSubview(playbackSpeed)
+        speedRow.addArrangedSubview(NSTextField(labelWithString: "倍"))
         playbackSpeed.bindNumber(step: 0.01, current: { [weak self] in self?.track.clip(self?.selectedID)?.content.speed }, initial: { 1 }, normalize: { min(VisualClip.playbackSpeedRange.upperBound, max(VisualClip.playbackSpeedRange.lowerBound, $0)) }, commit: { [weak self] _ in self?.finishTimingEdit() })
         spineAnimation.identifier = NSUserInterfaceItemIdentifier("visual.spine.animation")
         spineLoop.identifier = NSUserInterfaceItemIdentifier("visual.spine.loop")
@@ -165,7 +170,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         start.stringValue = "0"; end.stringValue = "2"
         bindTimingFields()
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
-        for field in [start, end] { field.widthAnchor.constraint(equalToConstant: 100).isActive = true }
+        for field in [start, end] { field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true }
 
         layerID.target = self; layerID.action = #selector(changePlacement)
         keySnap.state = .on
@@ -186,8 +191,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         let toolbar = row([add, remove, manage])
         let selection = row([name, replace])
         let timing = NSStackView(views: [
-            row([NSTextField(labelWithString: "開始"), start, NSTextField(labelWithString: "終了"), end]),
-            row([NSTextField(labelWithString: "レイヤー"), layerID])
+            row([InspectorSection.label("開始"), start, InspectorSection.label("終了", width: 40), end]),
+            row([InspectorSection.label("レイヤー"), layerID])
         ])
         timing.orientation = .vertical
         timing.alignment = .leading
@@ -196,14 +201,22 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         let horizontal = row([parameterControls(.x), parameterControls(.y)])
         let vertical = row([parameterControls(.scale), parameterControls(.rotation)])
         let opacity = row([parameterControls(.opacity)])
-        let graphs = row([NSTextField(labelWithString: "グラフ"), graphParameter, NSTextField(labelWithString: "最小"), minimum,
-                          NSTextField(labelWithString: "最大"), maximum])
+        let graphs = graphSettings
+        graphs.spacing = 6
+        for child in [NSTextField(labelWithString: "グラフ"), graphParameter, NSTextField(labelWithString: "最小"), minimum, NSTextField(labelWithString: "最大"), maximum] { graphs.addArrangedSubview(child) }
         graphParameter.widthAnchor.constraint(equalToConstant: 94).isActive = true
         graphs.toolTip = "グラフの表示範囲を指定し、Returnで確定します"
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, spineBlendRow, effect, horizontal, vertical, opacity, graphs, lfoEditor, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        let sections: [NSView] = [
+            InspectorSection("素材と配置", id: "visual.source", rows: [toolbar, selection, timing, sourceRow, speedRow, spineRow, spineBlendRow]),
+            InspectorSection("基本変形", id: "visual.transform", rows: [horizontal, vertical, opacity]),
+            InspectorSection(nil, id: "visual.effects", rows: [effectsEditor]),
+            InspectorSection("オートメーション・音楽同期", id: "visual.automation", rows: [effect, graphs, lfoEditor, musicEditor]),
+            message
+        ]
+        for child in sections { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         lfoEditor.onCommit = { [weak self] parameter, mode, lfo in self?.setLFO(parameter, mode: mode, lfo: lfo, preview: false) }
         lfoEditor.onPreview = { [weak self] parameter, lfo in
             guard let self else { return }
@@ -241,7 +254,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         controls = [add, manage, keySnap] + clipControls
         refreshControls()
     }
-    private func row(_ views: [NSView]) -> NSStackView { let row = NSStackView(views: views); row.spacing = 10; return row }
+    private func row(_ views: [NSView]) -> NSStackView { InspectorSection.row(views) }
     private func connectTimeline() {
         timeline?.onSpineLaneAction = { [weak self] in self?.editSpineLane($0) }
         timeline?.onLayerAction = { [weak self] in self?.performLayerAction($0, $1) }
@@ -801,7 +814,7 @@ private extension VisualEditor {
         let field = DragValueField(frame: .zero)
         field.previewHandleProvider = { [weak self] in self?.previewHandleTarget(for: parameter) }
         let label = PreviewHandleLabel(parameter.title, field: field)
-        label.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        label.widthAnchor.constraint(equalToConstant: InspectorSection.labelWidth).isActive = true
         field.stringValue = String(parameter.defaultValue)
         field.knobInitialValue = parameter.defaultValue
         field.knobRange = parameter.valueRange
@@ -809,7 +822,7 @@ private extension VisualEditor {
         field.identifier = NSUserInterfaceItemIdentifier("visuals.value." + parameter.rawValue)
         field.delegate = self; field.target = self; field.action = #selector(confirmBaseValue(_:))
         field.toolTip = "固定値・基準値。\(DragValueField.numberEditingHint)"
-        field.widthAnchor.constraint(equalToConstant: 90).isActive = true
+        field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
         let unit = NSTextField(labelWithString: parameter.unit)
         unit.widthAnchor.constraint(equalToConstant: 16).isActive = true
         field.onCreateAutomation = { [weak self] in self?.createAutomation(parameter) }
@@ -883,6 +896,7 @@ private extension VisualEditor {
             graphParameter.removeAllItems()
             graphParameter.addItems(withTitles: parameters.map(\.title))
         }
+        graphSettings.isHidden = parameters.isEmpty
         let active = timeline?.selectedParameter ?? parameters.first
         let curve = active.flatMap { clip?.displayCurve($0) }
         if let active { graphParameter.selectItem(withTitle: active.title) }

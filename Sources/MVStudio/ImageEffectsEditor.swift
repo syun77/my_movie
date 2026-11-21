@@ -326,7 +326,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private func row(_ views: [NSView]) -> NSStackView {
         let stack = NSStackView(views: views)
         stack.alignment = .centerY
-        stack.spacing = 6
+        stack.spacing = InspectorSection.spacing
         return stack
     }
 
@@ -361,7 +361,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                         read: @escaping (ImageEffects) -> Double?,
                         update: @escaping (ImageEffects, Double) -> ImageEffects) -> [NSView] {
         let field = DragValueField(frame: .zero)
-        field.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
         field.previewHandleProvider = { [weak self] in
             guard let parameter = parameter() else { return nil }
             return self?.handleTarget?(parameter)
@@ -505,6 +505,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             let saturationDisabled = input.parameter() == .orbsSaturation && appearance?.usesImage == true && appearance?.colorMode == .original
             let sobelDisabled = input.parameter().map { $0.effectKind == .sobelChromatic && effects.sobelChromatic?.uses($0) == false } ?? false
             let gradientAngleDisabled = input.parameter() == .gradientAngle && effects.gradientBackground?.shape == .radial
+            if input.parameter()?.rawValue.contains("Image") == true { input.field.superview?.isHidden = imageDisabled }
             input.field.isEnabled = editable && value != nil && !automaticPosition && !imageDisabled
                 && !saturationDisabled && !sobelDisabled && !gradientAngleDisabled
             input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }

@@ -38,7 +38,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private var timingIsValid = true
 
     override func loadView() {
-        let root = NSStackView(); root.orientation = .vertical; root.spacing = 8
+        let root = NSStackView(); root.orientation = .vertical; root.spacing = 12
         view = root
         let title = NSTextField(labelWithString: "歌詞テロップ")
         title.font = .boldSystemFont(ofSize: 14)
@@ -48,21 +48,20 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         color.widthAnchor.constraint(equalToConstant: 48).isActive = true
         width.toolTip = "0で縁取りを無効にします"
         width.target = self; width.action = #selector(changeStyle); width.isContinuous = true
-        width.widthAnchor.constraint(equalToConstant: 120).isActive = true
-        widthLabel.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        width.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        widthLabel.widthAnchor.constraint(equalToConstant: 50).isActive = true
         presets.button.identifier = NSUserInterfaceItemIdentifier("lyrics.presets")
         let toolbar = NSStackView(views: [title, add, remove, presets.button]); toolbar.spacing = 10
-        let style = NSStackView(views: [NSTextField(labelWithString: "縁取り色"), color, NSTextField(labelWithString: "太さ"), width, widthLabel])
+        let style = NSStackView(views: [InspectorSection.label("色"), color, NSTextField(labelWithString: "太さ"), width, widthLabel])
         style.spacing = 10
         configureFontMenu()
-        let fontRow = typographyRow([NSTextField(labelWithString: "フォント"), font])
+        let fontRow = typographyRow([InspectorSection.label("フォント"), font])
         let positionX = typographyField(.x, title: "描画位置 X")
         let positionY = typographyField(.y, title: "描画位置 Y")
+        let size = typographyRow([InspectorSection.label("サイズ"), typographyField(.fontSize, title: "フォントサイズ"), NSTextField(labelWithString: "px")])
         let placement = typographyRow([
-            NSTextField(labelWithString: "サイズ"), typographyField(.fontSize, title: "フォントサイズ"),
-            PreviewHandleLabel("X", field: positionX), positionX,
-            PreviewHandleLabel("Y", field: positionY), positionY,
-            NSTextField(labelWithString: "px（1080p）")
+            InspectorSection.label("位置"), PreviewHandleLabel("X", field: positionX), positionX,
+            PreviewHandleLabel("Y", field: positionY), positionY
         ])
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lyrics"))
         column.title = "歌詞（開始〜終了 秒）"
@@ -83,8 +82,8 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         let textScroll = NSScrollView(); textScroll.documentView = body; textScroll.hasVerticalScroller = true
         body.isVerticallyResizable = true; body.isHorizontallyResizable = false
         body.autoresizingMask = [.width]; body.textContainer?.widthTracksTextView = true
-        start.widthAnchor.constraint(equalToConstant: 89).isActive = true
-        end.widthAnchor.constraint(equalToConstant: 89).isActive = true
+        start.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
+        end.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
         chain.target = self; chain.action = #selector(changeChain)
         chain.identifier = NSUserInterfaceItemIdentifier("lyrics.chain")
         let timing = NSStackView(views: [
@@ -107,7 +106,12 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         timeline.onPreview = { [weak self] value in self?.onPreview?(value) }
         timeline.onCommit = { [weak self] value, id in self?.commit(value, selectedID: id) }
         timeline.onError = { [weak self] error in self?.message.stringValue = error.localizedDescription }
-        for child in [toolbar, content, fontRow, placement, style, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [
+            InspectorSection("本文・区間", id: "lyrics.content", rows: [toolbar, content]),
+            InspectorSection("書式（全歌詞共通）", id: "lyrics.typography", rows: [fontRow, size]),
+            InspectorSection("配置（全歌詞共通・1080p基準px）", id: "lyrics.position", rows: [placement]),
+            InspectorSection("縁取り（全歌詞共通）", id: "lyrics.outline", rows: [style]), message
+        ] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         editControls = [add, remove, start, end, color, width, chain, font, presets.button] + Array(typographyFields.values)
         updateTypographyControls()
         setAvailable(false)
@@ -288,10 +292,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private func updateWidthLabel() { widthLabel.stringValue = String(format: "%.1f px", track.outlineWidth) }
 
     private func typographyRow(_ views: [NSView]) -> NSStackView {
-        let row = NSStackView(views: views)
-        row.spacing = 8
-        row.alignment = .centerY
-        return row
+        InspectorSection.row(views)
     }
 
     private func configureFontMenu() {
@@ -317,7 +318,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         field.setAccessibilityLabel(title)
         field.delegate = self
         field.alignment = .right
-        field.widthAnchor.constraint(equalToConstant: 78).isActive = true
+        field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
         let keyPath = parameter.keyPath
         let range = parameter.range
         field.knobRange = Double(range.lowerBound)...Double(range.upperBound)

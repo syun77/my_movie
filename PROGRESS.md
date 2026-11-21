@@ -1,3 +1,26 @@
+# プロパティの分類・囲み・整列（完了）
+
+- 最終更新: 2026-11-22 JST。要件: 各タブのカテゴリ分類、囲み、整列を統一。条件付き表示と設定値保持を維持する。
+- 実装: 共通InspectorSectionの見出し/枠/背景/余白、画像の素材・変形・演出・自動化、歌詞の本文・書式・配置・縁取り、スペクトラムのスタイル・配置へ分類。数値幅とラベル幅を共通化。
+- 検証途中: 既存関連11件成功。450pt幅の新規レイアウト試験と3タブの画像を作成・目視確認。初回新規試験はテスト側の非Optional viewへのunwrapと、NSControlのframe/整列領域の相違を修正。
+- 整理: ラベル/行/数値幅をInspectorSectionへ共通化し、歌詞とスペクトラムの重複を除去。前回の表示条件と保存モデルは維持。
+- 最終検証: 関連27件成功（/tmp/my-movie-inspector-sections-final-tests.log）、演出詳細の数値/取消/モード切替2件成功（/tmp/my-movie-inspector-effects-tests.log）。画像/tmp/my-movie-inspector-{visual,lyrics,spectrum}.pngを目視確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-inspector-sections-build.log）。既知のdsymutil制限を回避して制限外で実行。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 変更: InspectorSection新規、VisualEditor/LyricsEditor/SpectrumEditor/ImageEffectsEditor、InspectorLayoutTests新規、AGENTS/PROGRESS。
+- 次: 最新appを再起動して利用。実素材による手動GUI操作は未検証。実行中処理・未解決障害なし。
+
+# プロパティの条件付き表示（完了）
+
+- 最終更新: 2026-11-22 JST。ユーザーが条件付き表示による整理を承認。
+- 対象: LFO詳細/同期詳細/グラフ設定/粒子画像/スペクトラム余白。モード入口と設定値を保持する。既存変更を保持。
+- 実装: LFO/同期の未使用詳細、グラフ未作成時の範囲、粒子画像未使用の調整/色/合成、折れ線のバー余白を非表示。未選択時はLFO/同期パネルを省略。入口と設定は保持。
+- 整理: 粒子画像の表示行を名前付き参照へ整理し、表示更新を既存load処理へ統合。
+- 初回検証: 関連11件成功。最初のキャッシュ権限エラーは/tmp指定で解消。描画キャプチャは透明背景で文字の目視判定が困難、実GUI確認の代わりとはしない。
+- 最終関連試験: 13件成功（/tmp/my-movie-inspector-final-tests.log）。LFOキー切替/同期の選択項目切替で詳細を省略し、設定値と確定通知回数を保持することを検証。AppLifecycle/歌詞・スペクトラム位置編集も成功。git diff --check成功。
+- ビルド: 初回dsymutilのOperation not permittedで失敗（/tmp/my-movie-inspector-build.log）、権限制限外で同スクリプト再実行に成功（/tmp/my-movie-inspector-build-final.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 変更: LFOEditor/AudioModulationEditor/VisualEditor/ImageEffectsEditor/ParticleAppearanceEditor/SpectrumEditor、関連2試験ファイル、AGENTS/PROGRESS。カテゴリの枠と操作メニュー集約は今回対象外。
+- 次: 最新appを再起動して表示を確認。実素材での手動GUI操作は未検証。実行中処理・未解決障害なし。
+
 # プロパティの条件付き表示の追加検討（完了・未実装）
 
 - 最終更新: 2026-11-22 JST。要件: LFOモード時だけLFO編集を表示する方向で、不要な表示の省略とサブメニュー化を検討。

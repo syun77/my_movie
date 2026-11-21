@@ -217,12 +217,15 @@ final class LFOAutomationTests: XCTestCase {
         }
         let mode=try control("lfo.mode",NSPopUpButton.self)
         let amount=try control("lfo.amount",DragValueField.self)
+        XCTAssertTrue(amount.isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(mode.isHiddenOrHasHiddenAncestor)
         let history=EditHistory(); history.reset(EditSnapshot(visuals:track))
         var commits=0, previews=0
         editor.onChange={ value in commits += 1; history.record(EditSnapshot(visuals:value)) }
         editor.onPreview={ _ in previews += 1 }
         mode.selectItem(at:1); XCTAssertTrue(mode.sendAction(mode.action,to:mode.target))
         XCTAssertNotNil(editor.track.clip(c.id)?.activeLFO(.scale))
+        XCTAssertFalse(amount.isHiddenOrHasHiddenAncestor)
         XCTAssertEqual(commits,1)
         XCTAssertTrue(amount.onDragStart?() == true)
         amount.onDragChange?(20)
@@ -245,6 +248,7 @@ final class LFOAutomationTests: XCTestCase {
         XCTAssertEqual(timeline.currentTime,2.123); XCTAssertEqual(editor.track.clip(c.id)?.curve(.scale)?.keys.count,2)
         mode.selectItem(at:0); XCTAssertTrue(mode.sendAction(mode.action,to:mode.target))
         XCTAssertEqual(editor.track.clip(c.id)?.displayCurve(.scale)?.keys.count,2)
+        XCTAssertTrue(amount.isHiddenOrHasHiddenAncestor)
         mode.selectItem(at:1); XCTAssertTrue(mode.sendAction(mode.action,to:mode.target))
         let hz=try control("lfo.timebase",NSPopUpButton.self)
         hz.selectItem(at:0); XCTAssertTrue(hz.sendAction(hz.action,to:hz.target))

@@ -6,6 +6,7 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
     var onPreview: ((ImageParameter, LFOSettings?) -> Void)?
     var onSelect: ((ImageParameter) -> Void)?
     var settings = SceneSettings() { didSet { refreshStatus() } }
+    private var detailRows: [NSView] = []
     private let picker = NSPopUpButton()
     private let mode = NSPopUpButton()
     private let timebase = NSPopUpButton()
@@ -88,6 +89,7 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
         addArrangedSubview(preview); preview.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
         addArrangedSubview(status); status.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        detailRows = Array(arrangedSubviews.dropFirst(2))
         load(nil, editable: false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -102,6 +104,9 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
         picker.selectItem(withTitle: parameter.title)
         let active = clip?.activeLFO(parameter) != nil
         picker.isEnabled = editable && clip != nil; mode.isEnabled = picker.isEnabled
+        isHidden = clip == nil
+        detailRows.forEach { $0.isHidden = !active }
+        reset.isHidden = !active
         mode.selectItem(at: active ? 1 : 0)
         for control in [timebase, period, origin, bipolar, reset] as [NSControl] { control.isEnabled = editable && active }
         let model = self.model
@@ -116,7 +121,8 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
         }
         fields[.amount]?.setAccessibilityLabel("Amount " + parameter.lfoAmountUnit)
         fields[.amount]?.toolTip = "片振幅（" + parameter.lfoAmountUnit + "）。" + DragValueField.numberEditingHint
-        hzRow.isHidden = model.timebase != .hertz; beatRow.isHidden = !hzRow.isHidden
+        hzRow.isHidden = !active || model.timebase != .hertz
+        beatRow.isHidden = !active || model.timebase == .hertz
         preview.model = model; preview.alphaValue = active ? 1 : 0.35
         refreshStatus()
     }

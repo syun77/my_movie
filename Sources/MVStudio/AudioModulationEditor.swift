@@ -20,6 +20,7 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
     private let explanation = NSTextField(wrappingLabelWithString: "")
     private let status = NSTextField(wrappingLabelWithString: "")
     private let unit = NSTextField(labelWithString: "")
+    private var detailRows: [NSView] = []
     private let beatRow = NSStackView()
     private let shortcuts = NSStackView()
     private let bandRow = NSStackView()
@@ -111,6 +112,7 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
         band.identifier = NSUserInterfaceItemIdentifier("audioModulation.band")
         blend.identifier = NSUserInterfaceItemIdentifier("audioModulation.blend")
         enabled.identifier = NSUserInterfaceItemIdentifier("audioModulation.enabled")
+        detailRows = Array(arrangedSubviews.dropFirst())
         load(nil, editable: false)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -137,6 +139,10 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
             amount.knobRange = parameter.modulationRange(model.blend)
             unit.stringValue = model.blend == .relative ? "%" : parameter == .opacity ? "pt" : parameter.unit
         }
+        isHidden = clip == nil
+        add.isHidden = model != nil
+        remove.isHidden = model == nil
+        detailRows.forEach { $0.isHidden = model == nil }
         let isBeat = model?.source == .beat
         beatRow.isHidden = !isBeat; shortcuts.isHidden = !isBeat
         bandRow.isHidden = model == nil || isBeat

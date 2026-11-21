@@ -13,6 +13,8 @@ final class ParticleAppearanceEditor: NSStackView {
     private let clear = NSButton(title: "解除", target: nil, action: nil)
     private let color = NSPopUpButton()
     private let blend = NSPopUpButton()
+    private var imageSummary: NSView?
+    private var imageDetails: [NSView] = []
     private var particleStyle = ParticleAppearance()
     private var assets: [VisualAsset] = []
 
@@ -31,10 +33,12 @@ final class ParticleAppearanceEditor: NSStackView {
         preview.heightAnchor.constraint(equalToConstant: 48).isActive = true
         for views in [[NSTextField(labelWithString: "粒子の見た目"), mode], [preview, imageName], [choose, read, clear], [NSTextField(labelWithString: "色"), color, NSTextField(labelWithString: "合成"), blend]] {
             let row = NSStackView(views: views); row.spacing = 6; addArrangedSubview(row)
+            if views.contains(where: { $0 === preview }) { imageSummary = row }
+            if views.contains(where: { $0 === color }) { imageDetails.append(row) }
         }
         let note = NSTextField(wrappingLabelWithString: "透過画像を推奨。黒背景は透過されません。複数フレーム画像は先頭のみ使用します。")
         note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor
-        addArrangedSubview(note)
+        addArrangedSubview(note); imageDetails.append(note)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -48,6 +52,9 @@ final class ParticleAppearanceEditor: NSStackView {
         preview.image = value.assetID.flatMap { thumbnails[$0] }
         preview.editable = editable
         for control in [mode, color, blend, choose, read, clear] as [NSControl] { control.isEnabled = editable }
+        imageSummary?.isHidden = value.assetID == nil
+        imageDetails.forEach { $0.isHidden = !value.usesImage }
+        clear.isHidden = value.assetID == nil
         clear.isEnabled = editable && value.assetID != nil
         color.isEnabled = editable && value.usesImage; blend.isEnabled = color.isEnabled
     }
