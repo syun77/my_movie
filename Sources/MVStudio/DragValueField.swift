@@ -2,16 +2,18 @@ import AppKit
 
 @MainActor
 final class DragValueField: NSTextField {
+    var onSelect: (() -> Void)?
     var previewHandleProvider: (() -> PreviewHandleTarget?)?
     var showsPreviewHandle = false { didSet { if oldValue != showsPreviewHandle { needsDisplay = true } } }
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
-        if accepted { (window as? StudioWindow)?.previewHandles?.activate(previewHandleProvider?()) }
+        if accepted { onSelect?(); (window as? StudioWindow)?.previewHandles?.activate(previewHandleProvider?()) }
         return accepted
     }
 
     override func selectText(_ sender: Any?) {
+        onSelect?()
         (window as? StudioWindow)?.previewHandles?.activate(previewHandleProvider?())
         super.selectText(sender)
     }
@@ -49,6 +51,7 @@ final class DragValueField: NSTextField {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        if isEnabled { onSelect?() }
         guard let menu = menu(for: event) else {
             super.rightMouseDown(with: event)
             return
@@ -214,6 +217,7 @@ final class DragValueField: NSTextField {
 
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
+        onSelect?()
         if !cancelNumberDrag() { cancelTracking() }
         if event.clickCount >= 2 {
             selectText(nil)
@@ -259,6 +263,7 @@ final class DragValueField: NSTextField {
     @discardableResult
     func resetValue() -> Bool {
         guard isEnabled, let onReset, window?.makeFirstResponder(nil) != false else { return false }
+        onSelect?()
         onReset()
         return true
     }

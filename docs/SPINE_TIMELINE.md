@@ -65,7 +65,7 @@ SwiftPMにC++ターゲットSpineRuntimeと、薄いSpineBridgeを追加する�
 
 アニメーション一覧・各尺・スキン一覧・依存ページ一覧はロード結果として保持する。保存したメタデータだけで実ファイルの有効性を判断しない。C++ handle、GPUリソース、解析途中の状態は永続化/Undoスナップショットへ入れない。
 
-現在のProjectFileはversion 17。v16〜18は [保存形式の世代管理](PROJECT_MIGRATION.md) に従って変換する。v15以前・未来・変換不能な形式は元ファイルを保持して拒否する。
+現在のProjectFileはversion 17。v17〜19は [保存形式の世代管理](PROJECT_MIGRATION.md) に従って変換する。v16以前・未来・変換不能な形式は元ファイルを保持して拒否する。
 
 素材置換は全使用クリップを仮検証し、同じ名前のアニメーション/スキンと必要区間を解決できる場合だけ一括確定する。不一致を先頭アニメーションへ勝手に変更しない。新素材として登録してクリップ別に選び直す経路も用意する。クリップ単位の素材変更は選択配置だけへ適用する。
 
@@ -126,7 +126,7 @@ MetalSceneRendererにSpineMetalRendererを接続し、透明な中間ターゲ�
 
 ## 8. UI・保存・履歴
 
-「画像・演出」でSpine選択時に、素材名、アニメーション一覧、スキン一覧、ループ、物理演算、素材開始（秒）、再生速度（倍）を表示する。クリップ名は素材名＋アニメーション名とする。静止画/動画の無関係な欄は表示しない。
+「クリップ」でSpine選択時に、素材名、アニメーション一覧、スキン一覧、ループ、物理演算、素材開始（秒）、再生速度（倍）を表示する。クリップ名は素材名＋アニメーション名とする。静止画/動画の無関係な欄は表示しない。
 
 全数値欄はDragValueFieldを利用し、ダブルクリック入力・左右/上下ドラッグ・Shift精密操作・中ボタン初期化・Esc取消を共通化する。ドラッグ中は仮モデルだけをプレビューし、mouseUpで1回履歴登録・保存。物理再計算の連打は集約する。初期値は素材開始0秒、速度1倍。
 
@@ -150,7 +150,7 @@ MetalSceneRendererにSpineMetalRendererを接続し、透明な中間ターゲ�
 | VisualAssetLoader / Manager / Editor | 読込・置換・欠損復旧・インスペクター |
 | VisualFrameProvider / VisualRenderLayer / MetalSceneRenderer | 入力enum化、共通演出と段順 |
 | App / PlacementEditor / TimelineView | 再生準備、種別表示、既存配置操作 |
-| ProjectFile / EditHistory / クリップボード | version 19、参照、値スナップショット |
+| ProjectFile / EditHistory / クリップボード | version 20、参照、値スナップショット |
 | VideoExporter / build-app.sh / README | 事前固定・出力、配布物、操作説明 |
 
 1. SPINE_PHASE1.mdのA〜Cとして、提供モデルでatlas（PMA/回転/trim）、region/weighted mesh、移動/回転、凸形/凹形clippingをnormal合成で検証する。特殊blend・tint black・物理ONは後段とする。

@@ -7,7 +7,6 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
     var onSelect: ((ImageParameter) -> Void)?
     var settings = SceneSettings() { didSet { refreshStatus() } }
     private var detailRows: [NSView] = []
-    private let picker = NSPopUpButton()
     private let mode = NSPopUpButton()
     private let timebase = NSPopUpButton()
     private let period = NSPopUpButton()
@@ -18,7 +17,6 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
     private let preview = LFOWaveformView(frame: .zero)
     private let hzRow = NSStackView(), beatRow = NSStackView()
     private var fields: [Number: DragValueField] = [:]
-    private var parameters: [ImageParameter] = []
     private var clip: VisualClip?
     private var editable = false
     private(set) var parameter: ImageParameter = .scale
@@ -40,13 +38,12 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
         orientation = .vertical; alignment = .leading; spacing = 5
         let title = NSTextField(labelWithString: "オートメーション")
         title.font = .boldSystemFont(ofSize: 12)
-        row([title, picker]); row([NSTextField(labelWithString: "モード"), mode, reset])
-        picker.widthAnchor.constraint(equalToConstant: 185).isActive = true
+        row([title]); row([NSTextField(labelWithString: "モード"), mode, reset])
         mode.addItems(withTitles: ["キー", "LFO"])
         timebase.addItems(withTitles: ["Hz", "ビート同期"])
         period.addItems(withTitles: LFOSettings.BeatPeriod.choices.map(\.title))
         origin.addItems(withTitles: ["曲に同期", "クリップ開始"])
-        for (control, id) in [(picker,"parameter"), (mode,"mode"), (timebase,"timebase"), (period,"period"), (origin,"origin"), (bipolar,"bipolar"), (reset,"reset")] as [(NSControl, String)] {
+        for (control, id) in [(mode,"mode"), (timebase,"timebase"), (period,"period"), (origin,"origin"), (bipolar,"bipolar"), (reset,"reset")] as [(NSControl, String)] {
             control.identifier = NSUserInterfaceItemIdentifier("lfo." + id)
             control.target = self; control.action = #selector(changeOption(_:))
         }
@@ -98,12 +95,8 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
     }
     func load(_ clip: VisualClip?, editable: Bool) {
         self.clip = clip; self.editable = editable
-        let available = ImageParameter.allCases.filter { $0.effectKind == nil || $0.effect?.read(clip?.effects ?? ImageEffects()) != nil }
-        if available != parameters { parameters = available; picker.removeAllItems(); picker.addItems(withTitles: available.map(\.title)) }
-        if !parameters.contains(parameter) { parameter = .scale }
-        picker.selectItem(withTitle: parameter.title)
         let active = clip?.activeLFO(parameter) != nil
-        picker.isEnabled = editable && clip != nil; mode.isEnabled = picker.isEnabled
+        mode.isEnabled = editable && clip != nil
         isHidden = clip == nil
         detailRows.forEach { $0.isHidden = !active }
         reset.isHidden = !active
@@ -159,10 +152,6 @@ final class LFOEditor: NSStackView, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) { if let field = obj.object as? DragValueField { confirmNumber(field) } }
     @objc private func changeOption(_ control: NSControl) {
         guard editable else { return }
-        if control === picker {
-            guard parameters.indices.contains(picker.indexOfSelectedItem) else { return }
-            select(parameters[picker.indexOfSelectedItem]); return
-        }
         if control === mode { onCommit?(parameter, mode.indexOfSelectedItem == 1 ? .lfo : .keys, nil); return }
         var model = self.model
         if control === reset { model = LFOSettings() }

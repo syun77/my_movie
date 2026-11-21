@@ -14,7 +14,7 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
     case snowCount, snowDiameter, snowFallSpeed, snowWind, snowOpacity
     case vignetteStrength, vignetteSize, vignetteSoftness
-    case spiralX, spiralY, spiralRadius, spiralCount, spiralConvergenceTime, spiralTurns, spiralSpeed, spiralDiameter, spiralOpacity
+    case spiralX, spiralY, spiralRadius, spiralCount, spiralConvergenceTime, spiralTurns, spiralSpeed, spiralDiameter, spiralOpacity, spiralGlowWidth, spiralGlowStrength
     case spiralImageSize, spiralImageAngle, spiralImageSpread, spiralImageSpin
     case gradientX, gradientY, gradientPosition, gradientWidth, gradientAngle, gradientBias, gradientOpacity
     case beamX, beamY, beamAngle, beamLength, beamSpread, beamCount, beamWidth, beamBend, beamGlow, beamBrightness, beamSpeed

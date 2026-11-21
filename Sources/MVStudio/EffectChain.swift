@@ -306,7 +306,7 @@ extension ImageParameter {
         case .binarizationThreshold, .binarizationAmount: return .binarization
         case .colorHue, .colorBrightness, .colorSaturation: return .colorCorrection
         case .chromaticAmount, .chromaticAngle: return .chromaticAberration
-        case .spiralX, .spiralY, .spiralRadius, .spiralCount, .spiralConvergenceTime, .spiralTurns, .spiralSpeed, .spiralDiameter, .spiralOpacity, .spiralImageSize, .spiralImageAngle, .spiralImageSpread, .spiralImageSpin: return .spiralParticles
+        case .spiralX, .spiralY, .spiralRadius, .spiralCount, .spiralConvergenceTime, .spiralTurns, .spiralSpeed, .spiralDiameter, .spiralOpacity, .spiralGlowWidth, .spiralGlowStrength, .spiralImageSize, .spiralImageAngle, .spiralImageSpread, .spiralImageSpin: return .spiralParticles
         case .gradientX, .gradientY, .gradientPosition, .gradientWidth, .gradientAngle, .gradientBias, .gradientOpacity: return .gradientBackground
         case .beamX, .beamY, .beamAngle, .beamLength, .beamSpread, .beamCount, .beamWidth, .beamBend, .beamGlow, .beamBrightness, .beamSpeed: return .electricBeam
         case .fireX, .fireY, .fireWidth, .fireHeight, .fireSpread, .fireDetail, .fireSpeed, .fireBrightness, .fireOpacity, .fireHue: return .fireOutline

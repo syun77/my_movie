@@ -44,9 +44,9 @@ enum ProjectMigrator {
         if version < ProjectFile.currentVersion { try freezeLegacyDefaults(&root) }
         while let current = root["version"] as? Int, current < ProjectFile.currentVersion {
             switch current {
-            case 16: try migrate16To17(&root)
             case 17: try migrate17To18(&root)
             case 18: try migrate18To19(&root)
+            case 19: try migrate19To20(&root)
             default: throw ProjectFormatError.invalid("version")
             }
             changes.append("v\(current) → v\(current + 1)")
@@ -64,10 +64,23 @@ enum ProjectMigrator {
         return ProjectReadResult(project: project, sourceVersion: version, originalData: data, sourceURL: url, changes: changes)
     }
 
-    private static func migrate16To17(_ root: inout [String: Any]) throws {
-        try rejectPayloads(["gradientBackground"], in: &root)
-        let parameters = Set(ImageEffects.GradientBackground.fields.map { $0.parameter.rawValue })
-        try rejectParameters(parameters, in: root)
+    private static func migrate19To20(_ root: inout [String: Any]) throws {
+        try rejectParameters(["spiralGlowWidth", "spiralGlowStrength"], in: root)
+        try editClips(&root) { clip, path in
+            guard var chain = clip["effectChain"] as? [String: Any],
+                  var nodes = chain["nodes"] as? [[String: Any]] else { return }
+            for index in nodes.indices {
+                guard var payload = nodes[index]["payload"] as? [String: Any],
+                      var wrapped = payload["spiralParticles"] as? [String: Any],
+                      var value = wrapped["_0"] as? [String: Any] else { continue }
+                guard value["glowWidth"] == nil && value["glowStrength"] == nil else {
+                    throw ProjectFormatError.invalid(path + ".effectChain.spiralParticles.glow")
+                }
+                value["glowWidth"] = 0; value["glowStrength"] = 100
+                wrapped["_0"] = value; payload["spiralParticles"] = wrapped; nodes[index]["payload"] = payload
+            }
+            chain["nodes"] = nodes; clip["effectChain"] = chain
+        }
     }
 
     private static func migrate18To19(_ root: inout [String: Any]) throws {

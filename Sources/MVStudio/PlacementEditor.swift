@@ -16,7 +16,7 @@ final class PlacementEditor: NSViewController {
     var onTabChange: (() -> Void)?
     var onModeChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
-    private let tabs = NSSegmentedControl(labels: ["歌詞", "画像・演出", "スペクトラム"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["歌詞", "クリップ", "スペクトラム"], trackingMode: .selectOne, target: nil, action: nil)
     private let zoom = NSSlider(value: TimelineDisplaySettings.defaultSpan, minValue: TimelineDisplaySettings.spanRange.lowerBound, maxValue: TimelineDisplaySettings.spanRange.upperBound, target: nil, action: nil)
     private let zoomLabel = NSTextField(labelWithString: "12.0秒")
     private let wholeSong = NSButton(checkboxWithTitle: "曲全体", target: nil, action: nil)
@@ -71,6 +71,8 @@ final class PlacementEditor: NSViewController {
         }
         tabs.target = self; tabs.action = #selector(changePlacementMode); tabs.selectedSegment = 0
         tabs.identifier = NSUserInterfaceItemIdentifier("placement.mode")
+        tabs.setToolTip("画像・動画・Spine・演出用クリップ", forSegment: 1)
+        tabs.setAccessibilityLabel("歌詞・クリップ・スペクトラムの編集切替")
         zoom.target = self; zoom.action = #selector(changeZoom)
         wholeSong.target = self; wholeSong.action = #selector(changeWholeSong)
         wholeSong.identifier = NSUserInterfaceItemIdentifier("timeline.wholeSong")
@@ -98,6 +100,8 @@ final class PlacementEditor: NSViewController {
         inspector.alignment = .leading
         inspector.spacing = 12
         inspector.addArrangedSubview(tabs)
+        inspector.addArrangedSubview(visuals.inspectionHeader)
+        visuals.inspectionHeader.widthAnchor.constraint(equalTo: inspector.widthAnchor).isActive = true
         inspector.addArrangedSubview(inspectorScroll)
         inspectorScroll.hasVerticalScroller = true
         inspectorScroll.scrollerStyle = .overlay
@@ -120,6 +124,7 @@ final class PlacementEditor: NSViewController {
         cancelTimelineEdit()
         if selectedTab == .spectrum && tab != .spectrum { spectrum.endColorEditing() }
         selectedTab = tab
+        visuals.inspectionHeader.isHidden = tab != .visuals
         tabs.selectedSegment = tab.rawValue
         if tab != .spectrum {
             timeline.visualMode = tab == .visuals

@@ -129,6 +129,21 @@ final class SpiralParticlesTests: XCTestCase {
         turns.onReset?(); XCTAssertEqual(clip.effects?.spiralParticles?.turns,1.5)
         turns.stringValue = "2.5"; editor.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification,object: turns))
         XCTAssertEqual(clip.effects?.spiralParticles?.turns,2.5)
+        let width = try find("visuals.value.spiralGlowWidth",DragValueField.self)
+        let strength = try find("visuals.value.spiralGlowStrength",DragValueField.self)
+        XCTAssertEqual(width.doubleValue,8); XCTAssertEqual(strength.doubleValue,100)
+        let count = commits
+        XCTAssertTrue(width.onDragStart?() == true); width.onDragChange?(20)
+        XCTAssertEqual(commits,count); XCTAssertNotNil(preview)
+        XCTAssertTrue(width.cancelNumberDrag()); XCTAssertEqual(clip.effects?.spiralParticles?.glowWidth,8)
+        width.stringValue = "40"; editor.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification,object: width))
+        XCTAssertEqual(clip.effects?.spiralParticles?.glowWidth,40)
+        width.onReset?(); XCTAssertEqual(clip.effects?.spiralParticles?.glowWidth,8)
+        var appearance = ParticleAppearance(); appearance.mode = .image; appearance.assetID = UUID()
+        clip.effects?.setAppearance(appearance,for: .spiralParticles); editor.load(clip,editable: true)
+        XCTAssertFalse(width.isEnabled); XCTAssertFalse(strength.isEnabled)
+        appearance.mode = .standard; clip.effects?.setAppearance(appearance,for: .spiralParticles); editor.load(clip,editable: true)
+        XCTAssertTrue(width.isEnabled); XCTAssertTrue(strength.isEnabled)
         let direction = try find("visuals.effects.spiralDirection",NSPopUpButton.self)
         direction.selectItem(at: 1); XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(direction.action),to: direction.target,from: direction))
         XCTAssertEqual(clip.effects?.spiralParticles?.direction,.counterclockwise)
@@ -196,6 +211,40 @@ final class SpiralParticlesTests: XCTestCase {
         clip.effects?.spiralParticles = .init(seed: 17)
         appearance.mode = .standard; clip.effects?.setAppearance(appearance,for: .spiralParticles)
         try canvas.draw([(clip,0)]); try canvas.save("/tmp/my-movie-spiral-default.png")
+    }
+
+    func testGlowWidthAndStrengthRendering() throws {
+        let canvas = try EffectTestCanvas(scale: 0.5)
+        var value = Spiral(x: 480,y: 280,radius: 0,count: 1,diameter: 40,glowWidth: 0,seed: 17)
+        var clip = VisualClip(start: 0,end: 4,effects: ImageEffects(spiralParticles: value))
+        try canvas.draw([(clip,0)])
+        let baseline = [canvas.pixel(240,140),canvas.pixel(255,140),canvas.pixel(270,140)]
+        value.glowWidth = 20; clip.effects?.spiralParticles = value
+        try canvas.draw([(clip,0)])
+        let narrow = canvas.pixel(270,140)
+        value.glowWidth = 80; clip.effects?.spiralParticles = value
+        try canvas.draw([(clip,0)])
+        let wide = canvas.pixel(270,140)
+        XCTAssertGreaterThan(wide[0],narrow[0])
+        value.glowStrength = 200; clip.effects?.spiralParticles = value
+        try canvas.draw([(clip,0)])
+        XCTAssertGreaterThan(canvas.pixel(270,140)[0],wide[0])
+        try canvas.save("/tmp/my-movie-spiral-glow.png")
+        value.glowStrength = 0; clip.effects?.spiralParticles = value
+        try canvas.draw([(clip,0)])
+        XCTAssertEqual([canvas.pixel(240,140),canvas.pixel(255,140),canvas.pixel(270,140)],baseline)
+    }
+
+    func testGlowMigrationAndInvalidLegacyPayload() throws {
+        let url = URL(fileURLWithPath: "/tmp/glow.mvproject")
+        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v19",withExtension: "json",subdirectory: "Fixtures/Projects"))
+        let old = try Data(contentsOf: fixture)
+        let migrated = try ProjectMigrator.read(old,at: url)
+        XCTAssertEqual(migrated.project.visuals.clips.first?.effects?.spiralParticles?.glowWidth,0)
+        XCTAssertEqual(migrated.project.visuals.clips.first?.effects?.spiralParticles?.glowStrength,100)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(migrated.project)) as? [String: Any])
+        root["version"] = 19
+        XCTAssertThrowsError(try ProjectMigrator.read(JSONSerialization.data(withJSONObject: root),at: url))
     }
 
     func test1080pParticleAndLayerBudget() throws {

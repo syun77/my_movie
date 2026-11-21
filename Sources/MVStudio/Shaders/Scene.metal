@@ -142,9 +142,13 @@ vertex Particle particleQuad(uint vertexID [[vertex_id]], uint instanceID [[inst
     return {float4(position.x, -position.y, 0, 1), uv, particle.w, float(instanceID)};
 }
 
-fragment float4 spiralLight(Particle in [[stage_in]], constant float4 &palette [[buffer(0)]]) {
-    float r = length(in.uv);
-    float gain = exp(-6 * r * r) * (1 - smoothstep(0.7, 1.0, r)) * in.opacity;
+fragment float4 spiralLight(Particle in [[stage_in]], constant float4 &palette [[buffer(0)]],
+                            constant float2 &glow [[buffer(1)]]) {
+    float outerRadius = length(in.uv);
+    float coreRadius = outerRadius * glow.x;
+    float core = exp(-6 * coreRadius * coreRadius) * (1 - smoothstep(0.7, 1.0, coreRadius));
+    float halo = exp(-6 * outerRadius * outerRadius) * (1 - smoothstep(0.7, 1.0, outerRadius));
+    float gain = (core + halo * glow.y) * in.opacity;
     return float4(palette.rgb * gain, 0);
 }
 

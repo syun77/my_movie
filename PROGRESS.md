@@ -1,3 +1,54 @@
+# 渦巻き粒子の周囲ぼかし（完了）
+
+- 最終更新: 2026-11-22 JST。要件: 標準粒子の周囲ぼかしの幅と強さを追加。
+- 方針: 幅0〜200px・強さ0〜200%、新規初期8px/100%。芯と周囲光を別評価し、画像方式では入力を無効化。共通キー/LFO/同期、保存v20/読込v17〜20。
+- 状態: 最新のAGENTS/PROGRESSとクリップインスペクター変更を確認。既存未コミット変更は保持。
+- 完了: 11数値の共通定義へ幅/強さを追加、標準粒子の芯と周囲光を同じクワッドで描画。画像方式は入力無効。v20/読込v17〜20、旧payloadへ0px/100%補完、v20固定fixtureを追加。
+- 検証: 関連51件成功（/tmp/my-movie-spiral-glow-tests.log）。専用11件、UIの入力/取消/初期化/画像無効、キー/LFO/同期、幅/強さの画素比較、旧版移行/新項目拒否、MP4比較を含む。画像/tmp/my-movie-spiral-glow.pngを目視確認。
+- 整理: 数値定義/検証/初期値は既存fieldsへ一元化。追加の描画パスなし。UI無効判定は既に取得した外観を再利用。
+- 整理後試験: 関連33件成功（/tmp/my-movie-spiral-glow-final-tests.log）。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-spiral-glow-build.log）。最新dist/MV Studio.app生成済み。署名検証・同梱シェーダー最終ソース一致・git diff --check成功。
+- 変更: SpiralParticles/ImageAnimation/EffectChain/ImageEffectsEditor/MetalSceneRenderer/Scene.metal/ProjectFile/ProjectMigrator、SpiralParticlesTests/ProjectMigrationTests/EffectChainTests/GradientBackgroundTests、v20.json新規、保存形式と関連仕様/README/AGENTS/PROGRESS。既存未コミット変更を保持。
+- 次: 最新appを再起動し、渦巻き粒子の「ぼかしの幅」「ぼかしの強さ」を使用する。実行中処理・未解決障害なし。実素材を使う手動GUI検証は未実施。
+
+# 右側パラメータの変更項目フィルター（提案完了・未実装）
+
+- 最終更新: 2026-11-22 JST。
+- 要件: 右側で変更したパラメータだけを表示するUIを検討。実装依頼ではない。
+- 状態: 現行InspectorSection、基本変形、追加演出、共有自動化対象と既存クリップタブ設計を確認。
+- 方針: 全項目/変更のみの切替、初期値との差分と自動化設定による判定、編集対象保持、新規項目への入口を設計する。
+- 変更: PROGRESS.md。既存の未コミット実装と進行中記録は保持し、操作しない。
+- 完了: docs/CLIP_INSPECTOR.md第10節に判定・表示・編集維持・例外・保存・受入条件を追記。AGENTS.mdに提案の所在を記録。
+- 整理: 未保存との差分と区別し、再生評価値で判定しない。既存共有対象メニューを再利用する。
+- 検証: 現行UI構造との整合を確認。文書のみでコード試験・アプリ生成は対象外。
+- 次: 実装依頼時に共通判定と表示制御を追加し、入力/履歴/レイアウトを検証してアプリ生成。今回開始した実行中処理なし。
+
+# クリップタブと共有編集対象（完了）
+
+- 最終更新: 2026-11-22 JST。ユーザーがdocs/CLIP_INSPECTOR.mdの実装を承認。
+- 要件: 改名/固定ヘッダー/単一の自動化対象/数値・演出・レーン選択連動/未選択・削除・履歴への対応。設定作成やシークを選択の副作用にしない。
+- 現状: 設計と現行選択経路を確認。既存の未コミット変更と関連29件成功を保持。
+- 実装: クリップ改名、固定2行ヘッダー、共有の対象メニュー/パス/基準値/キー数/状態表示。独立ピッカー撤去、ノブ/演出/レーンからの連動、未作成レーン選択の解除、演出ごとの対象記憶、削除/発生源番号変更/履歴復元/未選択へ対応。
+- 初回検証: 関連17件成功（/tmp/my-movie-clip-inspector-tests.log）、新規4件を含む。新規試験の明示self不足を修正して再検証済み。
+- 広域検証: 制限環境でペーストボード/Metal不可の失敗と、発生源削除後の詳細が残る表示更新漏れを確認。更新漏れを修正し、サービス環境で関連55件成功（/tmp/my-movie-clip-inspector-related-final.log）。
+- 整理: 子エディターの同一対象再選択と重複load/表示判定を除去、再生中の同じ状態文字列の再設定を抑制。InspectorSectionの定数を非隔離にしてSwift6警告を解消。右クリック/初期化でも対象を同期。
+- 文書: 現行タブ名の関連説明をクリップへ統一、仕様書を実装状態へ更新。
+- 最終検証: 整理後の関連55件成功（/tmp/my-movie-clip-inspector-final-tests.log）。新規6件で共有対象/選択の副作用なし/メニュー・レーン連動/削除・発生源番号/履歴・クリップ切替/固定ヘッダーを確認。描画/tmp/my-movie-clip-inspector-pinned.pngと基本表示/tmp/my-movie-inspector-visual.pngを目視確認。
+- 文書追記: 別作業で追加された第10節の変更項目フィルター案と進捗は保持し、今回は第1〜9節の実装を完了対象とする。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-clip-inspector-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strictとgit diff --check成功。
+- 変更: VisualEditor/PlacementEditor/LFOEditor/AudioModulationEditor/ImageEffectsEditor/DragValueField/StudioWindow/InspectorSection、ClipInspectorTests新規、README/関連UI仕様/AGENTS/PROGRESS。
+- 次: 最新appを再起動して利用。実素材による手動GUI操作は未実施。実行中処理・未解決障害なし。第10節の表示フィルターは別提案として未実装。
+
+# クリップタブの設計（完了・未実装）
+
+- 最終更新: 2026-11-22 JST。要件: 「画像・演出」を「クリップ」に改名し、編集対象と共有のLFO/音楽同期を分かりやすくする案を設計。
+- 調査: PlacementEditorのタブ、VisualEditorのカテゴリ/独立した対象ピッカー/タイムライン連動を確認。前回のアプリ生成と関連29件成功を保持。
+- 方針: 共通のクリップ文脈、基本/演出のカテゴリ、単一の自動化対象を中心に設計。コードは変更しない。
+- 完了: docs/CLIP_INSPECTOR.mdへ共通ヘッダー/カテゴリ/単一対象パス/選択遷移/条件付き表示/例外/実装箇所/受入条件を記録。ARCHITECTUREへ参照、AGENTSへ提案の所在を追記。
+- 整理: 初回は内部タブを追加せず、Spine専用レーンと通常自動化を区別。モデル変更不要、選択の副作用なし、未作成項目の選択とレーン選択を分離。
+- 検証: 現行の独立ピッカーとタイムライン連動、演出node所有・条件付き表示との整合を確認。文書のみでテスト/アプリ再生成は対象外。git diff --check成功。
+- 次: 実装依頼時に同設計の手順で適用し、関連試験とアプリ生成を行う。実行中処理・障害なし。
+
 # プロパティの分類・囲み・整列（完了）
 
 - 最終更新: 2026-11-22 JST。要件: 各タブのカテゴリ分類、囲み、整列を統一。条件付き表示と設定値保持を維持する。

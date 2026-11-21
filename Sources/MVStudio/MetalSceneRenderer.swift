@@ -682,7 +682,11 @@ final class MetalSceneRenderer {
         } else {
             var palette = SIMD4(Float(Self.linear(value.color.red)), Float(Self.linear(value.color.green)), Float(Self.linear(value.color.blue)), 1)
             pass.setFragmentBytes(&palette, length: MemoryLayout.size(ofValue: palette), index: 0)
-            try drawSprites(value.instances(at: localTime), with: spiralPipeline, encoder: pass,
+            let extent = value.glowStrength > 0 ? 1 + 2 * value.glowWidth / value.diameter : 1
+            var glow = SIMD2(Float(extent), Float(value.glowWidth > 0 ? value.glowStrength / 100 : 0))
+            pass.setFragmentBytes(&glow, length: MemoryLayout.size(ofValue: glow), index: 1)
+            let instances = value.instances(at: localTime).map { SIMD4($0.x, $0.y, $0.z * Float(extent), $0.w) }
+            try drawSprites(instances, with: spiralPipeline, encoder: pass,
                             opacity: 1, viewport: viewport, inset: inset, flipVertically: true)
         }
         pass.endEncoding()

@@ -3,9 +3,9 @@ import AppKit
 /// インスペクター共通のカテゴリ枠。内容の表示状態と編集操作は各エディターが管理する。
 @MainActor
 final class InspectorSection: NSStackView {
-    static let spacing: CGFloat = 8
-    static let labelWidth: CGFloat = 72
-    static let numberWidth: CGFloat = 86
+    nonisolated static let spacing: CGFloat = 8
+    nonisolated static let labelWidth: CGFloat = 72
+    nonisolated static let numberWidth: CGFloat = 86
 
     init(_ title: String?, id: String, rows: [NSView]) {
         super.init(frame: .zero)

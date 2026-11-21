@@ -5,7 +5,6 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
     var onCommit: ((ImageParameter, AudioModulation?) -> Void)?
     var onPreview: ((ImageParameter, AudioModulation?) -> Void)?
     var onSelect: ((ImageParameter) -> Void)?
-    private let parameterPicker = NSPopUpButton()
     private let enabled = NSButton(checkboxWithTitle: "有効", target: nil, action: nil)
     private let source = NSPopUpButton()
     private let blend = NSPopUpButton()
@@ -25,7 +24,6 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
     private let shortcuts = NSStackView()
     private let bandRow = NSStackView()
     private let customRow = NSStackView()
-    private var parameters: [ImageParameter] = []
     private var clip: VisualClip?
     private var editable = false
     private(set) var parameter: ImageParameter = .scale
@@ -44,9 +42,7 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
         }
         let title = NSTextField(labelWithString: "音楽同期")
         title.font = .boldSystemFont(ofSize: 12)
-        _ = row([title, parameterPicker, add, remove])
-        parameterPicker.widthAnchor.constraint(equalToConstant: 185).isActive = true
-        parameterPicker.target = self; parameterPicker.action = #selector(selectParameter)
+        _ = row([title, add, remove])
         add.target = self; add.action = #selector(addSetting)
         remove.target = self; remove.action = #selector(removeSetting)
         source.addItems(withTitles: AudioModulation.Source.allCases.map(\.title))
@@ -107,7 +103,6 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
             }
         }
         controls = [enabled, source, blend, band, amount, release, denominator, lower, upper] + shortcuts.arrangedSubviews.compactMap { $0 as? NSControl }
-        parameterPicker.identifier = NSUserInterfaceItemIdentifier("audioModulation.parameter")
         source.identifier = NSUserInterfaceItemIdentifier("audioModulation.source")
         band.identifier = NSUserInterfaceItemIdentifier("audioModulation.band")
         blend.identifier = NSUserInterfaceItemIdentifier("audioModulation.blend")
@@ -119,13 +114,6 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
 
     func load(_ clip: VisualClip?, editable: Bool) {
         self.clip = clip; self.editable = editable
-        let available = ImageParameter.allCases.filter { $0.effect == nil || $0.effect?.read(clip?.effects ?? ImageEffects()) != nil }
-        if parameters != available {
-            parameters = available; parameterPicker.removeAllItems(); parameterPicker.addItems(withTitles: available.map(\.title))
-        }
-        if !parameters.contains(parameter) { parameter = .scale }
-        parameterPicker.selectItem(withTitle: parameter.title)
-        parameterPicker.isEnabled = editable && clip != nil
         add.isEnabled = editable && clip != nil && model == nil
         remove.isEnabled = editable && model != nil
         controls.forEach { $0.isEnabled = editable && model != nil }
@@ -150,6 +138,7 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
         updateExplanation()
     }
     func select(_ parameter: ImageParameter, notify: Bool = true) {
+        guard self.parameter != parameter else { return }
         cancelDrag(); self.parameter = parameter; load(clip, editable: editable)
         if notify { onSelect?(parameter) }
     }
@@ -211,10 +200,6 @@ final class AudioModulationEditor: NSStackView, NSTextFieldDelegate {
         commitNumber(value, field: field, reset: false)
     }
     func controlTextDidEndEditing(_ obj: Notification) { if let field = obj.object as? DragValueField { confirmNumber(field) } }
-    @objc private func selectParameter() {
-        guard parameters.indices.contains(parameterPicker.indexOfSelectedItem) else { return }
-        select(parameters[parameterPicker.indexOfSelectedItem])
-    }
     @objc private func addSetting() { onCommit?(parameter, .initial(for: parameter)) }
     @objc private func removeSetting() { onCommit?(parameter, nil) }
     @objc private func chooseNote(_ button: NSButton) {

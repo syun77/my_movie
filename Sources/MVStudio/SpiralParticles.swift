@@ -17,6 +17,8 @@ extension ImageEffects {
         var speed = 100.0
         var diameter = 8.0
         var opacity = 100.0
+        var glowWidth = 8.0
+        var glowStrength = 100.0
         var direction = Direction.clockwise
         var color = RGBColor(red: 0.65, green: 0.9, blue: 1)
         var seed = UInt32.random(in: .min ... .max)
@@ -38,6 +40,8 @@ extension ImageEffects {
             Field(parameter: .spiralTurns, title: "回転数", unit: "周", path: \.turns, range: 0...8),
             Field(parameter: .spiralSpeed, title: "速度", unit: "%", path: \.speed, range: 0...400),
             Field(parameter: .spiralDiameter, title: "粒の大きさ", unit: "px", path: \.diameter, range: 1...200),
+            Field(parameter: .spiralGlowWidth, title: "ぼかしの幅", unit: "px", path: \.glowWidth, range: 0...200),
+            Field(parameter: .spiralGlowStrength, title: "ぼかしの強さ", unit: "%", path: \.glowStrength, range: 0...200),
             Field(parameter: .spiralOpacity, title: "不透明度", unit: "%", path: \.opacity, range: 0...100)
         ]
         static let fieldsByParameter = Dictionary(uniqueKeysWithValues: fields.map { ($0.parameter, $0) })

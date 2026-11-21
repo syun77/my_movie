@@ -67,20 +67,6 @@ final class GradientBackgroundTests: XCTestCase {
         XCTAssertNil(clip.curve(.gradientPosition)); XCTAssertNil(clip.audioModulations[.gradientPosition])
     }
 
-    func testHistoricalParameterRejectionDoesNotRejectLyricText() throws {
-        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v16",withExtension: "json",subdirectory: "Fixtures/Projects"))
-        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
-        var lyrics = try XCTUnwrap(root["lyrics"] as? [String: Any])
-        var clips = try XCTUnwrap(lyrics["clips"] as? [[String: Any]])
-        clips[0]["text"] = "gradientX"; lyrics["clips"] = clips; root["lyrics"] = lyrics
-        let url = URL(fileURLWithPath: "/tmp/historical-gradient.mvproject")
-        XCTAssertEqual(try ProjectMigrator.read(JSONSerialization.data(withJSONObject: root),at: url).project.lyrics.clips[0].text,"gradientX")
-        var heights = try XCTUnwrap(root["timelineHeights"] as? [String: Any])
-        heights["nodeAutomation"] = [UUID().uuidString + "/gradientWidth": 62]
-        root["timelineHeights"] = heights
-        XCTAssertThrowsError(try ProjectMigrator.read(JSONSerialization.data(withJSONObject: root),at: url))
-    }
-
     func testMetalReferenceCoveragePaddingAndOrientation() throws {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         let queue = try XCTUnwrap(device.makeCommandQueue())

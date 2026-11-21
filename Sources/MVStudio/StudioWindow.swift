@@ -80,10 +80,10 @@ final class StudioWindow: NSWindow {
             if view is PreviewHandleView { return }
             if view is PreviewView { previewHandles?.clear(); return }
             if let field = view as? DragValueField, field.isEnabled {
-                previewHandles?.activate(field.previewHandleProvider?()); return
+                field.onSelect?(); previewHandles?.activate(field.previewHandleProvider?()); return
             }
             if let label = view as? PreviewHandleLabel, let field = label.valueField, field.isEnabled {
-                previewHandles?.activate(field.previewHandleProvider?()); return
+                field.onSelect?(); previewHandles?.activate(field.previewHandleProvider?()); return
             }
             if view is TimelineView { previewHandles?.cancelDrag(); return }
             if view === clipEditor?.inspector { previewHandles?.clear(); return }

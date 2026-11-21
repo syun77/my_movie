@@ -6,6 +6,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     var missingParticleImages = Set<UUID>()
     var onImportParticle: ((UUID, URL) -> Void)?
     private var particleEditors: [EffectKind: ParticleAppearanceEditor] = [:]
+    var onSelectEmitter: ((Int) -> Void)?
+    var onSelectNode: ((UUID) -> Void)?
+    var onSelectParameter: ((ImageParameter) -> Void)?
     var handleTarget: ((ImageParameter) -> PreviewHandleTarget?)?
     var onDeleteEmitter: ((ImageEffects, Int) -> Void)?
     var onCreateAutomation: ((ImageParameter) -> Void)?
@@ -273,7 +276,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             guard let self, let node = self.effects.nodes.first(where: { $0.id == id }), self.window?.makeFirstResponder(nil) != false else { return }
             self.cancelDrag(); self.deactivateColors()
             if self.selected == node.kind { self.detailsOpen.toggle() } else { self.detailsOpen = true }
-            self.selected = node.kind; self.updateControls()
+            self.selected = node.kind; self.updateControls(); self.onSelectNode?(node.id)
         }
         chainList.onToggle = { [weak self] id in
             guard let self else { return }
@@ -316,6 +319,19 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         effects = clip?.effects ?? ImageEffects()
         self.editable = editable && clip != nil
         updateControls()
+    }
+
+    func selectNode(_ id: UUID, parameter: ImageParameter? = nil) {
+        guard let node = effects.allNodes.first(where: { $0.id == id }) else { return }
+        let needsUpdate = selected != node.kind || !expanded || !detailsOpen
+        if selected != node.kind { cancelDrag(); deactivateColors() }
+        selected = node.kind
+        if let parameter, parameter.rawValue.hasPrefix("emitter"),
+           let index = Int(parameter.rawValue.dropFirst(7).prefix(1)) {
+            selectedEmitter = index
+        }
+        expanded = true; detailsOpen = true
+        if needsUpdate || parameter?.rawValue.hasPrefix("emitter") == true { updateControls() }
     }
 
     @discardableResult
@@ -365,6 +381,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         field.previewHandleProvider = { [weak self] in
             guard let parameter = parameter() else { return nil }
             return self?.handleTarget?(parameter)
+        }
+        field.onSelect = { [weak self] in
+            if let parameter = parameter() { self?.onSelectParameter?(parameter) }
         }
         field.alignment = .right
         field.knobRange = range
@@ -504,10 +523,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             let imageDisabled = input.parameter().map { $0.rawValue.contains("Image") && appearance?.usesImage != true } ?? false
             let saturationDisabled = input.parameter() == .orbsSaturation && appearance?.usesImage == true && appearance?.colorMode == .original
             let sobelDisabled = input.parameter().map { $0.effectKind == .sobelChromatic && effects.sobelChromatic?.uses($0) == false } ?? false
+            let spiralGlowDisabled = input.parameter().map { [ImageParameter.spiralGlowWidth, .spiralGlowStrength].contains($0) } == true
+                && appearance?.usesImage == true
             let gradientAngleDisabled = input.parameter() == .gradientAngle && effects.gradientBackground?.shape == .radial
             if input.parameter()?.rawValue.contains("Image") == true { input.field.superview?.isHidden = imageDisabled }
             input.field.isEnabled = editable && value != nil && !automaticPosition && !imageDisabled
-                && !saturationDisabled && !sobelDisabled && !gradientAngleDisabled
+                && !saturationDisabled && !sobelDisabled && !gradientAngleDisabled && !spiralGlowDisabled
             input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }
             input.field.hasMusic = input.parameter().flatMap { shownClip?.audioModulations[$0] } != nil
             input.field.hasAutomation = input.parameter().map { shownClip?.hasAutomation($0) == true } == true
@@ -535,6 +556,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         cancelDrag()
         selectedEmitter = index
         updateControls()
+        onSelectEmitter?(index)
     }
 
     @objc private func insertEmitter() {
@@ -588,6 +610,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             self.detailsOpen = true
             self.expanded = true
             self.onCommit?(result)
+            if let node = result.allNodes.first(where: { $0.kind == kind }) { self.onSelectNode?(node.id) }
         }
     }
 
@@ -1066,6 +1089,7 @@ extension ImageEffectsEditor {
         if effects.belowMask == nil {
             var value = effects; value.belowMask = .init(); onCommit?(value)
         } else { updateControls() }
+        if let node = effects.allNodes.first(where: { $0.kind == .belowMask }) { onSelectNode?(node.id) }
     }
     @objc private func changeBelowMaskKind(_ sender: NSPopUpButton) {
         guard editable else { return }
