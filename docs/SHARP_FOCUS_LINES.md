@@ -62,7 +62,7 @@ Eが0以下、IがE以上、bがa以下なら省略する。短い尖端区間�
 
 保存キーtoneVariation/sharpToneVariationは不透明度ばらつきの値とキーを保持する。
 
-`ImageEffects.sharpFocus`へ設定・seed・phaseOffsetをversion13で保存。未追加はnil。既存集中線の保存形式は変更しない。追加・削除・有効切替・編集は既存保存/Undo/Redo経路を使う。コピーはseedを保持しキーIDを更新、左トリムは位相加算とキー時刻減算、右トリムは位相を維持する。削除で関連カーブ・同期・表示範囲も既存経路から取り除く。
+`ImageEffects.sharpFocus`へ設定・seed・phaseOffsetをversion19で保存。未追加はnil。既存集中線の保存形式は変更しない。追加・削除・有効切替・編集は既存保存/Undo/Redo経路を使う。コピーはseedを保持しキーIDを更新、左トリムは位相加算とキー時刻減算、右トリムは位相を維持する。削除で関連カーブ・同期・表示範囲も既存経路から取り除く。
 
 ## 実装と検証
 

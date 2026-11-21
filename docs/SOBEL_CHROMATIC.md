@@ -73,7 +73,7 @@ RGBは各サンプルのpremultiplied成分を組み合わせ、alphaは3点の�
 
 ノードにisEnabled、mode、amount、edgeStrength、edgeWidth、edgeColor、chromaticAmount、speed、phaseOffsetを保存する。数値のfinite/範囲、色、モードを検証する。曲線・同期・表示範囲はEffectNodeが所有し、新しいImageParameterをノードIDと組にして参照する。EffectKindの既存整数値は動かさず末尾へ追加する。
 
-保存はProjectFile v15、読込はv13〜16。v14→15は既存ノードを保持し、新演出を追加しない。v14以前へのSobel payload混入は拒否する。対応窓から外れたv11→12変換器は保持しない。ProjectMigratorの未知項目検出・バックアップとatomic保存を共有する。
+保存はProjectFile v17、読込はv16〜19。v14→15は既存ノードを保持し、新演出を追加しない。v14以前へのSobel payload混入は拒否する。対応窓から外れたv11→12変換器は保持しない。ProjectMigratorの未知項目検出・バックアップとatomic保存を共有する。
 
 主な実装箇所:
 

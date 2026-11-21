@@ -152,6 +152,7 @@ final class DragValueField: NSTextField {
 
     func bindNumber(step: Double = 1, current: @escaping () -> Double?, initial: @escaping () -> Double?,
                     normalize: @escaping (Double) -> Double = { $0 },
+                    adjustment: ((Double, Double) -> Double)? = nil,
                     preview: @escaping (Double?) -> Void = { _ in }, commit: @escaping (Double) -> Void) {
         toolTip = Self.numberEditingHint
         knobStep = step
@@ -164,7 +165,7 @@ final class DragValueField: NSTextField {
         }
         onDragChange = { [weak self] distance in
             guard let self, let original = drag?.original else { return }
-            let value = normalize(original + distance.rounded() * step)
+            let value = normalize(adjustment?(original, distance) ?? (original + distance.rounded() * step))
             drag?.value = value
             self.doubleValue = value
             preview(value)

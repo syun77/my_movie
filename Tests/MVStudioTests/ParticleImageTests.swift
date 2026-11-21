@@ -31,7 +31,7 @@ final class ParticleImageTests: XCTestCase {
     }
 
     @MainActor func testAppearanceAutomationHistoryAndRoundTrip() throws {
-        for kind in [EffectKind.particles, .embers, .snow, .orbs] {
+        for kind in [EffectKind.particles, .embers, .snow, .orbs, .spiralParticles] {
             var (track, clip, id) = track(kind)
             let parameters = ImageParameter.allCases.filter { $0.effectKind == kind && $0.rawValue.contains("Image") }
             XCTAssertEqual(parameters.count, 4)
@@ -78,10 +78,10 @@ final class ParticleImageTests: XCTestCase {
         XCTAssertEqual(normalized.mode, .standard)
     }
 
-    func testFourRenderersFallbackTintBlendAndSeekDeterminism() throws {
+    func testParticleRenderersFallbackTintBlendAndSeekDeterminism() throws {
         let canvas = try EffectTestCanvas(scale: 0.1)
         let image = try image()
-        for kind in [EffectKind.particles, .embers, .snow, .orbs] {
+        for kind in [EffectKind.particles, .embers, .snow, .orbs, .spiralParticles] {
             let (_, original, id) = track(kind)
             var clip = original
             try canvas.draw([(clip, 1)], particleImages: [id: VisualFrame(image)])

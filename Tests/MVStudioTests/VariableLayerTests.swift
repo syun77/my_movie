@@ -108,6 +108,33 @@ final class VariableLayerTests: XCTestCase {
         track = try track.editingLayer(hidden) { $0.isVisible = true }
         do { try await VisualAssetLoader().validateUsed(track: track, projectURL: projectURL); XCTFail("再表示した欠損動画は拒否") } catch { }
     }
+    @MainActor func testUnlockedLockRendersGrayAndLockedLockKeepsColor() throws {
+        let timeline = TimelineView(frame: NSRect(x: 0, y: 0, width: 900, height: 300))
+        var track = try populated(3)
+        track.layers[1].isLocked = true
+        timeline.visuals = track; timeline.visualMode = true
+        let bitmap = try XCTUnwrap(timeline.bitmapImageRepForCachingDisplay(in: timeline.bounds))
+        timeline.cacheDisplay(in: timeline.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/my-movie-lock-gray.png"))
+        let scale = Double(bitmap.pixelsWide) / timeline.bounds.width
+        func coloredPixels(y: Int) -> (bright: Int, colored: Int) {
+            var bright = 0, colored = 0
+            for yy in y..<(y + 17) { for x in 47..<68 {
+                let color = bitmap.colorAt(x: Int(Double(x) * scale), y: Int(Double(yy) * scale))!.usingColorSpace(.sRGB)!
+                let channels = [color.redComponent, color.greenComponent, color.blueComponent]
+                if channels.max()! > 0.4 {
+                    bright += 1
+                    if channels.max()! - channels.min()! > 0.08 { colored += 1 }
+                }
+            } }
+            return (bright, colored)
+        }
+        let unlocked = coloredPixels(y: 63), locked = coloredPixels(y: 109)
+        XCTAssertGreaterThan(unlocked.bright, 10)
+        XCTAssertEqual(unlocked.colored, 0)
+        XCTAssertGreaterThan(locked.colored, 10)
+    }
+
     @MainActor func testLayerDragFloatsVisibleGroupAndClearsOnCancelAndDrop() throws {
         _ = NSApplication.shared
         let timeline = TimelineView(frame: NSRect(x: 0, y: 0, width: 900, height: 400))

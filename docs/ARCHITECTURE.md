@@ -14,7 +14,7 @@
 
 ## 現在のシンプル版
 
-画像・動画が混在する最大3素材レイヤー・音声1本、手動BPM/開始位置、項目別の拍・帯域指定トランジェント同期、画像クリップ内の手動キーフレーム・図形・マスク・ブラー・ブルーム・光の粒子・舞い上がる火の粉・雪・光の粒子2・集中線、バー／折れ線スペクトラム、プレビュー/シーク、1080p（1920×1080）/30fpsの音声付きMP4出力を実装。最低macOS 14、Swift Package executableとして構成する。プレビューと出力にはMetal／Core Imageの共通描画、再生にはAVAudioPlayerを使う。AVAssetReaderで音声をPCMへ読み出し、Metalで描いた映像とともにAVAssetWriterへ渡してH.264／48kHz AACのMP4を生成する。素材動画の音声は使わず、出力時刻ごとに素材の映像をデコードして画像・歌詞・スペクトラムと合成する。解析は音源のサンプルレートのまま2048点DFT、30回/秒で実行し、64対数帯域をメモリに保持する。スペクトラムの分解度は4・8・16・32・64（初期32）。バーの上辺は各表示帯域の両境界で補間した強さを直線で結び、折れ線は各表示帯域内の最大値を結ぶ。設定変更時に音声を再解析しない。音声と同じフォルダの `<音声ファイル名>.mvproject` へ素材参照と設定をJSON形式で自動保存し、最後に保存したプロジェクトを起動時に復元する。同一フォルダの素材は相対参照、他フォルダの画像は絶対参照とする。永続キャッシュと素材同梱パッケージは未実装。歌詞一覧の区間編集と全歌詞共通のフォント・サイズ・描画位置・縁取りも実装済み。Core Textによる描画をプレビュー/出力で共有し、version 16のJSONへ画像素材/配置/変形/アニメーション/追加演出と歌詞/書式、スペクトラムの表示有無・形式・色・分解度・レイアウトを保存する。スペクトラムは背景を付けず、1080p基準の幅・高さ・X・Yで指定した枠に描画する。X・Yは左上原点で、バー間の余白は中心間隔に対する割合で指定する。歌詞・画像・共通設定のUndo/RedoはEditHistoryによる値スナップショットで実装し、復元後も自動保存する。履歴は音声/プロジェクト読込成功時にリセットする。以下は将来拡張を含む目標設計であり、現実装の機能一覧ではない。
+画像・動画が混在する初期3段・最大50段の素材レイヤー・音声1本、手動BPM/開始位置、項目別の拍・帯域指定トランジェント同期、画像クリップ内の手動キーフレーム・図形・マスク・ブラー・ブルーム・光の粒子・舞い上がる火の粉・雪・光の粒子2・集中線、バー／折れ線スペクトラム、プレビュー/シーク、1080p（1920×1080）/30fpsの音声付きMP4出力を実装。最低macOS 14、Swift Package executableとして構成する。プレビューと出力にはMetal／Core Imageの共通描画、再生にはAVAudioPlayerを使う。AVAssetReaderで音声をPCMへ読み出し、Metalで描いた映像とともにAVAssetWriterへ渡してH.264／48kHz AACのMP4を生成する。素材動画の音声は使わず、出力時刻ごとに素材の映像をデコードして画像・歌詞・スペクトラムと合成する。解析は音源のサンプルレートのまま2048点DFT、30回/秒で実行し、64対数帯域をメモリに保持する。スペクトラムの分解度は4・8・16・32・64（初期32）。バーの上辺は各表示帯域の両境界で補間した強さを直線で結び、折れ線は各表示帯域内の最大値を結ぶ。設定変更時に音声を再解析しない。音声と同じフォルダの `<音声ファイル名>.mvproject` へ素材参照と設定をJSON形式で自動保存し、最後に保存したプロジェクトを起動時に復元する。同一フォルダの素材は相対参照、他フォルダの画像は絶対参照とする。永続キャッシュと素材同梱パッケージは未実装。歌詞一覧の区間編集と全歌詞共通のフォント・サイズ・描画位置・縁取りも実装済み。Core Textによる描画をプレビュー/出力で共有し、version 19のJSONへ画像素材/配置/変形/アニメーション/追加演出と歌詞/書式、スペクトラムの表示有無・形式・色・分解度・レイアウトを保存する。スペクトラムは背景を付けず、1080p基準の幅・高さ・X・Yで指定した枠に描画する。X・Yは左上原点で、バー間の余白は中心間隔に対する割合で指定する。歌詞・画像・共通設定のUndo/RedoはEditHistoryによる値スナップショットで実装し、復元後も自動保存する。履歴は音声/プロジェクト読込成功時にリセットする。以下は将来拡張を含む目標設計であり、現実装の機能一覧ではない。
 
 ## 1. 目的と初期スコープ
 
@@ -240,13 +240,13 @@ UIとProjectStoreはMainActor、解析・書出しは独立したジョブで実
 
 初期範囲は [SPINE_PHASE1.md](SPINE_PHASE1.md)。公式spine-cpp 4.3の固定ソースをThirdPartyへ同梱し、SpineBridgeのC境界を経由する。SpinePoseProviderがJSON/atlas/PNGと公式のポーズ・world vertices・クリッピングを管理し、不変packetをSpineMetalRendererへ渡す。VisualRenderLayerはframe/spineを区別し、MetalSceneRendererで既存の3段合成へ統合する。
 
-atlasのPMA・回転・trim、移動/回転、weighted mesh、凸形/凹形clipping、default skin・速度1倍・物理OFF・normal blendに対応する。ProjectFile version 16がSpine descriptorと再生設定を保存する。出力専用providerで使用素材を事前読込し、出力中はその内容を保持する。物理ON・特殊blendなど後段の設計は [SPINE_TIMELINE.md](SPINE_TIMELINE.md) に残す。
+atlasのPMA・回転・trim、移動/回転、weighted mesh、凸形/凹形clipping、default skin・速度1倍・物理OFF・normal blendに対応する。ProjectFile version 19がSpine descriptorと再生設定を保存する。出力専用providerで使用素材を事前読込し、出力中はその内容を保持する。物理ON・特殊blendなど後段の設計は [SPINE_TIMELINE.md](SPINE_TIMELINE.md) に残す。
 
-Spineの名前切替・A/Bポーズブレンドは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) の専用モード/レーンで実装する。全アニメーションはsourceIn＋クリップ相対秒を共有し、切替で再開始しない。数値補間はNumericCurve、名前キーは専用型。ProjectFile version 16、プレビュー/出力/履歴/コピー/トリムで共有する。
+Spineの名前切替・A/Bポーズブレンドは [SPINE_AUTOMATION.md](SPINE_AUTOMATION.md) の専用モード/レーンで実装する。全アニメーションはsourceIn＋クリップ相対秒を共有し、切替で再開始しない。数値補間はNumericCurve、名前キーは専用型。ProjectFile version 19、プレビュー/出力/履歴/コピー/トリムで共有する。
 
 ## 保存形式の世代管理
 
-現行v15と直前3世代（v13〜15）を読み込む。変換はProjectMigrator、検証後のバックアップ・atomic保存はProjectStorageへ集約する。旧形式の保存契約を編集モデルへ持ち込まない。仕様と既存v10内の構造差の制約は [PROJECT_MIGRATION.md](PROJECT_MIGRATION.md) を参照。
+現行v19と直前3世代（v16〜18）を読み込む。変換はProjectMigrator、検証後のバックアップ・atomic保存はProjectStorageへ集約する。旧形式の保存契約を編集モデルへ持ち込まない。仕様と既存v10内の構造差の制約は [PROJECT_MIGRATION.md](PROJECT_MIGRATION.md) を参照。
 
 ## Voxelトンネルの設計案
 
@@ -256,4 +256,8 @@ Sobel＋色収差は [SOBEL_CHROMATIC.md](SOBEL_CHROMATIC.md) の専用チェー
 
 炎アウトラインは [FIRE_OUTLINE.md](FIRE_OUTLINE.md) の独立生成ノードとして実装。共通generatorScratchへMetalで描き、alpha0の加算光としてチェーンへ接続する。FireOutline.fieldsが10数値の検証・UI・自動化の定義を共有する。
 
-- 電撃ビームは [仕様](ELECTRIC_BEAM.md) の専用ノード。ElectricBeamGeometryが24Hzの決定的な折れ線を作り、ElectricBeamRendererが軌道ごとのmax union→線形加算を担当する。11数値の共通自動化、XYハンドル、後段用余白、保存v16を共有する。
+- 電撃ビームは [仕様](ELECTRIC_BEAM.md) の専用ノード。ElectricBeamGeometryが24Hzの決定的な折れ線を作り、ElectricBeamRendererが軌道ごとのmax union→線形加算を担当する。11数値の共通自動化、XYハンドル、後段用余白、保存v19を共有する。
+
+- グラデーション背景は [仕様](GRADIENT_BACKGROUND.md) の専用ノード。2色の直線/円形と往復、空間偏り・位置・幅・角度をMetalで評価し、前段面の背後へ合成する。7数値のキー/音楽同期、XYハンドル、プレビュー/出力を共有する。
+
+LFOは [LFO_AUTOMATION.md](LFO_AUTOMATION.md) のParameterAutomation/LFOEvaluator/LFOEditorで実装する。ImageCurveはキー編集の一時表現とし、永続化するKeyCurveにはキーのみを保存する。LFOとキーの選択をParameterEvaluatorで解決してから音楽同期・物理範囲・個数丸めを適用する。描画点数上限を超えるレーンは値域帯で表示する。

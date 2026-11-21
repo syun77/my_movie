@@ -66,12 +66,12 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
     private var baseAudioModulations: [ImageParameter: AudioModulation] = [:]
     private var baseAutomationRanges: [ImageParameter: DisplayRange] = [:]
     var fixedValues: [ImageParameter: Double] = [:]
-    private var baseCurves: [ImageCurve] = []
+    private var baseAutomations: [ParameterAutomation] = []
     var effects: ImageEffects?
 
     private enum CodingKeys: String, CodingKey {
         case id, assetID, start, end, content, fixedValues
-        case baseAudioModulations = "audioModulations", baseAutomationRanges = "automationRanges", baseCurves = "curves"
+        case baseAudioModulations = "audioModulations", baseAutomationRanges = "automationRanges", baseAutomations = "automations"
         case effects = "effectChain"
     }
 
@@ -83,13 +83,21 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
         self.audioModulations = audioModulations; self.automationRanges = automationRanges; self.curves = curves
     }
 
-    var curves: [ImageCurve] {
-        get { baseCurves + (effects?.allNodes.flatMap(\.curves) ?? []) }
+    var automations: [ParameterAutomation] {
+        get { baseAutomations + (effects?.allNodes.flatMap(\.automations) ?? []) }
         set {
-            baseCurves = newValue.filter { $0.parameter.effectKind == nil || effects?.node(for: $0.parameter) == nil }
+            baseAutomations = newValue.filter { $0.parameter.effectKind == nil || effects?.node(for: $0.parameter) == nil }
             for node in effects?.allNodes ?? [] {
-                effects?.editNode(node.id) { value in value.curves = newValue.filter { $0.parameter.effectKind == value.kind } }
+                effects?.editNode(node.id) { value in value.automations = newValue.filter { $0.parameter.effectKind == value.kind } }
             }
+        }
+    }
+    var curves: [ImageCurve] {
+        get { AutomationCurves.curves(automations, ranges: automationRanges) }
+        set {
+            var items = automations, ranges = automationRanges
+            AutomationCurves.update(newValue, items: &items, ranges: &ranges)
+            automations = items; automationRanges = ranges
         }
     }
     var audioModulations: [ImageParameter: AudioModulation] {
@@ -111,7 +119,7 @@ struct VisualClip: Codable, Sendable, Equatable, Identifiable {
         }
     }
     var hasValidAutomationStorage: Bool {
-        baseCurves.allSatisfy { $0.parameter.effectKind == nil }
+        baseAutomations.allSatisfy { $0.parameter.effectKind == nil }
             && baseAudioModulations.keys.allSatisfy { $0.effectKind == nil }
             && baseAutomationRanges.keys.allSatisfy { $0.effectKind == nil }
             && fixedValues.keys.allSatisfy { $0.effectKind == nil }

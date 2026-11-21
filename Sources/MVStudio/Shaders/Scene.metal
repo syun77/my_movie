@@ -142,6 +142,12 @@ vertex Particle particleQuad(uint vertexID [[vertex_id]], uint instanceID [[inst
     return {float4(position.x, -position.y, 0, 1), uv, particle.w, float(instanceID)};
 }
 
+fragment float4 spiralLight(Particle in [[stage_in]], constant float4 &palette [[buffer(0)]]) {
+    float r = length(in.uv);
+    float gain = exp(-6 * r * r) * (1 - smoothstep(0.7, 1.0, r)) * in.opacity;
+    return float4(palette.rgb * gain, 0);
+}
+
 fragment float4 particleLight(Particle in [[stage_in]], constant float4 &palette [[buffer(0)]]) {
     float2 uv = in.uv;
     float radius = length(uv);
@@ -644,14 +650,15 @@ struct ImageParticleVertex {
     float3 tint;
 };
 vertex ImageParticleVertex imageParticleQuad(uint vertexID [[vertex_id]], uint instanceID [[instance_id]],
-                                            constant ImageParticleInstance *instances [[buffer(0)]]) {
+                                            constant ImageParticleInstance *instances [[buffer(0)]],
+                                            constant float4 &viewport [[buffer(1)]]) {
     ImageParticleInstance p = instances[instanceID];
     float2 corner = corners[vertexID];
     float2 offset = (corner - 0.5) * p.geometry.zw;
     float s = sin(p.motion.y), c = cos(p.motion.y);
     offset = float2(c * offset.x - s * offset.y, s * offset.x + c * offset.y);
-    float2 position = (p.geometry.xy + offset) / float2(1920, 1080) * 2 - 1;
-    return {float4(position.x, -position.y, 0, 1), float2(corner.x, 1 - corner.y), p.motion.x, p.color.rgb};
+    float2 position = (p.geometry.xy + offset + viewport.z) / viewport.xy * 2 - 1;
+    return {float4(position.x, viewport.w > 0 ? position.y : -position.y, 0, 1), float2(corner.x, 1 - corner.y), p.motion.x, p.color.rgb};
 }
 fragment float4 imageParticle(ImageParticleVertex in [[stage_in]], texture2d<float> image [[texture(0)]]) {
     float4 pixel = image.sample(linearSampler, in.uv);
@@ -800,4 +807,35 @@ fragment float4 electricBeamLight(ElectricBeamVertex in [[stage_in]], constant E
     float glow = u.light.x > 0 ? pow(1.0-smoothstep(in.halfWidth,in.halfWidth+u.light.x,distance),3.0)*0.35 : 0.0;
     float3 rgb = (mix(u.color.rgb,float3(1),0.75)*core + u.color.rgb*glow)*u.light.y;
     return float4(rgb,0);
+}
+
+struct GradientBackgroundUniforms {
+    float4 viewport;
+    float4 geometry;
+    float4 profile;
+    float4 colorA;
+    float4 colorB;
+};
+
+float gradientMixture(float2 p, constant GradientBackgroundUniforms &v) {
+    float2 relative = p - v.geometry.xy;
+    float distance = v.profile.z > 0.5 ? length(relative)
+        : dot(relative, float2(cos(v.profile.x), sin(v.profile.x)));
+    float u = clamp((distance - v.geometry.z) / v.geometry.w + 0.5, 0.0, 1.0);
+    float t = v.profile.w > 0.5 ? 1.0 - abs(2.0 * u - 1.0) : u;
+    return pow(t, v.profile.y);
+}
+
+fragment float4 gradientBackground(Quad in [[stage_in]], constant GradientBackgroundUniforms &v [[buffer(0)]]) {
+    float2 pixel = float2(in.position.x, v.viewport.y - in.position.y) - v.viewport.z;
+    float2 canvas = v.viewport.xy - 2.0 * v.viewport.z;
+    if (any(pixel < 0) || any(pixel >= canvas)) return float4(0);
+    float2 p = pixel / v.viewport.w;
+    float offset = 0.25 / v.viewport.w;
+    float t = (gradientMixture(p + float2(-offset, -offset), v)
+             + gradientMixture(p + float2( offset, -offset), v)
+             + gradientMixture(p + float2(-offset,  offset), v)
+             + gradientMixture(p + float2( offset,  offset), v)) * 0.25;
+    float alpha = v.colorA.w;
+    return float4(mix(v.colorA.rgb, v.colorB.rgb, t) * alpha, alpha);
 }

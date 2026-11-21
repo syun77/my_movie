@@ -59,7 +59,7 @@ final class AudioModulationTests: XCTestCase {
         XCTAssertEqual(clip.displayCurve(.scale)?.minimum, 50)
         let first = clip.setKey(.scale, at: 1, value: 100)
         let last = clip.setKey(.scale, at: 3, value: 140)
-        XCTAssertNil(clip.automationRanges[.scale])
+        XCTAssertEqual(clip.automationRanges[.scale]?.lower, 50)
         let before = ParameterEvaluator.value(.scale, clip: clip, at: 2, settings: settings, features: nil)
         XCTAssertEqual(before, 129.6, accuracy: 1e-9)
         clip.trimStart(to: 1.7)

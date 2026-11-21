@@ -9,6 +9,8 @@ struct PreviewPositionPair {
 
     static let all: [Self] = [
         Self(x: .x, y: .y, title: "素材の位置", coordinates: PreviewHandleCoordinates(centered: true), enabled: { _ in true }),
+        Self(x: .spiralX, y: .spiralY, title: "渦巻き粒子 中心", enabled: { $0.spiralParticles?.isEnabled == true }),
+        Self(x: .gradientX, y: .gradientY, title: "グラデーション背景 中心", enabled: { $0.gradientBackground?.isEnabled == true }),
         Self(x: .beamX, y: .beamY, title: "電撃ビーム 中心", enabled: { $0.electricBeam?.isEnabled == true }),
         Self(x: .fireX, y: .fireY, title: "炎アウトライン 中心", enabled: { $0.fireOutline?.isEnabled == true }),
         Self(x: .flareX, y: .flareY, title: "レンズフレア 光源", enabled: { $0.lensFlare?.isEnabled == true }),

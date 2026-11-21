@@ -373,11 +373,14 @@ final class PlacementEditor: NSViewController {
         for node in clip.effects?.allNodes ?? [] { clip.effects?.editNode(node.id) { $0.id = UUID() } }
         clip.start = time
         clip.end = time + (source.end - source.start)
-        for curve in clip.curves.indices {
-            for key in clip.curves[curve].keys.indices {
-                clip.curves[curve].keys[key].id = UUID()
+        var automations = clip.automations
+        for index in automations.indices {
+            if var curve = automations[index].keyCurve {
+                for key in curve.keys.indices { curve.keys[key].id = UUID() }
+                automations[index].keyCurve = curve
             }
         }
+        clip.automations = automations
         if var playback = clip.content.spinePlayback { playback.renewKeyIDs(); clip.content = .spine(playback) }
         let updated = try track.inserting(clip, layerID: layerID, duration: duration)
         visuals.commit(updated, selectedID: clip.id)

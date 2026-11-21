@@ -76,7 +76,7 @@
 
 ## 保存・編集との接続
 
-`ImageEffects.radialRays: RadialRays?` に設定、isEnabled、seed、phaseOffsetを保存する。未追加はnil。現在のProjectFile version13内で新規optional演出として扱い、既存の集中線と保存名を共有しない。不正な非有限値・範囲外値を検証する。保存項目はlength/squash、キー識別子はraysLength/raysSquash。幅/高さ形式の互換読込は設けない。
+`ImageEffects.radialRays: RadialRays?` に設定、isEnabled、seed、phaseOffsetを保存する。未追加はnil。現在のProjectFile version17内で新規optional演出として扱い、既存の集中線と保存名を共有しない。不正な非有限値・範囲外値を検証する。保存項目はlength/squash、キー識別子はraysLength/raysSquash。幅/高さ形式の互換読込は設けない。
 
 ImageParameter / EffectAutomationへ14数値の範囲・既定値・読書きを登録し、ParameterEvaluatorの手動値→項目別音楽同期→範囲制限→本数丸めを共有する。色と更新頻度以外を描画専用経路で評価し直さない。
 

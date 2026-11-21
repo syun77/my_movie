@@ -1,3 +1,110 @@
+# プロパティの条件付き表示の追加検討（完了・未実装）
+
+- 最終更新: 2026-11-22 JST。要件: LFOモード時だけLFO編集を表示する方向で、不要な表示の省略とサブメニュー化を検討。
+- 調査: LFOは非アクティブ時も詳細と波形を無効表示。音楽同期は未追加でも一部詳細が残る。動画/Spine専用行、拍/帯域/カスタムHz、グラデーション角度、星形専用行は既に条件付き表示。
+- 提案: LFO詳細、同期未追加時の詳細、レーン未選択時のグラフ範囲、粒子画像未指定時の画像調整、折れ線時のバー余白、未選択時のクリップ編集を省略。初期化/削除/素材管理などは見つけやすいメニューへ集約。OFF状態は有効化入口と状態要約を残し、表示だけで保存設定を消さない。
+- 検証: 現行ビューの表示/有効条件を確認。コード変更なし、テスト/アプリ再生成は対象外。実行中処理なし。
+- 次: 実装依頼時にカテゴリ案と合わせて表示条件を確定し、編集状態/値保持/最小幅を検証する。既存作業記録・未コミット変更を保持。
+
+# 右側プロパティの整理検討（提案完了・未実装）
+
+- 最終更新: 2026-11-22 JST。要件: 右側プロパティの煩雑な並びを、カテゴリ見出し・囲みなどで整理する方法を検討。
+- 現状: VisualEditor・ImageEffectsEditor・LyricsEditor・SpectrumEditorと固定タブ/スクロール構造を確認。既存の実装完了記録と未コミット変更を保持。
+- 方針: まず分類・順序・折りたたみ・対象範囲の提案をまとめる。UIコードは変更しない。
+- 提案: 画像・演出を「素材と配置」「基本変形」「追加演出」「オートメーション・音楽同期」に分類。共通見出し/細い枠/余白と折りたたみを使用。演出一覧は適用順を維持し、選択演出の詳細を内側で整理する。歌詞とスペクトラムにも同じ見た目を適用。
+- 検証: 現行ビューの構成と照合。コード変更なし、テスト/アプリ再生成は対象外。未解決障害・実行中処理なし。
+- 次: 実装依頼時にカテゴリ共通ビューと各タブへ適用し、最小ウィンドウの配置/折りたたみ/編集状態を検証、整理後build-app.shを実行する。
+
+# 渦巻き粒子の実装（完了）
+
+- 最終更新: 2026-11-22 JST。ユーザーがdocs/SPIRAL_PARTICLES.mdの実装を承認。
+- 完了: 外周から中心への螺旋収束、中心で縮小消失する連続循環。固定seedと相対時計で決定的に評価。9数値のキー/LFO/音楽同期、方向/色/配置変更、粒子画像4数値と素材管理、XYハンドル、トリム位相、保存/履歴/複製を共通経路へ接続。
+- 保存: v19、読込v16〜19。v18→19は既存ノードを保持し新演出を自動追加しない。旧版への新payload/パラメーター混入を拒否。v15→16変換器を削除、v19固定fixtureと対応境界試験を更新。
+- 整理: 螺旋描画を専用メソッドへ分離。粒子画像は共通頂点シェーダーで回転後に余白/上下を変換し、余白付き面での回転歪みを回避。粒子インスタンスはMTLBufferで渡しsetVertexBytesの4KiB制限を回避。追加の全画面中間面なし。
+- 設計からの判断: 同種1ノードの既存チェーン構造を共有。複数の渦は別クリップ・別レイヤーで重ねる。仕様書とユーザーへの進捗で説明済み。
+- 検証: 全体297件・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-spiral-full.log）。整理後関連59件成功（/tmp/my-movie-spiral-final-tests.log）、専用9件を含む。軌道/時計/自動化/保存/UI取消・確定・初期化/XY/画像上下・回転・欠損/マスク/画面外ぼかし/MP4各フレーム比較を確認。
+- 初回試験: 制限環境のMetal/メディア不可はサービス環境で解消。試験側の背景色仮定とキー時刻の期待値を修正。最終試験では解消。
+- 画像: /tmp/my-movie-spiral-default.png、/tmp/my-movie-spiral-preview.pngを目視確認。実素材での手動GUI操作は未実施。
+- 性能: 整理後1080p・200粒の1/3/10段GPU最大6.83/14.40/36.55ms、1000粒7.42/12.57/26.48ms。関連試験プロセス累積ピークRSS約362MiB。負荷とキャッシュに依存し、最小Macの保証や単体GPUメモリ量とは区別する。
+- 変更: SpiralParticles.swift/SpiralParticlesTests.swift/v19.json新規。EffectChain/EffectCategory/EffectAutomation/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/ParticleAppearance/ParticleImageInstances/PreviewPositionPair/ProjectFile/ProjectMigrator/Scene.metal、関連試験、README/保存形式等の関連仕様/SPIRAL_PARTICLES/AGENTS。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-spiral-build-app.log）。最新dist/MV Studio.app生成済み。codesign --verify --deep --strict、バンドル内Contents/Resources/Shaders/Scene.metalと最終ソースの一致、git diff --check成功。
+- 次: 最新appを再起動し「追加演出 → 粒子・天候 → 渦巻き粒子」で利用する。実行中処理・未解決障害なし。既存未コミット変更と他作業の記録を保持。
+
+# グラデーション変化幅の10px単位化（完了）
+
+- 最終更新: 2026-11-22 JST。
+- 要件: 変化幅の表示を1/10、同じ操作量で実際の幅を10倍変化させる。
+- 方針: 既存numericの10倍変換を再利用。保存/キー/同期/描画はpx値を維持。既存未コミット変更と作業記録を保持。
+- 完了: 共通numericの10倍変換へgradientWidthを追加。表示初期値192、表示値1→10px。直接入力/ドラッグ/取消/初期化を既存UI試験で確認。
+- 整理: 専用変換を増やさず既存の単位変換を再利用。保存・自動化の変更は不要。
+- 検証: GradientBackgroundTests 9件成功（/tmp/my-movie-gradient-width-tests.log）、git diff --check成功。
+- 変更: ImageEffectsEditor.swift、GradientBackgroundTests.swift、docs/GRADIENT_BACKGROUND.md、AGENTS.md、PROGRESS.md。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-gradient-width-build.log）。最新dist/MV Studio.appを生成、codesign --verify --deep --strict成功。
+- 次: 最新appを再起動して利用する。実行中処理・未解決障害なし。
+
+# 渦巻き収束粒子の設計（完了・未実装）
+
+- 最終更新: 2026-11-22 JST。要件: 添付図を参考に、粒子が回転しながら中央へ収束する演出を設計する。
+- 完了: docs/SPIRAL_PARTICLES.mdへ外周から中心への螺旋、中心での縮小消失と連続循環、提案設定値、決定的な時刻評価、既存粒子画像/演出チェーン/自動化/保存への接続、実装順と受入条件を記録。
+- 整理: 旋回と画像自転、収束時間と演出速度、連続循環と一斉収束を区別。自動化による位相ジャンプを明記。現行ソースの保存v18変更中に合わせ、新形式番号は実装時に確定する。
+- 変更: docs/SPIRAL_PARTICLES.md新規、docs/IMAGE_EFFECTS.md参照、AGENTS.md知見、PROGRESS.md。本作業以外の未コミット変更とLFO作業記録を保持。
+- 検証: 既存チェーン/粒子画像/時計仕様との整合、git diff --checkを確認。文書のみのためテスト・アプリ再生成は対象外。
+- 未解決: 実装未着手。連続発生方式・設定範囲・初期値は提案。実行中処理なし。
+- 次: 実装依頼時にモデル/描画/UI/自動化/保存を接続し、整理・試験・build-app.shを実施する。
+
+# LFOオートメーション実装（完了）
+
+- 最終更新: 2026-11-22 JST。ユーザーがdocs/LFO_AUTOMATION.mdの実装を承認。
+- 完了: 項目別キー/LFO切替と休止側保持、Hz/通常・付点・3連の27周期、Tilt/Curve/Amount/Bipolar/位相/曲・クリップ時計。基準値→LFO→音楽同期→物理範囲→丸めを共通評価し、ノード所有/トリム/削除/複製/ロック/保存v18を接続。
+- UI: LFOEditorのDragValueFieldと波形見本、レーンの右クリック切替とLFO線/高密度帯表示。空白クリックはキー追加・シークを行わない。ドラッグ仮反映/取消/1回確定、Undo/Redo。
+- 整理: 表示範囲をautomationRangesへ一意に保存。ImageCurveは一時編集表現。キーの参照/トリム/複製で全カーブ再生成を避け、BeatTimingの秒換算を共有。LFOと音楽同期を合成したグラフも8192点予算と帯表示を共有。数値/演算オーバーフローを検証。
+- 検証: 全体287件・外部Spine1件スキップ・失敗0（/tmp/my-movie-lfo-full.log）。整理後関連49件成功（/tmp/my-movie-lfo-refactor.log）。最終LFO/音楽同期/コピー22件成功、LFO専用12件を含む（/tmp/my-movie-lfo-final-tests.log）。各MP4フレームと共通描画の一致を確認。git diff --check成功。
+- 検証途中: 制限環境のMetal/NSFileCoordinator不可はサービス環境で解消。新規MP4試験のAVAssetReaderが別AVAssetを使った問題は試験を修正し解消。
+- 画像: /tmp/my-movie-lfo-inspector.pngを確認。AppKitコントローラー操作と描画を試験し、実素材を使う手動GUI操作は未実施。
+- 変更: LFOAutomation.swift/LFOEditor.swift/LFOAutomationTests.swift/v18.json新規。VisualTrack/EffectChain/ImageAnimation/AudioModulation/DragValueField/VisualEditor/ImageEffectsEditor/TimelineView/PlacementEditor/App/ProjectFile/ProjectMigrator、関連試験、README/関連仕様/AGENTS。
+- 保存: v18、読込v15〜18。旧curvesと範囲を読込境界で変換し、バックアップ後に保存する。v14以前と旧版へのLFO混入は拒否。既存未コミット変更と他作業の記録は保持。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-lfo-build-app.log）。最新dist/MV Studio.appを生成し、codesign --verify --deep --strictとgit diff --check成功。今回の実行中処理・未解決障害なし。
+- 次: 最新アプリを再起動し、画像・演出インスペクターの「オートメーション」で対象項目→LFOを選び、Amountを増やして利用する。
+
+# グラデーション背景の実装（完了）
+
+- 最終更新: 2026-11-21 JST。ユーザーがdocs/GRADIENT_BACKGROUND.mdの設計で実装を承認。
+- 完了: 2色、直線/円形、A→B/A→B→A、中心XY・位置・幅・角度・偏り・不透明度。7数値の共通キー/音楽同期、XYハンドル、偏りカーブ/色見本、色交換と円形の「中心から外へ」、自動保存/履歴/複製/MP4を接続。
+- 合成: 線形sRGBのpremultiplied背景をdestination alphaで前段面の背後へ合成し、alpha0加算光を保持。4点の画素内評価、映像外の余白は透明。空クリップの既定単色背景は自動変更せず、前段にあれば案内を表示する。
+- 保存: v17保存/v14〜17読込。v16→17は既存ノードを保持。旧版への新payload/パラメーター混入を拒否し、v13→14変換器を削除。v17固定fixtureと境界試験を追加。
+- 整理: 数値定義/範囲/既定値をモデルへ集約。有効状態表示をノード共通参照へ統合。色変更セッションのUUIDを確定通知中だけ履歴へ渡し、他操作を巻き込まない。追加の描画中間面は使わない。
+- 検証: 全体278件・外部Spineサンプル1件スキップ・失敗0（/tmp/my-movie-gradient-full.log）。整理後24件も成功（/tmp/my-movie-gradient-final-check.log）。新規9件でCPU/Metal参照、全形状/並び/角度/偏り、coverage/padding、キー/音楽同期/トリム、UI取消/確定/色セッション履歴、XY/複製/削除、保存境界、MP4全フレームを確認。
+- 画像: /tmp/my-movie-gradient-preview.png、profile.png、ring.png、band.png（後3つも同じmy-movie-gradient-接頭辞）を目視確認。手動GUIで実素材を使う操作は未実施。
+- 性能: 整理後1080p 1/3/10段GPU最大3.81/8.18/25.44ms。試験プロセス累積ピークRSS約316MB。GPUメモリ総量・最小Macの保証とは区別する。
+- 変更: GradientBackground/GradientBackgroundRenderer/GradientProfileView/SessionColorWell/GradientBackgroundTests/v17.json新規。App/VisualEditor/EffectChain/EffectAutomation/EffectCategory/ImageAnimation/ImageEffects/ImageEffectsEditor/MetalSceneRenderer/PreviewPositionPair/ProjectFile/ProjectMigrator/Scene.metal、関連試験とREADME/関連仕様/AGENTS。
+- ビルド: 初回は制限環境のdsymutilで停止（/tmp/my-movie-gradient-build-app.log）。同スクリプトをサービス環境で再実行して成功（/tmp/my-movie-gradient-build-app-final.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strictと同梱Scene.metalの最終ソース一致、git diff --check成功。
+- 次: 最新appを再起動し「追加演出 → 背景・図形・マスク → グラデーション背景」で利用。空クリップで隠れる場合は前段の単色背景をOFFにする。
+- 既存未コミット変更を保持。実行中処理・未解決の実装障害なし。
+
+# グラデーション背景の設計（完了・未実装）
+
+- 最終更新: 2026-11-21 JST。
+- 要件: 2色、変化の偏りカーブ、位置、A→B→A、角度、直線/円形の背景演出を設計する。
+- 完了: docs/GRADIENT_BACKGROUND.mdに形状×色の並び、位置/幅/空間カーブの数式、提案初期値、UI、7数値のキー/音楽同期、チェーン合成、保存移行、実装順・受入確認を記録。
+- 整理: 空間カーブと時間補間、中心と位置、背景不透明度とクリップ不透明度を分離。円形の往復はリング、中心スポットは色交換で扱う。現行の単色背景と加算光の合成、v17提案と現行v16を区別した。
+- 変更: docs/GRADIENT_BACKGROUND.md新規、docs/IMAGE_EFFECTS.mdとAGENTS.mdへ参照追記、PROGRESS.md更新。既存未コミット変更を保持。
+- 検証: 現行EffectNode/単色背景描画/保存世代仕様との整合とgit diff --check成功。文書のみのためテスト・app再生成は実施しない。
+- 未解決: 実装は未着手。範囲・初期値・偏り1項目カーブは提案値。実行中処理・障害なし。
+- 次: 実装依頼時に仕様に沿ってモデル/描画/UI/自動化/保存移行を実装し、検証・整理後にbuild-app.shを実行する。
+
+# ロック解除アイコンのグレー表示（完了）
+
+- 最終更新: 2026-11-20 JST。
+- 要件: 解除中の鍵をグレー表示。ロック中は🔐を維持する。
+- 確認: 色付き絵文字はforegroundColorだけではグレーにならないため、🔓の画像をグレースケール化して共通ヘッダーで再利用する。
+- 完了: 解除中の🔓をグレースケール化して表示。ロック中の🔐はカラーを保持。通常/ドラッグ追従の共通ヘッダーで反映。
+- 整理: 解除画像はlazy生成して再利用し、描画ごとの画像変換を避ける。保存モデルの変更なし。
+- 検証: 関連3件成功（/tmp/my-movie-lock-gray-tests.log）。実描画の無彩色/カラーとドラッグ/ロック操作を確認。PNG /tmp/my-movie-lock-gray.pngを目視確認。git diff --check成功。
+- 変更: TimelineView.swift、VariableLayerTests.swift、docs/VARIABLE_VISUAL_LAYERS.md、AGENTS.md、PROGRESS.md。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-lock-gray-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strictとgit diff --check成功。
+- 次: 最新appを再起動して利用する。
+- 既存未コミット変更を保持。今回の実行中処理・未解決障害なし。
+
 # レイヤーのロックアイコン変更（完了）
 
 - 最終更新: 2026-11-20 JST。

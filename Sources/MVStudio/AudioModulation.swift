@@ -81,7 +81,8 @@ struct AudioModulation: Codable, Equatable, Sendable {
 }
 
 enum BeatTiming {
-    static func period(bpm: Double, denominator: Int) -> Double { 240 / bpm / Double(denominator) }
+    static func period(bpm: Double, beatsPerCycle: Double) -> Double { 60 * beatsPerCycle / bpm }
+    static func period(bpm: Double, denominator: Int) -> Double { period(bpm: bpm, beatsPerCycle: 4 / Double(denominator)) }
     static func latest(at time: Double, settings: SceneSettings, denominator: Int) -> Double? {
         guard time.isFinite, time >= settings.beatOffset, settings.bpm.isFinite, settings.bpm > 0, (1...16).contains(denominator) else { return nil }
         let interval = period(bpm: settings.bpm, denominator: denominator)
@@ -111,8 +112,15 @@ extension ImageParameter {
 enum ParameterEvaluator {
     static func value(_ parameter: ImageParameter, clip: VisualClip, at time: Double,
                       settings: SceneSettings, features: AudioFeatures?) -> Double {
-        combine(clip.manualValue(parameter, at: time), parameter: parameter, modulation: clip.audioModulations[parameter],
+        combine(sourceValue(parameter, clip: clip, at: time, settings: settings), parameter: parameter, modulation: clip.audioModulations[parameter],
                 at: time, settings: settings, features: features)
+    }
+
+    static func sourceValue(_ parameter: ImageParameter, clip: VisualClip, at time: Double, settings: SceneSettings) -> Double {
+        guard let lfo = clip.activeLFO(parameter) else {
+            return clip.automation(parameter)?.mode == .lfo ? clip.baseValue(parameter) : clip.manualValue(parameter, at: time)
+        }
+        return LFOEvaluator.value(base: clip.baseValue(parameter), at: time, clipStart: clip.start, settings: lfo, scene: settings)
     }
 
     private static func combine(_ base: Double, parameter: ImageParameter, modulation: AudioModulation?, at time: Double,
@@ -129,8 +137,43 @@ enum ParameterEvaluator {
         return value
     }
 
+    static func lfoPlot(_ parameter: ImageParameter, clip: VisualClip, from first: Double, through last: Double,
+                        pixels: Int, settings: SceneSettings, features: AudioFeatures?) -> AutomationPlot {
+        guard let lfo = clip.activeLFO(parameter) else { return AutomationPlot(samples: []) }
+        let plot = LFOEvaluator.plot(from: first, through: last, pixels: pixels, clipStart: clip.start, settings: lfo, scene: settings)
+        let modulation = clip.audioModulations[parameter]
+        func output(_ time: Double, _ signal: Double) -> Double {
+            combine(clip.baseValue(parameter) + lfo.amount * signal, parameter: parameter, modulation: modulation,
+                    at: time, settings: settings, features: features)
+        }
+        let events = modulation?.events(from: first, through: last, settings: settings, features: features) ?? []
+        let extrema = [lfo.bipolar ? -1.0 : 0, 1]
+        if plot.isEnvelope || plot.samples.count + events.count * 2 > 8192 {
+            var low = Double.infinity, high = -Double.infinity
+            func include(_ value: Double) { low = min(low, value); high = max(high, value) }
+            for signal in extrema {
+                include(output(first, signal)); include(output(last, signal))
+                include(combine(clip.baseValue(parameter) + lfo.amount * signal, parameter: parameter,
+                                modulation: nil, at: first, settings: settings, features: features))
+            }
+            for event in events { for signal in extrema { include(output(event, signal)) } }
+            return AutomationPlot(samples: [(first, low), (first, high), (last, low), (last, high)], isEnvelope: true)
+        }
+        var result = plot.samples.map { ($0.0, output($0.0, $0.1)) }
+        for event in events {
+            let epsilon = max(1e-10, abs(event) * Double.ulpOfOne * 32)
+            result.append((event, value(parameter, clip: clip, at: event - epsilon, settings: settings, features: features)))
+            result.append((event, value(parameter, clip: clip, at: event, settings: settings, features: features)))
+        }
+        result = result.enumerated().sorted { $0.element.0 == $1.element.0 ? $0.offset < $1.offset : $0.element.0 < $1.element.0 }.map(\.element)
+        return AutomationPlot(samples: result, isEnvelope: plot.isEnvelope)
+    }
+
     static func plotSamples(_ parameter: ImageParameter, clip: VisualClip, from first: Double, through last: Double,
                             steps: Int, settings: SceneSettings, features: AudioFeatures?) -> [(Double, Double)] {
+        if clip.activeLFO(parameter) != nil {
+            return lfoPlot(parameter, clip: clip, from: first, through: last, pixels: steps, settings: settings, features: features).samples
+        }
         let modulation = clip.audioModulations[parameter]
         let events = Set(modulation?.events(from: first, through: last, settings: settings, features: features) ?? [])
         let manual = clip.curve(parameter)?.plotSamples(from: first - clip.start, through: last - clip.start, steps: steps) ?? []
@@ -154,16 +197,16 @@ enum ParameterEvaluator {
 }
 
 extension VisualClip {
-    var automationParameters: Set<ImageParameter> { Set(curves.map(\.parameter)).union(audioModulations.keys) }
+    var automationParameters: Set<ImageParameter> { Set(automations.map(\.parameter)).union(audioModulations.keys) }
     func displayCurve(_ parameter: ImageParameter) -> ImageCurve? {
-        if let curve = curve(parameter) { return curve }
-        guard audioModulations[parameter] != nil else { return nil }
+        if activeLFO(parameter) == nil, let curve = curve(parameter) { return curve }
+        guard audioModulations[parameter] != nil || hasAutomation(parameter) else { return nil }
         var curve = ImageCurve(parameter: parameter)
         if let range = automationRanges[parameter] { curve.minimum = range.lower; curve.maximum = range.upper }
         return curve
     }
     mutating func removeAudioAndKeys(_ parameter: ImageParameter) {
-        curves.removeAll { $0.parameter == parameter }
+        removeAutomation(parameter)
         audioModulations[parameter] = nil
         automationRanges[parameter] = nil
     }
@@ -173,7 +216,7 @@ extension VisualClip {
     }
 
     mutating func setDisplayCurve(_ curve: ImageCurve) {
-        if self.curve(curve.parameter) != nil || !curve.keys.isEmpty { setCurve(curve) }
+        if activeLFO(curve.parameter) == nil && (self.curve(curve.parameter) != nil || !curve.keys.isEmpty) { setCurve(curve) }
         else { automationRanges[curve.parameter] = DisplayRange(lower: curve.minimum, upper: curve.maximum) }
     }
 }

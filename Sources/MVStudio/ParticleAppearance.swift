@@ -34,7 +34,7 @@ struct ParticleAppearance: Codable, Equatable, Sendable {
 }
 
 extension EffectKind {
-    var supportsParticleImage: Bool { [.particles, .embers, .snow, .orbs].contains(self) }
+    var supportsParticleImage: Bool { [.particles, .embers, .snow, .orbs, .spiralParticles].contains(self) }
 }
 
 extension ImageEffects {

@@ -35,7 +35,7 @@ final class EffectChainTests: XCTestCase {
         XCTAssertNil(json["effects"])
         let chain = try XCTUnwrap(json["effectChain"] as? [String: Any])
         XCTAssertNotNil(chain["nodes"])
-        XCTAssertEqual((json["curves"] as? [Any])?.count, 0)
+        XCTAssertEqual((json["automations"] as? [Any])?.count, 0)
         var ids = Set<UUID>(); try clip.validateAnimation(ids: &ids)
         clip.effects?.snow = nil
         XCTAssertNil(clip.curve(.snowOpacity)); XCTAssertNil(clip.audioModulations[.snowDiameter])
@@ -52,7 +52,7 @@ final class EffectChainTests: XCTestCase {
     }
 
     func testMigrationPreservesNodeIDsAndOutputMask() throws {
-        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v13", withExtension: "json", subdirectory: "Fixtures/Projects"))
+        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v16", withExtension: "json", subdirectory: "Fixtures/Projects"))
         let data = try Data(contentsOf: fixture)
         let url = URL(fileURLWithPath: "/tmp/chain-migrate.mvproject")
         let first = try ProjectMigrator.read(data, at: url)

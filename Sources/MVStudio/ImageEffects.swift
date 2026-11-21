@@ -14,6 +14,14 @@ struct ImageEffects: Codable, Equatable, Sendable {
         get { if case let .mask(value) = nodes.first(where: { $0.kind == .mask })?.payload { return value }; return nil }
         set { set(.mask, payload: newValue.map(EffectPayload.mask)) }
     }
+    var spiralParticles: SpiralParticles? {
+        get { if case let .spiralParticles(value) = nodes.first(where: { $0.kind == .spiralParticles })?.payload { return value }; return nil }
+        set { set(.spiralParticles, payload: newValue.map(EffectPayload.spiralParticles)) }
+    }
+    var gradientBackground: GradientBackground? {
+        get { if case let .gradientBackground(value) = nodes.first(where: { $0.kind == .gradientBackground })?.payload { return value }; return nil }
+        set { set(.gradientBackground, payload: newValue.map(EffectPayload.gradientBackground)) }
+    }
     var solidBackground: SolidBackground? {
         get { if case let .solidBackground(value) = nodes.first(where: { $0.kind == .solidBackground })?.payload { return value }; return nil }
         set { set(.solidBackground, payload: newValue.map(EffectPayload.solidBackground)) }
@@ -123,8 +131,10 @@ struct ImageEffects: Codable, Equatable, Sendable {
         set { set(.belowMask, payload: newValue.map(EffectPayload.belowMask)) }
     }
 
-    init(shape: Shape? = nil, mask: Mask? = nil, belowMask: Mask? = nil, solidBackground: SolidBackground? = nil, blur: Blur? = nil, radialBlur: RadialBlur? = nil, crossGlare: CrossGlare? = nil, bloom: Bloom? = nil, particles: Particles? = nil, embers: Embers? = nil, snow: Snow? = nil, orbs: Orbs? = nil, zoomLoop: ZoomLoop? = nil, octgrams: Octgrams? = nil, warpFlight: WarpFlight? = nil, radialFocus: RadialFocus? = nil, radialRays: RadialRays? = nil, straightLines: StraightLines? = nil, sharpFocus: SharpFocus? = nil, focusLines: FocusLines? = nil, shake: Shake? = nil, binarization: Binarization? = nil, colorCorrection: ColorCorrection? = nil, chromaticAberration: ChromaticAberration? = nil, lensFlare: LensFlare? = nil, vignette: Vignette? = nil, sobelChromatic: SobelChromatic? = nil, fireOutline: FireOutline? = nil, electricBeam: ElectricBeam? = nil) {
+    init(shape: Shape? = nil, mask: Mask? = nil, belowMask: Mask? = nil, solidBackground: SolidBackground? = nil, blur: Blur? = nil, radialBlur: RadialBlur? = nil, crossGlare: CrossGlare? = nil, bloom: Bloom? = nil, particles: Particles? = nil, embers: Embers? = nil, snow: Snow? = nil, orbs: Orbs? = nil, zoomLoop: ZoomLoop? = nil, octgrams: Octgrams? = nil, warpFlight: WarpFlight? = nil, radialFocus: RadialFocus? = nil, radialRays: RadialRays? = nil, straightLines: StraightLines? = nil, sharpFocus: SharpFocus? = nil, focusLines: FocusLines? = nil, shake: Shake? = nil, binarization: Binarization? = nil, colorCorrection: ColorCorrection? = nil, chromaticAberration: ChromaticAberration? = nil, lensFlare: LensFlare? = nil, vignette: Vignette? = nil, sobelChromatic: SobelChromatic? = nil, fireOutline: FireOutline? = nil, electricBeam: ElectricBeam? = nil, gradientBackground: GradientBackground? = nil, spiralParticles: SpiralParticles? = nil) {
         self.solidBackground = solidBackground
+        self.spiralParticles = spiralParticles
+        self.gradientBackground = gradientBackground
         self.shape = shape
         self.shake = shake
         self.colorCorrection = colorCorrection
@@ -169,7 +179,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
         return nodes.contains { node in
             guard node.isEnabled else { return false }
             switch node.kind {
-            case .electricBeam, .fireOutline, .shake, .sobelChromatic, .chromaticAberration, .zoomLoop, .lensFlare, .particles, .embers, .snow, .orbs,
+            case .spiralParticles, .electricBeam, .fireOutline, .shake, .sobelChromatic, .chromaticAberration, .zoomLoop, .lensFlare, .particles, .embers, .snow, .orbs,
                  .octgrams, .warpFlight, .radialFocus, .focusLines, .sharpFocus, .straightLines, .radialRays: return true
             default: return false
             }
@@ -666,7 +676,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
               outputMask.map({ $0.kind == .belowMask }) ?? true,
               Set(allNodes.map(\.id)).count == allNodes.count,
               allNodes.allSatisfy({ node in
-                  node.particleAppearance?.isValid != false && (node.particleAppearance == nil || node.kind.supportsParticleImage) && node.curves.allSatisfy { $0.parameter.effectKind == node.kind }
+                  node.particleAppearance?.isValid != false && (node.particleAppearance == nil || node.kind.supportsParticleImage) && node.automations.allSatisfy { $0.parameter.effectKind == node.kind }
                       && node.audioModulations.keys.allSatisfy { $0.effectKind == node.kind }
                       && node.automationRanges.keys.allSatisfy { $0.effectKind == node.kind }
               }), belowMask?.isValid != false else { return false }
@@ -685,7 +695,7 @@ struct ImageEffects: Codable, Equatable, Sendable {
                            && (1...Particles.emitterLimit).contains(particles.emitters.count)
                            && particles.emitters.allSatisfy(\.isValid)
                            && particles.phaseOffset.isFinite && abs(particles.phaseOffset) <= Double.greatestFiniteMagnitude / 1024) { return false }
-        return electricBeam?.isValid != false && fireOutline?.isValid != false && radialRays?.isValid != false && straightLines?.isValid != false && sharpFocus?.isValid != false && lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
+        return spiralParticles?.isValid != false && gradientBackground?.isValid != false && electricBeam?.isValid != false && fireOutline?.isValid != false && radialRays?.isValid != false && straightLines?.isValid != false && sharpFocus?.isValid != false && lensFlare?.isValid != false && crossGlare?.isValid != false && chromaticAberration?.isValid != false && vignette?.isValid != false && warpFlight?.isValid != false && zoomLoop?.isValid != false && radialFocus?.isValid != false && octgrams?.isValid != false && focusLines?.isValid != false && colorCorrection?.isValid != false && shake?.isValid != false && embers?.isValid != false && snow?.isValid != false && orbs?.isValid != false
     }
 }
 

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     let editHistory = EditHistory()
     private var textHistoryResponder: ObjectIdentifier?
     private var textHistoryGroup: UUID?
+    private var colorHistoryGroup: UUID?
     private var mouseHistoryGroup: UUID?
     private let preview = PreviewView()
     private let status = NSTextField(labelWithString: "画像と音声を読み込んでください")
@@ -69,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         studioWindow.clipEditor = placementEditor
         studioWindow.previewHandles = preview.handles
         placementEditor.onTabChange = { [weak self] in self?.preview.handles.clear() }
+        placementEditor.visuals.onColorSession = { [weak self] group in
+            self?.colorHistoryGroup = group
+        }
         studioWindow.onBeginInteraction = { [weak self] in self?.endHistoryGroup(); self?.mouseHistoryGroup = UUID() }
         studioWindow.onEndInteraction = { [weak self] in self?.mouseHistoryGroup = nil; self?.endHistoryGroup() }
         studioWindow.onEscapeInteraction = { [weak self] in self?.placementEditor.visuals.cancelValueDrag() ?? false }
@@ -398,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.snapGrid = grid
         placementEditor.timeline.sceneSettings = settings
         placementEditor.visuals.musicEditor.settings = settings
+        placementEditor.visuals.lfoEditor.settings = settings
     }
 
     private func endHistoryGroup() {
@@ -416,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         if let lyrics { value.lyrics = lyrics }
         if let visuals { value.visuals = visuals }
         if let settings { value.settings = settings }
-        editHistory.record(value, group: mouseHistoryGroup ?? textHistoryGroup)
+        editHistory.record(value, group: colorHistoryGroup ?? mouseHistoryGroup ?? textHistoryGroup)
     }
     private var historyIsAvailable: Bool {
         guard let window, !busy, !imageProcessing, NSApp.modalWindow == nil else { return false }

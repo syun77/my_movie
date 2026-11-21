@@ -739,9 +739,9 @@ final class ImageAnimationTests: XCTestCase {
             return timeline.menu(for: click)
         }
         let original = editor.track
-        XCTAssertNil(contextMenu(at: NSPoint(x: timeline.x(at: 2), y: 105)))
+        XCTAssertNotNil(contextMenu(at: NSPoint(x: timeline.x(at: 2), y: 105))?.item(withTitle: "LFOモード"))
         let menu = try XCTUnwrap(contextMenu(at: NSPoint(x: 20, y: 105)))
-        let removal = try XCTUnwrap(menu.item(withTitle: "レーンを削除（キーと音楽同期）"))
+        let removal = try XCTUnwrap(menu.item(withTitle: "レーンを削除（キー・LFO・音楽同期）"))
         XCTAssertEqual(editor.track, original)
         var commits = 0
         editor.onChange = { _ in commits += 1 }

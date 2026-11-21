@@ -52,6 +52,14 @@ extension ImageParameter {
     }
 
     var effect: Effect? {
+        if let field = ImageEffects.SpiralParticles.fieldsByParameter[self] {
+            return Effect("渦巻き粒子 " + field.title, field.unit, \.spiralParticles, field.path,
+                          ImageEffects.SpiralParticles(seed: 0)[keyPath: field.path], field.range)
+        }
+        if let field = ImageEffects.GradientBackground.fieldsByParameter[self] {
+            return Effect("グラデーション背景 " + field.title, field.unit, \.gradientBackground, field.path,
+                          ImageEffects.GradientBackground()[keyPath: field.path], field.range)
+        }
         if let field = ImageEffects.ElectricBeam.fieldsByParameter[self] {
             return Effect("電撃ビーム " + field.title, field.unit, \.electricBeam, field.path,
                           ImageEffects.ElectricBeam(seed: 0)[keyPath: field.path], field.range)
@@ -73,9 +81,13 @@ extension ImageParameter {
         case .snowImageAngle: return Effect(particle: .snow, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
         case .snowImageSpread: return Effect(particle: .snow, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
         case .snowImageSpin: return Effect(particle: .snow, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
+        case .spiralImageSize: return Effect(particle: .spiralParticles, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
         case .orbsImageSize: return Effect(particle: .orbs, field: \.size, title: "画像の大きさ", unit: "px", initial: 32, range: 1...1000)
+        case .spiralImageAngle: return Effect(particle: .spiralParticles, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
         case .orbsImageAngle: return Effect(particle: .orbs, field: \.angle, title: "画像の角度", unit: "°", initial: 0, range: -180...180)
+        case .spiralImageSpread: return Effect(particle: .spiralParticles, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
         case .orbsImageSpread: return Effect(particle: .orbs, field: \.spread, title: "回転ばらつき", unit: "°", initial: 0, range: 0...180)
+        case .spiralImageSpin: return Effect(particle: .spiralParticles, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
         case .orbsImageSpin: return Effect(particle: .orbs, field: \.spin, title: "回転速度", unit: "°/秒", initial: 0, range: -360...360)
         case .flareX: return Effect("レンズフレア 光源X", "px", \.lensFlare, \.x, 1440, -1920...3840)
         case .flareY: return Effect("レンズフレア 光源Y", "px", \.lensFlare, \.y, 270, -1080...2160)
@@ -241,15 +253,9 @@ extension VisualClip {
         }
         audioModulations = Dictionary(uniqueKeysWithValues: audioModulations.compactMap { parameter, value in movedParameter(parameter).map { ($0, value) } })
         automationRanges = Dictionary(uniqueKeysWithValues: automationRanges.compactMap { parameter, value in movedParameter(parameter).map { ($0, value) } })
-        curves = curves.compactMap { curve in
-            guard curve.parameter.rawValue.hasPrefix("emitter"),
-                  let slot = Int(curve.parameter.rawValue.dropFirst(7).prefix(1)) else { return curve }
-            if slot == index { return nil }
-            guard slot > index,
-                  let parameter = ImageParameter(rawValue: "emitter\(slot - 1)" + curve.parameter.rawValue.suffix(1)) else { return curve }
-            var moved = ImageCurve(parameter: parameter)
-            moved.minimum = curve.minimum; moved.maximum = curve.maximum; moved.keys = curve.keys
-            return moved
+        automations = automations.compactMap { item in
+            guard let parameter = movedParameter(item.parameter) else { return nil }
+            var moved = item; moved.parameter = parameter; return moved
         }
     }
 

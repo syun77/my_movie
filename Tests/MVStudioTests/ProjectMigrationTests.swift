@@ -17,7 +17,7 @@ final class ProjectMigrationTests: XCTestCase {
     }
 
     func testThreeHistoricalFixturesPreserveValuesAndEvaluation() throws {
-        for version in 13...16 {
+        for version in 16...19 {
             let data = try fixture(version)
             let result = try ProjectMigrator.read(data, at: url)
             let project = result.project
@@ -25,7 +25,9 @@ final class ProjectMigrationTests: XCTestCase {
             XCTAssertEqual(result.needsMigration, version < ProjectFile.currentVersion)
             XCTAssertEqual(result.originalData, data)
             XCTAssertEqual(project.version, ProjectFile.currentVersion)
-            XCTAssertEqual(project.visuals.clips.first?.effects?.electricBeam?.seed, version == 16 ? 17 : nil)
+            XCTAssertEqual(project.visuals.clips.first?.effects?.electricBeam?.seed, version >= 16 ? 17 : nil)
+            XCTAssertEqual(project.visuals.clips.first?.effects?.gradientBackground?.pattern, version >= 17 ? .mirrored : nil)
+            XCTAssertEqual(project.visuals.clips.first?.effects?.spiralParticles?.seed, version >= 19 ? 17 : nil)
             XCTAssertEqual(project.settings.bpm, 143)
             XCTAssertEqual(project.settings.spectrumStyle.resolution, .medium)
             XCTAssertEqual(project.lyrics.clips.map(\.text), ["歌詞", "続き"])
@@ -49,27 +51,9 @@ final class ProjectMigrationTests: XCTestCase {
         }
     }
 
-    func testNewPayloadRequiresV15AndOldVersionsDoNotAddIt() throws {
-        let new = try json(fixture(15))
-        XCTAssertEqual(try read(new).project.visuals.clips[0].effects?.sobelChromatic?.mode, .combined)
-        var incorrectlyLabeled = new; incorrectlyLabeled["version"] = 14
-        XCTAssertThrowsError(try read(incorrectlyLabeled)) { XCTAssertTrue($0.localizedDescription.contains("sobelChromatic")) }
-        for version in 13...14 {
-            let project = try read(json(fixture(version))).project
-            XCTAssertTrue(project.visuals.clips.allSatisfy { $0.effects?.sobelChromatic == nil })
-        }
-    }
-
-    func testElectricBeamRequiresV16() throws {
-        var root = try json(fixture(16))
-        XCTAssertEqual(try read(root).project.visuals.clips.first?.effects?.electricBeam?.seed, 17)
-        root["version"] = 15
-        XCTAssertThrowsError(try read(root)) { XCTAssertTrue($0.localizedDescription.contains("electricBeam")) }
-    }
-
     func testVersionAndCorruptionErrors() throws {
-        let root = try json(fixture(13))
-        for (value, expected) in [(12, "対応範囲"), (17, "更新")] {
+        let root = try json(fixture(16))
+        for (value, expected) in [(15, "対応範囲"), (20, "更新")] {
             var input = root; input["version"] = value
             XCTAssertThrowsError(try read(input)) { XCTAssertTrue($0.localizedDescription.contains(expected)) }
         }
@@ -83,7 +67,7 @@ final class ProjectMigrationTests: XCTestCase {
     }
 
     func testRejectsLostFieldsInvalidEnumsDuplicateIDsAndIntervals() throws {
-        var root = try json(fixture(13))
+        var root = try json(fixture(16))
         root["unrecognizedSetting"] = ["important": 42]
         XCTAssertThrowsError(try read(root)) { XCTAssertTrue($0.localizedDescription.contains("unrecognizedSetting")) }
         root.removeValue(forKey: "unrecognizedSetting")
@@ -92,11 +76,11 @@ final class ProjectMigrationTests: XCTestCase {
         clips[0]["content"] = ["newKind": [:]]
         layers[0]["clips"] = clips; root["visualLayers"] = layers
         XCTAssertThrowsError(try read(root))
-        root = try json(fixture(13))
+        root = try json(fixture(16))
         layers = try XCTUnwrap(root["visualLayers"] as? [[String: Any]])
         layers[1]["id"] = layers[0]["id"]; root["visualLayers"] = layers
         XCTAssertThrowsError(try read(root))
-        root = try json(fixture(13))
+        root = try json(fixture(16))
         layers = try XCTUnwrap(root["visualLayers"] as? [[String: Any]])
         clips = try XCTUnwrap(layers[0]["clips"] as? [[String: Any]])
         clips[0]["end"] = -1; layers[0]["clips"] = clips; root["visualLayers"] = layers
@@ -112,7 +96,7 @@ final class ProjectMigrationTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let storage = ProjectStorage(defaults: defaults)
-        let data = try fixture(13); try data.write(to: file)
+        let data = try fixture(16); try data.write(to: file)
         let result = try storage.readForOpening(from: file)
         XCTAssertEqual(try Data(contentsOf: file), data)
         XCTAssertNil(storage.lastProjectURL)
@@ -135,7 +119,7 @@ final class ProjectMigrationTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("song.wav.mvproject")
-        let data = try fixture(13); try data.write(to: file)
+        let data = try fixture(16); try data.write(to: file)
         let suite = "MigrationFailure." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -156,7 +140,7 @@ final class ProjectMigrationTests: XCTestCase {
     }
 
     func testLegacyDefaultsAndUnknownNestedFields() throws {
-        var root = try json(fixture(13))
+        var root = try json(fixture(16))
         var settings = try XCTUnwrap(root["settings"] as? [String: Any])
         settings.removeValue(forKey: "spectrumStyle"); root["settings"] = settings
         var lyrics = try XCTUnwrap(root["lyrics"] as? [String: Any])
@@ -186,7 +170,7 @@ final class ProjectMigrationTests: XCTestCase {
             buffer.frameLength = 8000
             buffer.floatChannelData![0].initialize(repeating: 0, count: 8000)
             do { let writer = try AVAudioFile(forWriting: audio, settings: format.settings); try writer.write(from: buffer) }
-            var root = try json(fixture(13))
+            var root = try json(fixture(16))
             root["visualAssets"] = []
             var layers = try XCTUnwrap(root["visualLayers"] as? [[String: Any]])
             for i in layers.indices { layers[i]["clips"] = [] }

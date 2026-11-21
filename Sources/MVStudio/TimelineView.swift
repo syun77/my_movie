@@ -507,11 +507,16 @@ final class TimelineView: NSView {
             }
             return menu
         }
-        if canRemoveAutomation, let label = graphLabel(at: point) {
+        if canRemoveAutomation, let target = graphLabel(at: point)?.target ?? graphLanes(in: visuals).first(where: { $0.rect.contains(point) }).map({ GraphTarget(clipID: $0.clip.id, parameter: $0.curve.parameter) }), visuals.canEdit(visuals.layerID(of: target.clipID)) {
             let menu = NSMenu()
-            let item = menu.addItem(withTitle: "レーンを削除（キーと音楽同期）", action: #selector(removeAutomationLane(_:)), keyEquivalent: "")
+            let item = menu.addItem(withTitle: "レーンを削除（キー・LFO・音楽同期）", action: #selector(removeAutomationLane(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = label.target
+            item.representedObject = target
+            for (title, tag) in [("キーモード", 0), ("LFOモード", 1), ("LFO設定を初期化", 2)] {
+                let action = menu.addItem(withTitle: title, action: #selector(changeAutomationMode(_:)), keyEquivalent: "")
+                action.target = self; action.representedObject = target; action.tag = tag
+                if tag < 2 { action.state = (visuals.clip(target.clipID)?.activeLFO(target.parameter) != nil) == (tag == 1) ? .on : .off }
+            }
             return menu
         }
         guard canPerformClipCommand != nil, selectClipForMenu(at: point) else { return super.menu(for: event) }
@@ -610,6 +615,23 @@ final class TimelineView: NSView {
 
     private var canRemoveAutomation: Bool {
         visualMode && canEditClips && visuals.canEdit(selectedLayerID) && onImageCommit != nil
+    }
+
+    @objc private func changeAutomationMode(_ item: NSMenuItem) {
+        guard canRemoveAutomation, let target = item.representedObject as? GraphTarget,
+              let layerID = visuals.layerID(of: target.clipID), visuals.canEdit(layerID),
+              var clip = visuals.clip(target.clipID) else { return }
+        clip.setAutomationMode(item.tag == 0 ? .keys : .lfo, for: target.parameter)
+        if item.tag == 2 {
+            var automation = clip.automation(target.parameter)!
+            automation.lfo = LFOSettings(); clip.setAutomation(automation)
+        }
+        do {
+            let updated = try visuals.updating(clip, layerID: layerID, duration: duration)
+            onBeginEdit?(); onImageCommit?(updated, clip.id)
+            selectedImageID = clip.id; selectedLayerID = layerID
+            onImageSelect?(clip.id, layerID); selectGraph(target.parameter)
+        } catch { onError?(error) }
     }
 
     @objc private func removeAutomationLane(_ item: NSMenuItem) {
@@ -980,7 +1002,7 @@ final class TimelineView: NSView {
             for (index, parameter) in automationParameters(in: layerID).enumerated() {
                 let color: NSColor = clip != nil && parameter == selectedParameter ? .cyan : .lightGray
                 let y = graphY(layerID: layerID, index: index)
-                label(parameter.title, rect: NSRect(x: 5, y: y, width: 73, height: 16), color: color, size: 11)
+                label(parameter.title + (clip?.activeLFO(parameter) != nil ? " [LFO]" : ""), rect: NSRect(x: 5, y: y, width: 73, height: 16), color: color, size: 11)
                 if showsGraphRange(layerID: layerID, parameter: parameter), let curve = clip?.displayCurve(parameter) {
                     label("最大 " + Self.graphNumber(curve.maximum), rect: NSRect(x: 5, y: y + 17, width: 73, height: 14), color: color, size: 9)
                     label("最小 " + Self.graphNumber(curve.minimum), rect: NSRect(x: 5, y: y + 32, width: 73, height: 14), color: color, size: 9)
@@ -1240,10 +1262,25 @@ final class TimelineView: NSView {
            drag.id == id || (index > 0 && visuals.layers[index - 1].id == id && visuals.layer(drag.id)?.clips.contains(where: { $0.effects?.belowMask != nil }) == true) {
             NSColor.systemYellow.withAlphaComponent(0.15).setFill(); headerRect(id).fill()
         }
-        for (text, x) in [("≡", 5.0), (layer.isVisible ? "●" : "○", 25.0), (layer.isLocked ? "🔐" : "🔓", 47.0), ("⋯", 174.0)] {
+        for (text, x) in [("≡", 5.0), (layer.isVisible ? "●" : "○", 25.0), ("⋯", 174.0)] {
             label(text, rect: NSRect(x: x, y: y, width: 21, height: 17), color: .lightGray, size: 12)
         }
+        let lockRect = NSRect(x: 47, y: y, width: 21, height: 17)
+        if layer.isLocked { label("🔐", rect: lockRect, color: .lightGray, size: 12) }
+        else { unlockedLayerIcon?.draw(in: lockRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil) }
     }
+    private lazy var unlockedLayerIcon: NSImage? = {
+        let size = NSSize(width: 21, height: 17)
+        let image = NSImage(size: size, flipped: true) { rect in
+            ("🔓" as NSString).draw(in: rect, withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)])
+            return true
+        }
+        guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let context = CGContext(data: nil, width: 42, height: 34, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.draw(source, in: CGRect(x: 0, y: 0, width: 42, height: 34))
+        return context.makeImage().map { NSImage(cgImage: $0, size: size) }
+    }()
     private func layerHeaderDown(_ event: NSEvent, point: NSPoint) -> Bool {
         guard point.x < Self.gutter else { return false }
         if addLayerRect.contains(point) { onLayerAction?(selectedLayerID, .add(above: true)); return true }
@@ -1358,6 +1395,11 @@ private extension TimelineView {
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(rect: visible.insetBy(dx: -keyMarkerRadius, dy: -keyMarkerRadius)).addClip()
 
+        if lane.clip.activeLFO(lane.curve.parameter) != nil {
+            drawLFO(lane, visible: visible, color: color)
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
         // Sample the shared evaluator and split at display-range crossings.
         let first = max(0, geometry.time(at: visible.minX - Self.gutter) - lane.clip.start)
         let last = min(lane.clip.end - lane.clip.start, geometry.time(at: visible.maxX - Self.gutter) - lane.clip.start)
@@ -1423,6 +1465,33 @@ private extension TimelineView {
             }
         }
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func drawLFO(_ lane: GraphLane, visible: NSRect, color: NSColor) {
+        let parameter = lane.curve.parameter
+        let first = max(lane.clip.start, geometry.time(at: visible.minX - Self.gutter))
+        let last = min(lane.clip.end, geometry.time(at: visible.maxX - Self.gutter))
+        let base = lane.clip.baseValue(parameter)
+        let baseline = NSBezierPath()
+        baseline.move(to: NSPoint(x: visible.minX, y: lane.y(at: base)))
+        baseline.line(to: NSPoint(x: visible.maxX, y: lane.y(at: base)))
+        NSColor.secondaryLabelColor.withAlphaComponent(0.5).setStroke(); baseline.stroke()
+        let plot = ParameterEvaluator.lfoPlot(parameter, clip: lane.clip, from: first, through: last,
+            pixels: max(1, Int(visible.width)), settings: sceneSettings, features: audioFeatures)
+        let samples = plot.samples
+        if plot.isEnvelope {
+            let values = samples.map(\.1)
+            let low = lane.y(at: values.min() ?? base), high = lane.y(at: values.max() ?? base)
+            color.withAlphaComponent(0.3).setFill()
+            NSRect(x: visible.minX, y: min(low, high), width: visible.width, height: max(1, abs(high - low))).fill()
+        } else {
+            let path = NSBezierPath()
+            for (index, sample) in samples.enumerated() {
+                let point = NSPoint(x: x(at: sample.0), y: lane.y(at: sample.1))
+                if index == 0 { path.move(to: point) } else { path.line(to: point) }
+            }
+            color.setStroke(); path.lineWidth = 1.5; path.stroke()
+        }
     }
 
     private func bendPosition(after id: UUID, in lane: GraphLane) -> NSPoint? {
@@ -1559,6 +1628,10 @@ private extension TimelineView {
                 selectGraph(lane.curve.parameter)
                 return true
             }
+        }
+        if lane.clip.activeLFO(lane.curve.parameter) != nil {
+            selectGraph(lane.curve.parameter)
+            return true
         }
         onBeginEdit?()
         keyDrag = KeyDrag(original: visuals, geometry: geometry, lane: lane, key: key, bendKeyID: bend?.key.id, initial: point, previousTime: currentTime)

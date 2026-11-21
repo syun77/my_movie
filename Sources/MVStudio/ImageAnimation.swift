@@ -14,6 +14,9 @@ enum ImageParameter: String, CaseIterable, Codable, Sendable {
     case embersCount, embersDiameter, embersRiseSpeed, embersWind, embersSwaySpeed, embersBrightness
     case snowCount, snowDiameter, snowFallSpeed, snowWind, snowOpacity
     case vignetteStrength, vignetteSize, vignetteSoftness
+    case spiralX, spiralY, spiralRadius, spiralCount, spiralConvergenceTime, spiralTurns, spiralSpeed, spiralDiameter, spiralOpacity
+    case spiralImageSize, spiralImageAngle, spiralImageSpread, spiralImageSpin
+    case gradientX, gradientY, gradientPosition, gradientWidth, gradientAngle, gradientBias, gradientOpacity
     case beamX, beamY, beamAngle, beamLength, beamSpread, beamCount, beamWidth, beamBend, beamGlow, beamBrightness, beamSpeed
     case fireX, fireY, fireWidth, fireHeight, fireSpread, fireDetail, fireSpeed, fireBrightness, fireOpacity, fireHue
     case sobelAmount, sobelStrength, sobelWidth, sobelChromaticAmount, sobelSpeed
@@ -175,7 +178,10 @@ struct ImageCurve: Codable, Equatable, Sendable {
 
 extension VisualClip {
     func curve(_ parameter: ImageParameter) -> ImageCurve? {
-        curves.first { $0.parameter == parameter }
+        guard let keys = automation(parameter)?.keyCurve?.keys, !keys.isEmpty else { return nil }
+        var result = ImageCurve(parameter: parameter); result.keys = keys
+        if let range = automationRanges[parameter] { result.minimum = range.lower; result.maximum = range.upper }
+        return result
     }
 
     func manualValue(_ parameter: ImageParameter, at time: Double) -> Double {
@@ -189,7 +195,7 @@ extension VisualClip {
     mutating func setBaseValue(_ value: Double, for parameter: ImageParameter, resetting: Bool = false) {
         let value = parameter.effect != nil && parameter.rawValue.hasSuffix("Count") ? value.rounded() : value
         let difference = value - baseValue(parameter)
-        if difference != 0, var curve = displayCurve(parameter) {
+        if difference != 0, var curve = curve(parameter) ?? displayCurve(parameter) {
             curve.minimum += difference
             curve.maximum += difference
             for index in curve.keys.indices { curve.keys[index].value += difference }
@@ -211,7 +217,7 @@ extension VisualClip {
                     curve.keys[index].value = min(range.upperBound, max(range.lowerBound, curve.keys[index].value))
                 }
             }
-            setDisplayCurve(curve)
+            if !curve.keys.isEmpty { setCurve(curve) } else { setDisplayCurve(curve) }
         }
         if let effect = parameter.effect {
             if let current = effects { effects = effect.write(current, value) }
@@ -224,13 +230,20 @@ extension VisualClip {
         let delta = time - start
         if let sourceIn = content.sourceIn { content.setSourceIn(max(0, sourceIn + delta * content.speed)) }
         if var playback = content.spinePlayback { playback.trim(by: delta); content = .spine(playback) }
-        for index in curves.indices {
-            for keyIndex in curves[index].keys.indices { curves[index].keys[keyIndex].time -= delta }
+        var items = automations
+        for index in items.indices {
+            if items[index].lfo != nil { items[index].lfo?.clockOffsetSeconds += delta }
+            if var curve = items[index].keyCurve {
+                for key in curve.keys.indices { curve.keys[key].time -= delta }
+                items[index].keyCurve = curve
+            }
         }
+        automations = items
         effects?.lensFlare?.phaseOffset += delta
         effects?.particles?.phaseOffset += delta
         effects?.embers?.phaseOffset += delta
         effects?.snow?.phaseOffset += delta
+        effects?.spiralParticles?.phaseOffset += delta
         effects?.orbs?.phaseOffset += delta
         effects?.radialRays?.phaseOffset += delta
         effects?.straightLines?.phaseOffset += delta
@@ -280,28 +293,50 @@ extension VisualClip {
     }
 
     mutating func setCurve(_ curve: ImageCurve) {
-        automationRanges[curve.parameter] = nil
-        if let index = curves.firstIndex(where: { $0.parameter == curve.parameter }) { curves[index] = curve }
-        else { curves.append(curve) }
+        guard !curve.keys.isEmpty else { return }
+        var item = automation(curve.parameter) ?? ParameterAutomation(parameter: curve.parameter)
+        item.keyCurve = .init(keys: curve.keys)
+        setAutomation(item)
+        automationRanges[curve.parameter] = DisplayRange(lower: curve.minimum, upper: curve.maximum)
     }
 
     mutating func removeKey(_ id: UUID, parameter: ImageParameter) {
-        guard let index = curves.firstIndex(where: { $0.parameter == parameter }),
-              let key = curves[index].keys.firstIndex(where: { $0.id == id }) else { return }
-        let value = curves[index].keys.remove(at: key).value
-        if curves[index].keys.isEmpty {
-            let removed = curves.remove(at: index)
-            if audioModulations[parameter] != nil { automationRanges[parameter] = DisplayRange(lower: removed.minimum, upper: removed.maximum) }
+        guard var item = automation(parameter), var curve = curve(parameter), let index = curve.keys.firstIndex(where: { $0.id == id }) else { return }
+        let value = curve.keys.remove(at: index).value
+        if curve.keys.isEmpty {
+            item.keyCurve = nil
+            if item.lfo == nil { removeAutomation(parameter) } else { setAutomation(item) }
             setBaseValue(value, for: parameter)
-        }
+        } else { setCurve(curve) }
     }
 
     func validateAnimation(ids: inout Set<UUID>) throws {
         guard hasValidAutomationStorage, audioModulations.allSatisfy({ $0.value.isValid(for: $0.key) && ($0.key.effect == nil || $0.key.effect?.read(effects ?? ImageEffects()) != nil) }),
-              automationRanges.allSatisfy({ $0.key.accepts($0.value.lower) && $0.key.accepts($0.value.upper) && $0.value.lower < $0.value.upper && audioModulations[$0.key] != nil && curve($0.key) == nil }),
+              automationRanges.allSatisfy({ $0.key.accepts($0.value.lower) && $0.key.accepts($0.value.upper) && $0.value.lower < $0.value.upper && ($0.value.upper - $0.value.lower).isFinite && (audioModulations[$0.key] != nil || hasAutomation($0.key)) }),
               fixedValues.allSatisfy({ $0.key.accepts($0.value) }),
               Set(curves.map(\.parameter)).count == curves.count else {
             throw StudioError.message("画像の変形または自動アニメの設定が不正です。")
+        }
+        guard Set(automations.map(\.parameter)).count == automations.count else {
+            throw StudioError.message("オートメーションの項目が重複しています。")
+        }
+        for item in automations {
+            guard (item.mode != .lfo || item.lfo != nil), item.keyCurve != nil || item.lfo != nil,
+                  item.keyCurve.map({ !$0.keys.isEmpty }) ?? true,
+                  item.lfo?.isValid(for: item.parameter) != false,
+                  item.parameter.effectKind == nil || effects?.node(for: item.parameter) != nil else {
+                throw StudioError.message("LFOまたはキーの設定が不正です。")
+            }
+            if let lfo = item.lfo {
+                let magnitude = max(abs(baseValue(item.parameter) - lfo.amount), abs(baseValue(item.parameter) + lfo.amount))
+                let modulation = audioModulations[item.parameter]
+                let maximum = modulation?.blend == .relative ? magnitude * (1 + abs(modulation?.amount ?? 0) / 100) : magnitude + abs(modulation?.amount ?? 0)
+                guard maximum.isFinite,
+                      lfo.cycles(at: start, clipStart: start, settings: SceneSettings(bpm: 300)).isFinite,
+                      lfo.cycles(at: end, clipStart: start, settings: SceneSettings(bpm: 300)).isFinite else {
+                    throw StudioError.message("LFOの評価範囲を超えています。")
+                }
+            }
         }
         for curve in curves { try curve.validate(ids: &ids) }
     }

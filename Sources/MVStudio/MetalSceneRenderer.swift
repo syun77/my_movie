@@ -17,6 +17,7 @@ final class MetalSceneRenderer {
     private let queue: MTLCommandQueue
     private let filters: CIContext
     private let sobelChromaticRenderer: SobelChromaticRenderer
+    private let gradientBackgroundRenderer: GradientBackgroundRenderer
     private let electricBeamRenderer: ElectricBeamRenderer
     private let radialBlurRenderer: RadialBlurRenderer
     private let crossGlareRenderer: CrossGlareRenderer
@@ -33,6 +34,7 @@ final class MetalSceneRenderer {
     private let particleImagePipeline: MTLRenderPipelineState
     private let particleImageAddPipeline: MTLRenderPipelineState
     private var particleTextureCache: [UUID: SourceImage] = [:]
+    private let spiralPipeline: MTLRenderPipelineState
     private let particlePipeline: MTLRenderPipelineState
     private let emberPipeline: MTLRenderPipelineState
     private let snowPipeline: MTLRenderPipelineState
@@ -109,6 +111,7 @@ final class MetalSceneRenderer {
         guard let bloomFunction = library.makeFunction(name: "bloomHighlights") else { throw Self.renderError }
         highlight = try device.makeComputePipelineState(function: bloomFunction)
         sobelChromaticRenderer = try SobelChromaticRenderer(device: device, library: library)
+        gradientBackgroundRenderer = try GradientBackgroundRenderer(device: device, library: library)
         electricBeamRenderer = try ElectricBeamRenderer(device: device, library: library)
         radialBlurRenderer = try RadialBlurRenderer(device: device, library: library)
         crossGlareRenderer = try CrossGlareRenderer(device: device, library: library)
@@ -137,6 +140,7 @@ final class MetalSceneRenderer {
         imagePipeline = try pipeline("fullscreen", "imageLayer")
         particleImagePipeline = try pipeline("imageParticleQuad", "imageParticle")
         particleImageAddPipeline = try pipeline("imageParticleQuad", "imageParticle", additive: true)
+        spiralPipeline = try pipeline("particleQuad", "spiralLight", additive: true)
         particlePipeline = try pipeline("particleQuad", "particleLight", additive: true)
         emberPipeline = try pipeline("particleQuad", "emberLight", additive: true)
         snowPipeline = try pipeline("particleQuad", "snowFlake")
@@ -298,15 +302,15 @@ final class MetalSceneRenderer {
             var palette = SIMD4(Float(particles.color.red), Float(particles.color.green), Float(particles.color.blue), Float(huePhase))
             encoder.setFragmentBytes(&palette, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
             for emitter in particles.emitters {
-                drawSprites(particles.instances(at: localTime, size: spriteSize, emitter: emitter),
+                try drawSprites(particles.instances(at: localTime, size: spriteSize, emitter: emitter),
                             with: particlePipeline, encoder: encoder, opacity: opacity)
             }
         }
         if let embers = clip.effects?.embers, embers.isEnabled, embers.brightness > 0 {
-            drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: encoder, opacity: opacity)
+            try drawSprites(embers.instances(at: localTime, size: spriteSize), with: emberPipeline, encoder: encoder, opacity: opacity)
         }
         if let snow = clip.effects?.snow, snow.isEnabled, snow.opacity > 0 {
-            drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: encoder, opacity: opacity)
+            try drawSprites(snow.instances(at: localTime, size: spriteSize), with: snowPipeline, encoder: encoder, opacity: opacity)
         }
         if let orbs = clip.effects?.orbs, orbs.isEnabled, orbs.opacity > 0 {
             ImageEffects.Orbs.colors.withUnsafeBytes { bytes in
@@ -314,7 +318,7 @@ final class MetalSceneRenderer {
             }
             var saturation = Float(orbs.saturation / 100)
             encoder.setFragmentBytes(&saturation, length: MemoryLayout<Float>.size, index: 1)
-            drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: encoder, opacity: opacity)
+            try drawSprites(orbs.instances(at: localTime, size: spriteSize), with: orbPipeline, encoder: encoder, opacity: opacity)
         }
         if let oct = clip.effects?.octgrams, oct.isEnabled, oct.opacity > 0, opacity > 0 {
             drawFullscreenEffect(pipeline: octPipeline, time: (localTime + oct.phaseOffset) * oct.speed / 100,
@@ -507,6 +511,9 @@ final class MetalSceneRenderer {
         for node in nodes {
             var filtered: CIImage?
             switch node.payload {
+            case .spiralParticles:
+                try drawSpiralParticles(node, into: current, localTime: key.localTime,
+                                        particleImages: key.particleImages, padding: padding, commands: commands)
             case let .electricBeam(v):
                 try electricBeamRenderer.render(into: current, effect: v, localTime: key.localTime,
                                                 scale: scale, padding: padding, commands: commands)
@@ -562,6 +569,8 @@ final class MetalSceneRenderer {
                     pass.setFragmentBytes(&center, length: MemoryLayout.size(ofValue: center), index: 2)
                     quad(pass); pass.endEncoding(); current = output
                 }
+            case let .gradientBackground(v):
+                try gradientBackgroundRenderer.render(into: current, effect: v, scale: scale, padding: padding, commands: commands)
             case let .solidBackground(v):
                 guard let color = CIColor(red: Self.linear(v.color.red), green: Self.linear(v.color.green), blue: Self.linear(v.color.blue), alpha: 1, colorSpace: Self.linearRGB) else { throw Self.renderError }
                 let background = CIImage(color: color)
@@ -658,12 +667,35 @@ final class MetalSceneRenderer {
         return texture
     }
 
+    /// Chain surfaces use bottom-left texture coordinates; particle positions use top-left 1080p coordinates.
+    private func drawSpiralParticles(_ node: EffectNode, into target: MTLTexture, localTime: Double,
+                                     particleImages: [UUID: VisualFrame], padding: Double, commands: MTLCommandBuffer) throws {
+        guard case let .spiralParticles(value) = node.payload, value.opacity > 0 else { return }
+        let pass = try encoder(commands, target: target, clear: MTLClearColorMake(0, 0, 0, 0), load: true)
+        let viewport = SIMD2(Float(Double(target.width) / scale), Float(Double(target.height) / scale))
+        let inset = Float(padding / scale)
+        if let appearance = node.particleAppearance, appearance.usesImage {
+            if let id = appearance.assetID, particleImages[id] != nil, let source = particleTextureCache[id] {
+                try drawImageParticles(node, texture: source.texture, at: localTime, encoder: pass,
+                                       viewport: viewport, inset: inset, flipVertically: true)
+            }
+        } else {
+            var palette = SIMD4(Float(Self.linear(value.color.red)), Float(Self.linear(value.color.green)), Float(Self.linear(value.color.blue)), 1)
+            pass.setFragmentBytes(&palette, length: MemoryLayout.size(ofValue: palette), index: 0)
+            try drawSprites(value.instances(at: localTime), with: spiralPipeline, encoder: pass,
+                            opacity: 1, viewport: viewport, inset: inset, flipVertically: true)
+        }
+        pass.endEncoding()
+    }
+
     private func drawImageParticles(_ node: EffectNode, texture: MTLTexture, at localTime: Double,
-                                    encoder: MTLRenderCommandEncoder) throws {
+                                    encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float> = SIMD2(1920, 1080), inset: Float = 0, flipVertically: Bool = false) throws {
         guard let appearance = node.particleAppearance else { return }
         let aspect = SIMD2(Float(texture.width), Float(texture.height)) / Float(max(texture.width, texture.height))
         encoder.setRenderPipelineState(appearance.blend == .normal ? particleImagePipeline : particleImageAddPipeline)
         encoder.setFragmentTexture(texture, index: 0)
+        var geometry = SIMD4(viewport.x, viewport.y, inset, flipVertically ? Float(1) : 0)
+        encoder.setVertexBytes(&geometry, length: MemoryLayout.size(ofValue: geometry), index: 1)
         for records in node.imageParticleInstances(at: localTime, aspect: aspect) where !records.isEmpty {
             let buffer = records.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: $0.count) }
             guard let buffer else { throw Self.renderError }
@@ -672,15 +704,19 @@ final class MetalSceneRenderer {
         }
     }
 
-    private func drawSprites(_ instances: [SIMD4<Float>], with pipeline: MTLRenderPipelineState, encoder: MTLRenderCommandEncoder, opacity: Float) {
-        let instances = opacity == 1 ? instances : instances.map { SIMD4($0.x, $0.y, $0.z, $0.w * opacity) }
-        var size = SIMD2(Float(Self.videoSize.width), Float(Self.videoSize.height))
-        encoder.setRenderPipelineState(pipeline)
-        instances.withUnsafeBytes { bytes in
-            encoder.setVertexBytes(bytes.baseAddress!, length: bytes.count, index: 0)
+    private func drawSprites(_ instances: [SIMD4<Float>], with pipeline: MTLRenderPipelineState,
+                             encoder: MTLRenderCommandEncoder, opacity: Float,
+                             viewport: SIMD2<Float> = SIMD2(1920, 1080), inset: Float = 0, flipVertically: Bool = false) throws {
+        guard !instances.isEmpty else { return }
+        let records = instances.map { SIMD4($0.x + inset, flipVertically ? viewport.y - $0.y - inset : $0.y + inset, $0.z, $0.w * opacity) }
+        guard let buffer = records.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count) }) else {
+            throw Self.renderError
         }
+        var size = viewport
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setVertexBuffer(buffer, offset: 0, index: 0)
         encoder.setVertexBytes(&size, length: MemoryLayout.size(ofValue: size), index: 1)
-        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: instances.count)
+        encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: records.count)
     }
 
     private func foreground(features: AudioFeatures?, settings: SceneSettings, lyrics: LyricsTrack, time: Double) throws -> [Overlay] {

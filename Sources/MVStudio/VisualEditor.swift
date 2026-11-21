@@ -47,6 +47,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let spineAnimation = NSPopUpButton()
     private let spineLoop = NSButton(checkboxWithTitle: "ループ", target: nil, action: nil)
     private let layerID = NSPopUpButton()
+    let lfoEditor = LFOEditor(frame: .zero)
     let musicEditor = AudioModulationEditor(frame: .zero)
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
     private let graphParameter = NSPopUpButton()
@@ -202,7 +203,17 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, spineBlendRow, effect, horizontal, vertical, opacity, graphs, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for child in [toolbar, selection, timing, sourceRow, speedRow, spineRow, spineBlendRow, effect, horizontal, vertical, opacity, graphs, lfoEditor, musicEditor, effectsEditor, message] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        lfoEditor.onCommit = { [weak self] parameter, mode, lfo in self?.setLFO(parameter, mode: mode, lfo: lfo, preview: false) }
+        lfoEditor.onPreview = { [weak self] parameter, lfo in
+            guard let self else { return }
+            if let lfo { self.setLFO(parameter, mode: .lfo, lfo: lfo, preview: true) }
+            else { self.timeline?.automationPreview = nil; self.onPreview?(self.track) }
+        }
+        lfoEditor.onSelect = { [weak self] parameter in
+            guard let self, self.track.clip(self.selectedID)?.displayCurve(parameter) != nil else { return }
+            self.timeline?.selectGraph(parameter, reveal: true)
+        }
         musicEditor.onCommit = { [weak self] parameter, modulation in self?.setMusic(parameter, modulation: modulation, preview: false) }
         musicEditor.onPreview = { [weak self] parameter, modulation in
             guard let self else { return }
@@ -245,6 +256,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         timeline?.onGraphSelection = { [weak self] in
             guard let self else { return }
             self.refreshGraphControls()
+            if let parameter = self.timeline?.selectedParameter { self.lfoEditor.select(parameter, notify: false) }
             if let parameter = self.timeline?.selectedParameter, self.musicEditor.parameter != parameter { self.musicEditor.select(parameter, notify: false) }
         }
         timeline?.onGraphRangeEdit = { [weak self] editingMaximum in
@@ -314,8 +326,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         spineRow.isHidden = track.clip(selectedID)?.content.spinePlayback == nil
         if case .blend = track.clip(selectedID)?.content.spinePlayback?.mode { spineBlendRow.isHidden = false }
         else { spineBlendRow.isHidden = true }
+        lfoEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID))
         musicEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID))
     }
+    var onColorSession: ((UUID?) -> Void)? {
+        didSet { effectsEditor.onColorSession = onColorSession }
+    }
+
     private func applyEffects(_ effects: ImageEffects, preview: Bool, deletedEmitter: Int? = nil) {
         guard available, !processing, manager == nil, var clip = track.clip(selectedID),
               let layerID = track.layerID(of: clip.id) else { return }
@@ -326,7 +343,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         var incoming = effects
         for node in clip.effects?.allNodes ?? [] {
             incoming.editNode(node.id) {
-                $0.curves = node.curves; $0.audioModulations = node.audioModulations; $0.automationRanges = node.automationRanges
+                $0.automations = node.automations; $0.audioModulations = node.audioModulations; $0.automationRanges = node.automationRanges
             }
         }
         clip.effects = incoming == ImageEffects() ? nil : incoming
@@ -462,7 +479,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
 
     @discardableResult
     func cancelValueDrag() -> Bool {
-        let musicCancelled = musicEditor.cancelDrag()
+        let lfoCancelled = lfoEditor.cancelDrag()
+        let musicCancelled = musicEditor.cancelDrag() || lfoCancelled
         guard let drag = valueDrag else { return effectsEditor.cancelDrag() || musicCancelled }
         valueDrag = nil
         drag.field.cancelTracking()
@@ -812,10 +830,25 @@ private extension VisualEditor {
         musicEditor.scrollToVisible(musicEditor.bounds)
     }
 
+    private func setLFO(_ parameter: ImageParameter, mode: ParameterAutomation.Mode, lfo: LFOSettings?, preview: Bool) {
+        guard available, !processing, manager == nil, track.canEdit(selectedLayerID), var clip = track.clip(selectedID) else { return }
+        if mode == .keys && clip.automation(parameter) == nil { return }
+        clip.setAutomationMode(mode, for: parameter)
+        if let lfo { var item = clip.automation(parameter)!; item.lfo = lfo; clip.setAutomation(item) }
+        do {
+            let updated = try track.updating(clip, layerID: selectedLayerID, duration: duration)
+            if preview { timeline?.automationPreview = updated; onPreview?(updated) }
+            else if updated != track {
+                onBeginEdit?(); commit(updated, selectedID: clip.id)
+                timeline?.revealAutomation(in: selectedLayerID); timeline?.selectGraph(parameter, reveal: true)
+            }
+        } catch { report(error) }
+    }
+
     private func setMusic(_ parameter: ImageParameter, modulation: AudioModulation?, preview: Bool) {
         guard available, !processing, manager == nil, var clip = track.clip(selectedID), let layerID = track.layerID(of: clip.id) else { return }
         clip.audioModulations[parameter] = modulation
-        if modulation == nil { clip.automationRanges[parameter] = nil }
+        if modulation == nil && !clip.hasAutomation(parameter) { clip.automationRanges[parameter] = nil }
         do {
             let updated = try track.updating(clip, layerID: layerID, duration: duration)
             if preview { timeline?.automationPreview = updated; onPreview?(updated) }
@@ -830,7 +863,7 @@ private extension VisualEditor {
     private func refreshAnimationValues() {
         let clip = track.clip(selectedID)
         for (parameter, field) in valueFields {
-            field.hasAutomation = clip?.curve(parameter) != nil
+            field.hasAutomation = clip?.hasAutomation(parameter) == true
             field.hasMusic = clip?.audioModulations[parameter] != nil
             let title = field.hasAutomation ? "基準値" : "固定値"
             field.setAccessibilityLabel(parameter.title + "の" + title)
@@ -906,9 +939,9 @@ private extension VisualEditor {
     private func removeAutomation(_ parameter: ImageParameter) {
         guard available, !processing, manager == nil, valueFields[parameter]?.isEnabled != false else { return }
         cancelValueDrag()
-        guard var clip = track.clip(selectedID), clip.curve(parameter) != nil else { return }
+        guard var clip = track.clip(selectedID), clip.hasAutomation(parameter) else { return }
         if let curve = clip.curve(parameter), clip.audioModulations[parameter] != nil { clip.automationRanges[parameter] = VisualClip.DisplayRange(lower: curve.minimum, upper: curve.maximum) }
-        clip.curves.removeAll { $0.parameter == parameter }
+        clip.removeAutomation(parameter)
         onBeginEdit?()
         if commitAnimation(clip) {
             drafts[parameter] = nil

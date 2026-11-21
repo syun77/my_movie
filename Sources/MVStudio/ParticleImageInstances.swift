@@ -20,6 +20,7 @@ extension EffectNode {
             groups = v.emitters.map { (v.instances(at: localTime, size: size, emitter: $0), localTime + v.phaseOffset, v.seed &+ $0.phaseSeed) }
         case let .embers(v): diameter = v.diameter; groups = [(v.instances(at: localTime, size: size), localTime + v.phaseOffset, v.seed)]
         case let .snow(v): diameter = v.diameter; groups = [(v.instances(at: localTime, size: size), localTime + v.phaseOffset, v.seed)]
+        case let .spiralParticles(v): diameter = v.diameter; groups = [(v.instances(at: localTime), localTime + v.phaseOffset, v.seed)]
         case let .orbs(v): diameter = 60; groups = [(v.instances(at: localTime, size: size), localTime + v.phaseOffset, 0xA3D8E7B1)]
         default: return []
         }
@@ -42,6 +43,8 @@ extension EffectNode {
                             return Float(Self.linear(1 + (spectrum - 1) * blend))
                         }
                         tint = SIMD3(channel(0), channel(0.666667), channel(0.333333))
+                    case let .spiralParticles(v):
+                        tint = SIMD3(Float(Self.linear(v.color.red)), Float(Self.linear(v.color.green)), Float(Self.linear(v.color.blue)))
                     case .embers:
                         tint = SIMD3<Float>(0.95, 0.15, 0.015) + SIMD3<Float>(0.70, 0.49, 0.145) * instance.w
                     case let .orbs(v):

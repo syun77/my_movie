@@ -5,7 +5,11 @@ struct EffectNode: Codable, Equatable, Sendable, Identifiable {
     var id = UUID()
     var particleAppearance: ParticleAppearance?
     var payload: EffectPayload
-    var curves: [ImageCurve] = []
+    var automations: [ParameterAutomation] = []
+    var curves: [ImageCurve] {
+        get { AutomationCurves.curves(automations, ranges: automationRanges) }
+        set { AutomationCurves.update(newValue, items: &automations, ranges: &automationRanges) }
+    }
     var audioModulations: [ImageParameter: AudioModulation] = [:]
     var automationRanges: [ImageParameter: VisualClip.DisplayRange] = [:]
     var kind: EffectKind { payload.kind }
@@ -45,10 +49,14 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
     case sobelChromatic
     case fireOutline
     case electricBeam
+    case gradientBackground
+    case spiralParticles
     var title: String {
         switch self {
         case .shape: return "図形"
         case .mask: return "このクリップのマスク"
+        case .spiralParticles: return "渦巻き粒子"
+        case .gradientBackground: return "グラデーション背景"
         case .solidBackground: return "単色背景"
         case .blur: return "ガウスブラー"
         case .radialBlur: return "放射ブラー"
@@ -83,6 +91,8 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
         switch self {
         case .shape: return .shape(.init())
         case .mask: return .mask(.init())
+        case .spiralParticles: return .spiralParticles(.init())
+        case .gradientBackground: return .gradientBackground(.init())
         case .solidBackground: return .solidBackground(.init())
         case .blur: return .blur(.init())
         case .radialBlur: return .radialBlur(.init())
@@ -117,6 +127,8 @@ enum EffectKind: Int, CaseIterable, Codable, Sendable {
 enum EffectPayload: Codable, Equatable, Sendable {
     case shape(ImageEffects.Shape)
     case mask(ImageEffects.Mask)
+    case spiralParticles(ImageEffects.SpiralParticles)
+    case gradientBackground(ImageEffects.GradientBackground)
     case solidBackground(ImageEffects.SolidBackground)
     case blur(ImageEffects.Blur)
     case radialBlur(ImageEffects.RadialBlur)
@@ -148,6 +160,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
         switch self {
         case .shape: return .shape
         case .mask: return .mask
+        case .spiralParticles: return .spiralParticles
+        case .gradientBackground: return .gradientBackground
         case .solidBackground: return .solidBackground
         case .blur: return .blur
         case .radialBlur: return .radialBlur
@@ -182,6 +196,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
             switch self {
             case let .shape(value): return value.isEnabled
             case let .mask(value): return value.isEnabled
+            case let .spiralParticles(value): return value.isEnabled
+            case let .gradientBackground(value): return value.isEnabled
             case let .solidBackground(value): return value.isEnabled
             case let .blur(value): return value.isEnabled
             case let .radialBlur(value): return value.isEnabled
@@ -215,6 +231,8 @@ enum EffectPayload: Codable, Equatable, Sendable {
             switch self {
             case var .shape(value): value.isEnabled = newValue; self = .shape(value)
             case var .mask(value): value.isEnabled = newValue; self = .mask(value)
+            case var .spiralParticles(value): value.isEnabled = newValue; self = .spiralParticles(value)
+            case var .gradientBackground(value): value.isEnabled = newValue; self = .gradientBackground(value)
             case var .solidBackground(value): value.isEnabled = newValue; self = .solidBackground(value)
             case var .blur(value): value.isEnabled = newValue; self = .blur(value)
             case var .radialBlur(value): value.isEnabled = newValue; self = .radialBlur(value)
@@ -288,6 +306,8 @@ extension ImageParameter {
         case .binarizationThreshold, .binarizationAmount: return .binarization
         case .colorHue, .colorBrightness, .colorSaturation: return .colorCorrection
         case .chromaticAmount, .chromaticAngle: return .chromaticAberration
+        case .spiralX, .spiralY, .spiralRadius, .spiralCount, .spiralConvergenceTime, .spiralTurns, .spiralSpeed, .spiralDiameter, .spiralOpacity, .spiralImageSize, .spiralImageAngle, .spiralImageSpread, .spiralImageSpin: return .spiralParticles
+        case .gradientX, .gradientY, .gradientPosition, .gradientWidth, .gradientAngle, .gradientBias, .gradientOpacity: return .gradientBackground
         case .beamX, .beamY, .beamAngle, .beamLength, .beamSpread, .beamCount, .beamWidth, .beamBend, .beamGlow, .beamBrightness, .beamSpeed: return .electricBeam
         case .fireX, .fireY, .fireWidth, .fireHeight, .fireSpread, .fireDetail, .fireSpeed, .fireBrightness, .fireOpacity, .fireHue: return .fireOutline
         case .sobelAmount, .sobelStrength, .sobelWidth, .sobelChromaticAmount, .sobelSpeed: return .sobelChromatic

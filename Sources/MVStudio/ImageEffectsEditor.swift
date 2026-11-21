@@ -12,6 +12,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     var onEditMusic: ((ImageParameter) -> Void)?
     var onRemoveMusic: ((ImageParameter) -> Void)?
     var onRemoveAutomation: ((ImageParameter) -> Void)?
+    var onColorSession: ((UUID?) -> Void)?
     var onCommit: ((ImageEffects) -> Void)?
     var onPreview: ((ImageEffects?) -> Void)?
     private typealias Kind = EffectKind
@@ -38,6 +39,9 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private let raysColor = NSColorWell()
     private let raysShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let raysFit = NSButton(title: "画面比率に合わせる", target: nil, action: nil)
+    private let spiralColor = NSColorWell()
+    private let spiralDirection = NSPopUpButton()
+    private let spiralShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let beamColor = NSColorWell()
     private let beamShuffle = NSButton(title: "配置を変更", target: nil, action: nil)
     private let straightColor = NSColorWell()
@@ -62,6 +66,15 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
     private var track = VisualTrack()
     private let color = NSColorWell()
     private let backgroundColor = NSColorWell()
+    private let gradientColorA = SessionColorWell()
+    private let gradientColorB = SessionColorWell()
+    private let gradientShape = NSPopUpButton()
+    private let gradientPattern = NSPopUpButton()
+    private let gradientSwap = NSButton(title: "A/B交換", target: nil, action: nil)
+    private let gradientOutward = NSButton(title: "中心から外へ", target: nil, action: nil)
+    private let gradientProfile = GradientProfileView()
+    private let gradientNotice = NSTextField(wrappingLabelWithString: "前段の不透明な背景に隠れる場合があります。")
+    private var gradientAngleRow: NSView?
     private let emitterPicker = NSPopUpButton()
     private let addEmitter = NSButton(title: "＋", target: nil, action: nil)
     private let removeEmitter = NSButton(title: "−", target: nil, action: nil)
@@ -91,11 +104,14 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         remove.target = self; remove.action = #selector(removeEffect)
         for (well, action, label) in [(color, #selector(changeColor), "光の粒子の色"),
                                       (backgroundColor, #selector(changeBackgroundColor), "単色背景の色"),
+                                      (gradientColorA, #selector(changeGradientColors(_:)), "グラデーションの色A"),
+                                      (gradientColorB, #selector(changeGradientColors(_:)), "グラデーションの色B"),
                                       (binarizationDarkColor, #selector(changeBinarizationColor(_:)), "2値化の暗部の色"),
                                       (binarizationLightColor, #selector(changeBinarizationColor(_:)), "2値化の明部の色"),
                                       (sobelColor, #selector(changeSobelColor), "Sobelの輪郭色"),
                                       (shapeColor, #selector(changeShapeColor), "図形の色"),
                                       (sharpColor, #selector(changeSharpColor), "集中線３の色"),
+                                      (spiralColor, #selector(changeSpiralColor), "渦巻き粒子の色"),
                                       (beamColor, #selector(changeBeamColor), "電撃ビームの色"),
                                       (straightColor, #selector(changeStraightColor), "直線効果線の色"),
                                       (raysColor, #selector(changeRaysColor), "放射光線の色"),
@@ -109,6 +125,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         }
         backgroundColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.backgroundColor")
         contents[.solidBackground] = row([NSTextField(labelWithString: "色"), backgroundColor])
+
+        buildGradientControls()
 
         emitterPicker.setAccessibilityLabel("光の粒子の発生源")
         emitterPicker.target = self; emitterPicker.action = #selector(selectEmitter)
@@ -201,6 +219,15 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             row(number("速度 %", .orbsSpeed, \.orbs, \.speed, orbDefaults.speed, Orbs.speedRange)
                 + number("不透明度 %", .orbsOpacity, \.orbs, \.opacity, orbDefaults.opacity, Orbs.opacityRange))
         ])
+        spiralColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.spiralColor")
+        spiralDirection.addItems(withTitles: ImageEffects.SpiralParticles.Direction.allCases.map(\.title))
+        spiralDirection.identifier = NSUserInterfaceItemIdentifier("visuals.effects.spiralDirection")
+        spiralDirection.target = self; spiralDirection.action = #selector(changeSpiralDirection)
+        spiralShuffle.identifier = NSUserInterfaceItemIdentifier("visuals.effects.spiralShuffle")
+        spiralShuffle.target = self; spiralShuffle.action = #selector(shuffleSpiral)
+        contents[.spiralParticles] = NSStackView(views: ImageEffects.SpiralParticles.fields.map { row(numeric($0.parameter)) }
+            + [row([NSTextField(labelWithString: "回転方向"), spiralDirection]),
+               row([NSTextField(labelWithString: "色"), spiralColor, spiralShuffle])])
         beamColor.identifier = NSUserInterfaceItemIdentifier("visuals.effects.beamColor")
         beamShuffle.identifier = NSUserInterfaceItemIdentifier("visuals.effects.beamShuffle")
         beamShuffle.target = self; beamShuffle.action = #selector(shuffleBeam)
@@ -212,7 +239,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         contents[.zoomLoop] = NSStackView(views: ImageEffects.ZoomLoop.parameters.map { row(numeric($0)) })
         contents[.octgrams] = NSStackView(views: ImageEffects.Octgrams.parameters.map { row(numeric($0)) })
         contents[.warpFlight] = NSStackView(views: ImageEffects.WarpFlight.parameters.map { row(numeric($0)) })
-        for kind in [Kind.particles, .embers, .snow, .orbs] {
+        for kind in [Kind.particles, .embers, .snow, .orbs, .spiralParticles] {
             let editor = ParticleAppearanceEditor()
             particleEditors[kind] = editor
             editor.onChange = { [weak self] value in
@@ -233,7 +260,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         buildStraightControls()
         buildRaysControls()
         buildShapeControls()
-        for kind in [Kind.electricBeam, .fireOutline, .sobelChromatic, .lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
+        for kind in [Kind.spiralParticles, .gradientBackground, .electricBeam, .fireOutline, .sobelChromatic, .lensFlare, .crossGlare, .warpFlight, .radialFocus, .zoomLoop, .octgrams, .particles, .embers, .snow, .orbs, .focusLines, .sharpFocus, .straightLines, .radialRays, .shape, .mask] {
             contents[kind]?.orientation = .vertical
             contents[kind]?.alignment = .leading
             contents[kind]?.spacing = 4
@@ -346,7 +373,8 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         let step: Double
         switch parameter() {
         case .raysSquash, .sobelWidth: step = 0.25
-        case .raysThickness: step = 0.1
+        case .spiralConvergenceTime: step = 0.05
+        case .spiralTurns, .raysThickness: step = 0.1
         case .straightThickness, .beamWidth: step = 0.5
         default: step = 1
         }
@@ -358,7 +386,11 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
                          initial: { initial }, normalize: { min(range.upperBound, max(range.lowerBound, $0)) },
                          preview: { [weak self] value in
             guard let self else { return }
-            self.onPreview?(value.map { write(self.effects, $0) })
+            let preview = value.map { write(self.effects, $0) }
+            if parameter()?.effectKind == .gradientBackground {
+                self.gradientProfile.gradient = (preview ?? self.effects).gradientBackground ?? .init()
+            }
+            self.onPreview?(preview)
         }, commit: { [weak self] value in
             guard let self else { return }
             self.onCommit?(write(self.effects, value))
@@ -382,7 +414,11 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
               let original = input.read(effects) else { return }
         let value = Double(input.field.stringValue.trimmingCharacters(in: .whitespaces))
         input.field.doubleValue = original
-        if let value, value.isFinite { onCommit?(input.write(effects, value)) }
+        if let value, value.isFinite {
+            if input.parameter()?.effectKind == .gradientBackground,
+               input.field.knobRange?.contains(value) != true { return }
+            onCommit?(input.write(effects, value))
+        }
     }
 
     private func updateOutside() {
@@ -419,38 +455,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         add.isEnabled = editable
         enabled.isEnabled = editable && !kinds.isEmpty
         remove.isEnabled = enabled.isEnabled
-        switch selected {
-        case .binarization: enabled.state = effects.binarization?.isEnabled == true ? .on : .off
-        case .shape: enabled.state = effects.shape?.isEnabled == true ? .on : .off
-        case .belowMask: enabled.state = effects.belowMask?.isEnabled == true ? .on : .off
-        case .mask: enabled.state = effects.mask?.isEnabled == true ? .on : .off
-        case .solidBackground: enabled.state = effects.solidBackground?.isEnabled == true ? .on : .off
-        case .radialBlur: enabled.state = effects.radialBlur?.isEnabled == true ? .on : .off
-            case .blur: enabled.state = effects.blur?.isEnabled == true ? .on : .off
-        case .lensFlare: enabled.state = effects.lensFlare?.isEnabled == true ? .on : .off
-        case .crossGlare: enabled.state = effects.crossGlare?.isEnabled == true ? .on : .off
-        case .bloom: enabled.state = effects.bloom?.isEnabled == true ? .on : .off
-        case .particles: enabled.state = effects.particles?.isEnabled == true ? .on : .off
-        case .embers: enabled.state = effects.embers?.isEnabled == true ? .on : .off
-        case .snow: enabled.state = effects.snow?.isEnabled == true ? .on : .off
-        case .shake: enabled.state = effects.shake?.isEnabled == true ? .on : .off
-        case .chromaticAberration: enabled.state = effects.chromaticAberration?.isEnabled == true ? .on : .off
-        case .sobelChromatic: enabled.state = effects.sobelChromatic?.isEnabled == true ? .on : .off
-        case .vignette: enabled.state = effects.vignette?.isEnabled == true ? .on : .off
-        case .colorCorrection: enabled.state = effects.colorCorrection?.isEnabled == true ? .on : .off
-        case .focusLines: enabled.state = effects.focusLines?.isEnabled == true ? .on : .off
-        case .sharpFocus: enabled.state = effects.sharpFocus?.isEnabled == true ? .on : .off
-        case .straightLines: enabled.state = effects.straightLines?.isEnabled == true ? .on : .off
-        case .radialRays: enabled.state = effects.radialRays?.isEnabled == true ? .on : .off
-        case .electricBeam: enabled.state = effects.electricBeam?.isEnabled == true ? .on : .off
-        case .fireOutline: enabled.state = effects.fireOutline?.isEnabled == true ? .on : .off
-        case .radialFocus: enabled.state = effects.radialFocus?.isEnabled == true ? .on : .off
-        case .zoomLoop: enabled.state = effects.zoomLoop?.isEnabled == true ? .on : .off
-        case .octgrams: enabled.state = effects.octgrams?.isEnabled == true ? .on : .off
-        case .warpFlight: enabled.state = effects.warpFlight?.isEnabled == true ? .on : .off
-        case .orbs: enabled.state = effects.orbs?.isEnabled == true ? .on : .off
-        case nil: enabled.state = .off
-        }
+        enabled.state = effects.allNodes.first(where: { $0.kind == selected })?.isEnabled == true ? .on : .off
         if let particles = effects.particles, !color.isActive { color.color = particles.color.nsColor }
         color.isEnabled = editable && !(effects.appearance(.particles).map { $0.usesImage && $0.colorMode == .original } ?? false)
         if let focus = effects.focusLines, !focusColor.isActive { focusColor.color = focus.color.nsColor }
@@ -459,6 +464,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         sharpColor.isEnabled = editable
         if let straight = effects.straightLines, !straightColor.isActive { straightColor.color = straight.color.nsColor }
         straightColor.isEnabled = editable
+        if let value = effects.spiralParticles {
+            if !spiralColor.isActive { spiralColor.color = value.color.nsColor }
+            spiralDirection.selectItem(at: ImageEffects.SpiralParticles.Direction.allCases.firstIndex(of: value.direction) ?? 0)
+        }
+        spiralColor.isEnabled = editable && !(effects.appearance(.spiralParticles).map { $0.usesImage && $0.colorMode == .original } ?? false)
+        spiralDirection.isEnabled = editable; spiralShuffle.isEnabled = editable
         if let beam = effects.electricBeam, !beamColor.isActive { beamColor.color = beam.color.nsColor }
         beamColor.isEnabled = editable; beamShuffle.isEnabled = editable
         straightShuffle.isEnabled = editable
@@ -483,6 +494,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         }
         sobelMode.isEnabled = editable && effects.sobelChromatic != nil
         sobelColor.isEnabled = sobelMode.isEnabled && effects.sobelChromatic?.mode != .chromatic
+        updateGradientControls()
         updateShapeControls()
         updateEmitterControls()
         for input in numbers {
@@ -492,10 +504,12 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             let imageDisabled = input.parameter().map { $0.rawValue.contains("Image") && appearance?.usesImage != true } ?? false
             let saturationDisabled = input.parameter() == .orbsSaturation && appearance?.usesImage == true && appearance?.colorMode == .original
             let sobelDisabled = input.parameter().map { $0.effectKind == .sobelChromatic && effects.sobelChromatic?.uses($0) == false } ?? false
-            input.field.isEnabled = editable && value != nil && !automaticPosition && !imageDisabled && !saturationDisabled && !sobelDisabled
+            let gradientAngleDisabled = input.parameter() == .gradientAngle && effects.gradientBackground?.shape == .radial
+            input.field.isEnabled = editable && value != nil && !automaticPosition && !imageDisabled
+                && !saturationDisabled && !sobelDisabled && !gradientAngleDisabled
             input.field.identifier = input.parameter().map { NSUserInterfaceItemIdentifier("visuals.value." + $0.rawValue) }
             input.field.hasMusic = input.parameter().flatMap { shownClip?.audioModulations[$0] } != nil
-            input.field.hasAutomation = input.parameter().flatMap { shownClip?.curve($0) } != nil
+            input.field.hasAutomation = input.parameter().map { shownClip?.hasAutomation($0) == true } == true
             if input.field.currentEditor() == nil, let value { input.field.doubleValue = value }
         }
         updateOutside()
@@ -600,12 +614,107 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
         sobelColor.deactivate()
         focusColor.deactivate()
         sharpColor.deactivate()
+        spiralColor.deactivate()
         beamColor.deactivate()
         straightColor.deactivate()
         raysColor.deactivate()
         shapeColor.deactivate()
         color.deactivate()
         backgroundColor.deactivate()
+        gradientColorA.deactivate()
+        gradientColorB.deactivate()
+    }
+
+    private func buildGradientControls() {
+        typealias Gradient = ImageEffects.GradientBackground
+        for (picker, titles, name) in [(gradientShape, Gradient.Shape.allCases.map(\.title), "shape"),
+                                        (gradientPattern, Gradient.Pattern.allCases.map(\.title), "pattern")] {
+            picker.addItems(withTitles: titles)
+            picker.identifier = NSUserInterfaceItemIdentifier("visuals.effects.gradient." + name)
+            picker.target = self; picker.action = #selector(changeGradientMode)
+            picker.setAccessibilityLabel(name == "shape" ? "グラデーション形状" : "グラデーションの色の並び")
+        }
+        gradientColorA.identifier = NSUserInterfaceItemIdentifier("visuals.effects.gradient.colorA")
+        gradientColorB.identifier = NSUserInterfaceItemIdentifier("visuals.effects.gradient.colorB")
+        gradientSwap.identifier = NSUserInterfaceItemIdentifier("visuals.effects.gradient.swap")
+        gradientSwap.target = self; gradientSwap.action = #selector(swapGradientColors)
+        gradientOutward.identifier = NSUserInterfaceItemIdentifier("visuals.effects.gradient.outward")
+        gradientOutward.target = self; gradientOutward.action = #selector(gradientFromCenter)
+        let angle = row(numeric(.gradientAngle))
+        gradientAngleRow = angle
+        gradientProfile.widthAnchor.constraint(equalToConstant: 280).isActive = true
+        gradientProfile.heightAnchor.constraint(equalToConstant: 112).isActive = true
+        gradientProfile.setAccessibilityLabel("距離に対する色Bの割合とグラデーション見本")
+        gradientNotice.textColor = .secondaryLabelColor
+        contents[.gradientBackground] = NSStackView(views: [
+            row([NSTextField(labelWithString: "色A"), gradientColorA, gradientSwap,
+                 NSTextField(labelWithString: "色B"), gradientColorB]),
+            row([NSTextField(labelWithString: "形状"), gradientShape,
+                 NSTextField(labelWithString: "色の並び"), gradientPattern]),
+            row(numeric(.gradientX) + numeric(.gradientY)),
+            row(numeric(.gradientPosition) + numeric(.gradientWidth)), angle,
+            row(numeric(.gradientBias) + numeric(.gradientOpacity)),
+            gradientOutward, gradientProfile, gradientNotice
+        ])
+    }
+
+    private func updateGradientControls() {
+        let value = effects.gradientBackground ?? .init()
+        if !gradientColorA.isActive { gradientColorA.color = value.colorA.nsColor }
+        if !gradientColorB.isActive { gradientColorB.color = value.colorB.nsColor }
+        gradientShape.selectItem(at: ImageEffects.GradientBackground.Shape.allCases.firstIndex(of: value.shape) ?? 0)
+        gradientPattern.selectItem(at: ImageEffects.GradientBackground.Pattern.allCases.firstIndex(of: value.pattern) ?? 0)
+        for control in [gradientColorA, gradientColorB, gradientShape, gradientPattern, gradientSwap, gradientOutward] as [NSControl] {
+            control.isEnabled = editable && effects.gradientBackground != nil
+        }
+        gradientAngleRow?.isHidden = value.shape == .radial
+        gradientOutward.isHidden = value.shape != .radial
+        gradientProfile.gradient = value
+        let preceding = effects.nodes.prefix { $0.kind != .gradientBackground }
+        gradientNotice.isHidden = !preceding.contains { $0.kind == .solidBackground && $0.isEnabled }
+    }
+
+    @objc private func changeGradientMode() {
+        typealias Gradient = ImageEffects.GradientBackground
+        guard editable, selected == .gradientBackground,
+              Gradient.Shape.allCases.indices.contains(gradientShape.indexOfSelectedItem),
+              Gradient.Pattern.allCases.indices.contains(gradientPattern.indexOfSelectedItem),
+              window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag()
+        var result = effects
+        result.gradientBackground?.shape = Gradient.Shape.allCases[gradientShape.indexOfSelectedItem]
+        result.gradientBackground?.pattern = Gradient.Pattern.allCases[gradientPattern.indexOfSelectedItem]
+        onCommit?(result)
+    }
+
+    @objc private func changeGradientColors(_ sender: SessionColorWell) {
+        guard editable, selected == .gradientBackground else { return }
+        var result = effects
+        result.gradientBackground?.colorA = RGBColor(gradientColorA.color)
+        result.gradientBackground?.colorB = RGBColor(gradientColorB.color)
+        gradientProfile.gradient = result.gradientBackground ?? .init()
+        onColorSession?(sender.sessionID)
+        onCommit?(result)
+        onColorSession?(nil)
+    }
+
+    @objc private func swapGradientColors() {
+        guard editable, selected == .gradientBackground, let value = effects.gradientBackground,
+              window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag(); deactivateColors()
+        var result = effects
+        result.gradientBackground?.colorA = value.colorB
+        result.gradientBackground?.colorB = value.colorA
+        onCommit?(result)
+    }
+
+    @objc private func gradientFromCenter() {
+        guard editable, selected == .gradientBackground, let value = effects.gradientBackground,
+              value.shape == .radial, window?.makeFirstResponder(nil) != false else { return }
+        cancelDrag()
+        var result = effects
+        result.gradientBackground?.position = value.width / 2
+        onCommit?(result)
     }
 
     @objc private func changeSobelMode() {
@@ -678,7 +787,7 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
 
     private func numeric(_ parameter: ImageParameter) -> [NSView] {
         let effect = parameter.effect!
-        let scaled = [.straightSpeed, .straightLength, .raysLength].contains(parameter)
+        let scaled = [.straightSpeed, .straightLength, .raysLength, .gradientWidth].contains(parameter)
         let scale = scaled ? 10.0 : 1.0
         let title = effect.title + (scaled ? "（10" + effect.unit + "）" : "")
         return number(title, initial: effect.initial / scale,
@@ -703,6 +812,24 @@ final class ImageEffectsEditor: NSStackView, NSTextFieldDelegate {
             row(frequency + numeric(.focusOpacity)),
             row([NSTextField(labelWithString: "色"), focusColor])
         ])
+    }
+
+    @objc private func changeSpiralColor() {
+        guard editable, selected == .spiralParticles else { return }
+        var result = effects; result.spiralParticles?.color = RGBColor(spiralColor.color)
+        onCommit?(result)
+    }
+    @objc private func changeSpiralDirection() {
+        guard editable, selected == .spiralParticles,
+              ImageEffects.SpiralParticles.Direction.allCases.indices.contains(spiralDirection.indexOfSelectedItem) else { return }
+        var result = effects
+        result.spiralParticles?.direction = ImageEffects.SpiralParticles.Direction.allCases[spiralDirection.indexOfSelectedItem]
+        onCommit?(result)
+    }
+    @objc private func shuffleSpiral() {
+        guard editable, selected == .spiralParticles else { return }
+        var result = effects; result.spiralParticles?.seed = UInt32.random(in: .min ... .max)
+        onCommit?(result)
     }
 
     @objc private func changeBeamColor() {

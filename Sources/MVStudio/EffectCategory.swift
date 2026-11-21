@@ -13,10 +13,10 @@ enum EffectCategory: String, CaseIterable {
         switch self {
         case .color: return [.colorCorrection, .binarization, .vignette, .chromaticAberration, .sobelChromatic]
         case .blur: return [.blur, .radialBlur, .bloom, .crossGlare, .lensFlare, .fireOutline]
-        case .particles: return [.particles, .orbs, .embers, .snow]
+        case .particles: return [.particles, .orbs, .spiralParticles, .embers, .snow]
         case .lines: return [.focusLines, .radialFocus, .sharpFocus, .straightLines, .radialRays, .electricBeam]
         case .motion: return [.shake, .zoomLoop, .octgrams, .warpFlight]
-        case .geometry: return [.solidBackground, .shape, .mask]
+        case .geometry: return [.solidBackground, .gradientBackground, .shape, .mask]
         }
     }
 
