@@ -44,9 +44,9 @@ enum ProjectMigrator {
         if version < ProjectFile.currentVersion { try freezeLegacyDefaults(&root) }
         while let current = root["version"] as? Int, current < ProjectFile.currentVersion {
             switch current {
-            case 17: try migrate17To18(&root)
             case 18: try migrate18To19(&root)
             case 19: try migrate19To20(&root)
+            case 20: try validateLegacyIntervals(root)
             default: throw ProjectFormatError.invalid("version")
             }
             changes.append("v\(current) → v\(current + 1)")
@@ -89,40 +89,15 @@ enum ProjectMigrator {
         try rejectParameters(parameters, in: root)
     }
 
-    private static func migrate17To18(_ root: inout [String: Any]) throws {
-        func convert(_ object: inout [String: Any], path: String) throws {
-            guard object["automations"] == nil else { throw ProjectFormatError.invalid(path + ".automations") }
-            guard let curves = object.removeValue(forKey: "curves") as? [[String: Any]],
-                  var ranges = object["automationRanges"] as? [Any], ranges.count.isMultiple(of: 2) else {
-                throw ProjectFormatError.invalid(path + ".curves/automationRanges")
-            }
-            var automations: [[String: Any]] = []
-            for curve in curves {
-                guard let parameter = curve["parameter"] as? String, let keys = curve["keys"] as? [Any],
-                      let minimum = curve["minimum"], let maximum = curve["maximum"],
-                      Set(curve.keys).isSubset(of: ["parameter", "keys", "minimum", "maximum"]) else {
-                    throw ProjectFormatError.invalid(path + ".curves")
-                }
-                guard !stride(from: 0, to: ranges.count, by: 2).contains(where: { ranges[$0] as? String == parameter }) else {
-                    throw ProjectFormatError.invalid(path + ".automationRanges")
-                }
-                ranges += [parameter, ["lower": minimum, "upper": maximum]]
-                automations.append(["parameter": parameter, "mode": "keys", "keyCurve": ["keys": keys]])
-            }
-            object["automations"] = automations
-            object["automationRanges"] = ranges
-        }
-        try editClips(&root) { clip, path in
-            try convert(&clip, path: path)
-            if var chain = clip["effectChain"] as? [String: Any] {
-                if var nodes = chain["nodes"] as? [[String: Any]] {
-                    for index in nodes.indices { try convert(&nodes[index], path: path + ".effectChain.nodes[\(index)]") }
-                    chain["nodes"] = nodes
-                }
-                if var mask = chain["outputMask"] as? [String: Any] {
-                    try convert(&mask, path: path + ".effectChain.outputMask"); chain["outputMask"] = mask
-                }
-                clip["effectChain"] = chain
+    private static func validateLegacyIntervals(_ root: [String: Any]) throws {
+        guard let layers = root["visualLayers"] as? [[String: Any]] else { throw ProjectFormatError.invalid("visualLayers") }
+        for (index, layer) in layers.enumerated() {
+            guard let clips = layer["clips"] as? [[String: Any]] else { throw ProjectFormatError.invalid("visualLayers[\(index)].clips") }
+            var previousEnd = 0.0
+            for clip in clips {
+                guard let start = clip["start"] as? Double, let end = clip["end"] as? Double,
+                      start >= previousEnd else { throw ProjectFormatError.invalid("visualLayers[\(index)].clips overlap") }
+                previousEnd = end
             }
         }
     }

@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
     private let bpm = DragValueField(frame: .zero)
     private let offset = DragValueField(frame: .zero)
     private let play = NSButton(title: "再生", target: nil, action: nil)
+    private let manageAssets = NSButton(title: "素材管理…", target: nil, action: nil)
     private let export = NSButton(title: "MP4を書き出す", target: nil, action: nil)
     private let cancel = NSButton(title: "キャンセル", target: nil, action: nil)
     private let progress = NSProgressIndicator()
@@ -88,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         window.title = "MV Studio"
         window.contentMinSize = NSSize(width: 1000, height: 680)
         let audioButton = button("音声を選択…", #selector(importAudio))
-        let files = row([audioButton, audioName])
+        let audioSelection = row([audioButton])
         audioName.lineBreakMode = .byTruncatingMiddle
         audioName.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bpm.widthAnchor.constraint(equalToConstant: 88).isActive = true
@@ -102,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
                           initial: { SceneSettings().beatOffset }, normalize: { max(0, $0) },
                           commit: { [weak self] _ in self?.updateSettings() })
         for control in [bpm, offset] { control.target = self; control.action = #selector(updateSettings) }
-        let options = row([NSTextField(labelWithString: "BPM"), bpm, NSTextField(labelWithString: "拍開始（秒）"), offset])
+        let timingControls = row([NSTextField(labelWithString: "BPM"), bpm, NSTextField(labelWithString: "拍開始（秒）"), offset])
         play.target = self; play.action = #selector(togglePlay)
         export.target = self; export.action = #selector(exportVideo)
         cancel.target = self; cancel.action = #selector(cancelWork)
@@ -110,10 +111,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         seek.target = self; seek.action = #selector(scrubWholeSong)
         seek.isContinuous = true
         seek.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let transport = row([play, seek, timeLabel])
+        let transport = row([seek, play, timeLabel])
         progress.style = .bar; progress.isIndeterminate = false; progress.maxValue = 1
         progress.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        let output = row([export, NSTextField(labelWithString: "\(VideoExporter.width) × \(VideoExporter.height) · \(VideoExporter.fps)fps · H.264 / AAC"), progress, cancel])
+        let outputFormat = NSTextField(labelWithString: "\(VideoExporter.width) × \(VideoExporter.height) · \(VideoExporter.fps)fps · H.264 / AAC")
+        manageAssets.target = placementEditor.visuals
+        manageAssets.action = #selector(VisualEditor.openManager)
+        let projectSettings = placementEditor.projectSettings
+        projectSettings.orientation = .vertical
+        projectSettings.alignment = .leading
+        projectSettings.spacing = 12
+        let sections = [
+            InspectorSection("音声", id: "project.audio", rows: [audioSelection, audioName]),
+            InspectorSection("音楽同期", id: "project.timing", rows: [timingControls]),
+            InspectorSection("素材", id: "project.assets", rows: [row([manageAssets])]),
+            InspectorSection("動画出力", id: "project.output", rows: [outputFormat, row([export])])
+        ]
+        for section in sections {
+            projectSettings.addArrangedSubview(section)
+            section.widthAnchor.constraint(equalTo: projectSettings.widthAnchor).isActive = true
+        }
+        let activityControls = row([progress, cancel])
         let timeline = placementEditor.view
         placementEditor.visibleSpan = timelineDisplaySettings.visibleSpan
         placementEditor.snapGrid.division = timelineDisplaySettings.snapDivision
@@ -121,6 +139,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.showsWholeSong = timelineDisplaySettings.showsWholeSong
         placementEditor.onWholeSongChange = { [weak self] value in self?.timelineDisplaySettings.showsWholeSong = value }
         placementEditor.restoreTab(timelineDisplaySettings.visualMode ? .visuals : .lyrics)
+        preview.showsBelowMaskGuide = placementEditor.visuals.showsBelowMaskGuide
+        placementEditor.visuals.onBelowMaskGuideChange = { [weak self] in self?.preview.showsBelowMaskGuide = $0 }
         preview.showsMaskGuide = timelineDisplaySettings.visualMode
         placementEditor.onModeChange = { [weak self] value in
             self?.timelineDisplaySettings.visualMode = value
@@ -186,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             self.recordEdit(visuals: value); self.stopPlayback(); self.visualTrack = value; self.previewTrack = value; self.prepareTransients(); self.refreshPreviewFrames(); self.refreshControls(); _ = self.saveProject()
         }
         placementEditor.visuals.onPreview = { [weak self] value in self?.previewTrack = value; self?.refreshPreviewFrames() }
-        installLayout(toolbar: row([files, output]), options: options, transport: transport, timeline: timeline)
+        installLayout(activity: activityControls, transport: transport, timeline: timeline)
         controls = [audioButton, bpm, offset, play, seek, export]
         refreshControls()
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 30, repeats: true) { [weak self] _ in
@@ -197,13 +217,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         if let url = storage.lastProjectURL { openProject(at: url) }
     }
 
-    private func installLayout(toolbar: NSView, options: NSView, transport: NSView, timeline: NSView) {
+    private func installLayout(activity: NSView, transport: NSView, timeline: NSView) {
         let content = NSView()
         window.contentView = content
 
         let workspace = NSView()
         let inspector = placementEditor.inspector
-        for child in [preview, options, inspector] {
+        for child in [preview, inspector] {
             child.translatesAutoresizingMaskIntoConstraints = false
             workspace.addSubview(child)
         }
@@ -228,7 +248,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         }
 
         status.lineBreakMode = .byTruncatingTail
-        let root = NSStackView(views: [toolbar, workspace, divider, transport, timeline, status])
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let root = NSStackView(views: [workspace, divider, transport, timeline, row([status, activity])])
         root.orientation = .vertical
         root.distribution = .fill
         root.spacing = 12
@@ -249,10 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
             preview.leadingAnchor.constraint(equalTo: workspace.leadingAnchor),
             preview.topAnchor.constraint(equalTo: workspace.topAnchor),
             preview.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -20),
-            preview.bottomAnchor.constraint(equalTo: options.topAnchor, constant: -8),
-            options.leadingAnchor.constraint(equalTo: preview.leadingAnchor),
-            options.trailingAnchor.constraint(equalTo: preview.trailingAnchor),
-            options.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
+            preview.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
             inspector.topAnchor.constraint(equalTo: workspace.topAnchor),
             inspector.trailingAnchor.constraint(equalTo: workspace.trailingAnchor),
             inspector.bottomAnchor.constraint(equalTo: workspace.bottomAnchor),
@@ -650,6 +668,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate, N
         placementEditor.setAvailable(hasAudio: player != nil, isBusy: !enabled)
         for control in controls { control.isEnabled = enabled }
         play.isEnabled = enabled && player != nil; seek.isEnabled = enabled && player != nil
+        manageAssets.isEnabled = enabled && player != nil
         export.isEnabled = enabled && preview.features != nil
     }
     private func showError(_ error: Error) { status.stringValue = "エラー: " + error.localizedDescription; let alert = NSAlert(error: error); alert.beginSheetModal(for: window) }

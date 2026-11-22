@@ -10,7 +10,6 @@ final class EffectChainList: NSView {
         }
     }
     var selectedID: UUID? { didSet { needsDisplay = true } }
-    var detailsOpen = true
     var editable = false {
         didSet {
             if !editable { cancelDrag() }
@@ -102,7 +101,7 @@ final class EffectChainList: NSView {
         }
         let color = node.isEnabled ? NSColor.labelColor : NSColor.secondaryLabelColor
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: color]
-        for (text, x) in [("⠿", 4.0), (node.isEnabled ? "☑" : "☐", 29.0), (selectedID == node.id && detailsOpen ? "▾" : "▸", 52.0)] {
+        for (text, x) in [("⠿", 4.0), (node.isEnabled ? "☑" : "☐", 29.0)] {
             (text as NSString).draw(at: NSPoint(x: rect.minX + x, y: rect.minY + 5), withAttributes: attributes)
         }
         let paragraph = NSMutableParagraphStyle()

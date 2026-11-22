@@ -91,8 +91,11 @@ fragment float4 coloredShape(Quad in [[stage_in]], constant ShapeUniforms &shape
 }
 
 fragment float4 maskedClip(Quad in [[stage_in]], texture2d<float> image [[texture(0)]],
-                           constant ShapeUniforms &shape [[buffer(0)]]) {
-    return image.sample(linearSampler, in.uv) * maskFactor(in.uv * float2(1920, 1080), shape);
+                           constant ShapeUniforms &shape [[buffer(0)]],
+                           constant ShapeUniforms &nextShape [[buffer(1)]], constant float &blend [[buffer(2)]]) {
+    float2 point = in.uv * float2(1920, 1080);
+    float factor = mix(maskFactor(point, shape), maskFactor(point, nextShape), blend);
+    return image.sample(linearSampler, in.uv) * factor;
 }
 
 fragment float4 maskGuide(Quad in [[stage_in]], constant ShapeUniforms &shape [[buffer(0)]]) {

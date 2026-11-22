@@ -189,10 +189,10 @@ final class LFOAutomationTests: XCTestCase {
         }
         c=clip(); var item=try XCTUnwrap(c.automation(.scale)); item.lfo?.beatsPerCycle.denominator=0; c.setAutomation(item)
         var ids=Set<UUID>(); XCTAssertThrowsError(try c.validateAnimation(ids:&ids))
-        let path=try XCTUnwrap(Bundle.module.url(forResource:"v17",withExtension:"json",subdirectory:"Fixtures/Projects"))
+        let path=try XCTUnwrap(Bundle.module.url(forResource:"v18",withExtension:"json",subdirectory:"Fixtures/Projects"))
         var root=try XCTUnwrap(JSONSerialization.jsonObject(with:Data(contentsOf:path)) as? [String:Any])
         var layers=root["visualLayers"] as! [[String:Any]]; var clips=layers[0]["clips"] as! [[String:Any]]
-        clips[0]["automations"]=[]; layers[0]["clips"]=clips; root["visualLayers"]=layers
+        clips[0]["curves"]=[]; layers[0]["clips"]=clips; root["visualLayers"]=layers
         XCTAssertThrowsError(try ProjectMigrator.read(JSONSerialization.data(withJSONObject:root),at:URL(fileURLWithPath:"/tmp/lfo.mvproject")))
     }
     @MainActor func testInspectorDragCancelModeSwitchGraphSelectionAndHistory() throws {

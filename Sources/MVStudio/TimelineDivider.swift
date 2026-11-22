@@ -17,10 +17,10 @@ final class TimelineDivider: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.separatorColor.setFill()
+        NSColor(srgbRed: 0.30, green: 0.65, blue: 0.85, alpha: 0.65).setFill()
         NSRect(x: 0, y: bounds.midY - 0.5, width: bounds.width, height: 1).fill()
 
-        NSColor.tertiaryLabelColor.setFill()
+        NSColor(srgbRed: 0.65, green: 0.90, blue: 1.00, alpha: 1).setFill()
         NSBezierPath(roundedRect: NSRect(x: bounds.midX - 14, y: bounds.midY - 1.5, width: 28, height: 3),
                      xRadius: 1.5, yRadius: 1.5).fill()
     }

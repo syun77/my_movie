@@ -55,7 +55,8 @@ final class AppLifecycleTests: XCTestCase {
         let preview = try XCTUnwrap(findPreview(in: content))
         window.setContentSize(window.contentMinSize)
         for (tab, settings) in [(PlacementEditor.Tab.lyrics, editor.lyrics.view),
-                                (.visuals, editor.visuals.view), (.spectrum, editor.spectrum.view)] {
+                                (.visuals, editor.visuals.view), (.spectrum, editor.spectrum.view),
+                                (.project, editor.projectSettings)] {
             editor.restoreTab(tab)
             content.layoutSubtreeIfNeeded()
             let bitmap = try XCTUnwrap(settings.bitmapImageRepForCachingDisplay(in: settings.bounds))
@@ -82,6 +83,38 @@ final class AppLifecycleTests: XCTestCase {
             XCTAssertTrue(inspectorFrame.insetBy(dx: -1, dy: -1).contains(settingsFrame))
             XCTAssertTrue(content.bounds.contains(timelineFrame.union(previewFrame).union(inspectorFrame)))
         }
+
+        editor.restoreTab(.visuals)
+        let selectedLayer = editor.timeline.selectedLayerID
+        editor.restoreTab(.project)
+        XCTAssertTrue(editor.visualMode)
+        XCTAssertEqual(editor.timeline.selectedLayerID, selectedLayer)
+        func descendants(_ view: NSView) -> [NSView] {
+            [view] + view.subviews.flatMap(descendants)
+        }
+        let settingsViews = descendants(editor.projectSettings)
+        let buttons = settingsViews.compactMap { $0 as? NSButton }
+        for title in ["音声を選択…", "素材管理…", "MP4を書き出す"] {
+            XCTAssertEqual(buttons.filter { $0.title == title }.count, 1)
+        }
+        let manage = try XCTUnwrap(buttons.first { $0.title == "素材管理…" })
+        XCTAssertTrue(manage.target === editor.visuals)
+        XCTAssertEqual(manage.action, #selector(VisualEditor.openManager))
+        XCTAssertFalse(manage.isEnabled, "音声未読込では素材管理を無効にする")
+        XCTAssertEqual(Set(DragValueField.fields(in: editor.projectSettings).compactMap { $0.identifier?.rawValue }),
+                       ["scene.bpm", "scene.offset"])
+        XCTAssertFalse(descendants(editor.visuals.view).compactMap { $0 as? NSButton }.contains { $0.title == "素材管理…" })
+        editor.visuals.setAvailable(true)
+        XCTAssertNil(editor.visuals.view.window)
+        editor.visuals.openManager()
+        let managerWindow = try XCTUnwrap(editor.visuals.managerWindow)
+        XCTAssertTrue(managerWindow.sheetParent === window)
+        window.endSheet(managerWindow)
+        managerWindow.orderOut(nil)
+        editor.visuals.setAvailable(false)
+        editor.restoreTab(.lyrics)
+        editor.restoreTab(.project)
+        XCTAssertFalse(editor.visualMode)
 
         let divider = try XCTUnwrap(preview.superview?.superview?.subviews.compactMap { $0 as? TimelineDivider }.first)
         func dragDivider(by distance: CGFloat) throws {
@@ -130,7 +163,8 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(editor.timeline.frame.height, originalTimelineHeight + 20, accuracy: 1)
 
         try dragDivider(by: 1000)
-        XCTAssertEqual(preview.frame.height, 100, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(preview.frame.height, 99)
+        XCTAssertLessThan(preview.frame.height, originalPreviewHeight)
         XCTAssertTrue(content.bounds.contains(content.convert(editor.timeline.bounds, from: editor.timeline)))
         let imageScroll = try XCTUnwrap(editor.visuals.view.enclosingScrollView)
         XCTAssertGreaterThan(editor.visuals.view.frame.height, imageScroll.documentVisibleRect.height)

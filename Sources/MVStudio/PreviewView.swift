@@ -5,6 +5,7 @@ import MetalKit
 final class PreviewView: NSView, MTKViewDelegate {
     var guideClipID: UUID? { didSet { if oldValue != guideClipID { invalidateFrame() } } }
     var showsMaskGuide = false { didSet { if oldValue != showsMaskGuide { invalidateFrame() } } }
+    var showsBelowMaskGuide = true { didSet { if oldValue != showsBelowMaskGuide { invalidateFrame() } } }
     var visuals: [VisualRenderLayer] = []
     var features: AudioFeatures?
     var settings = SceneSettings()
@@ -82,7 +83,7 @@ final class PreviewView: NSView, MTKViewDelegate {
         if let spectrumLayoutPreview { displaySettings.spectrumStyle.layout = spectrumLayoutPreview }
         do {
             let commands = try renderer.encode(visuals: visuals, features: features, settings: displaySettings, lyrics: lyrics,
-                                               time: renderedTime, target: drawable.texture, video: false, guideClipID: showsMaskGuide ? guideClipID : nil)
+                                               time: renderedTime, target: drawable.texture, video: false, guideClipID: showsMaskGuide ? guideClipID : nil, showsBelowMaskGuide: showsBelowMaskGuide)
             inFlight = true
             commands.addCompletedHandler { [weak self] buffer in
                 let failed = buffer.status != .completed

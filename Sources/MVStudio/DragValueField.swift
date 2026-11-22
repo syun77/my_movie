@@ -67,6 +67,8 @@ final class DragValueField: NSTextField {
     @objc private func editMusic() { if isEnabled { onEditMusic?() } }
     @objc private func removeMusic() { if isEnabled { onRemoveMusic?() } }
 
+    var isNumberInteractionActive: Bool { mouseStart != nil || currentEditor() != nil }
+
     private var mouseStart: NSPoint?
     private var previousMouse: NSPoint?
     private var verticalDrag = false

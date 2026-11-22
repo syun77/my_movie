@@ -56,7 +56,7 @@
 
 ## 保存・実装と受入条件
 
-ImageEffects.straightLinesへ設定・seed・phaseOffsetを保存する。未追加はnil、有効切替は設定保持、削除はキー・音楽同期・表示範囲も削除する。既存の自動保存・Undo/Redo・コピーを共有し、コピーはseedを保持してキーIDを再発行する。ProjectFile version20へ保存し、設定未追加のファイルはnilとして読み込む。
+ImageEffects.straightLinesへ設定・seed・phaseOffsetを保存する。未追加はnil、有効切替は設定保持、削除はキー・音楽同期・表示範囲も削除する。既存の自動保存・Undo/Redo・コピーを共有し、コピーはseedを保持してキーIDを再発行する。ProjectFile version21へ保存し、設定未追加のファイルはnilとして読み込む。
 
 StraightLines.swiftに決定的な属性・座標評価、EffectAutomationに数値定義、既存エディターにUI、Metal共通レンダラーに描画を持つ。放射状集中線とは設定モデルを分け、共通化は時計や線描画で実際に重複する部分に限る。
 

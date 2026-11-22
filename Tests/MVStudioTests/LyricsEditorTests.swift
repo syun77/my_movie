@@ -3,6 +3,51 @@ import AppKit
 @testable import MVStudio
 
 final class LyricsEditorTests: XCTestCase {
+    @MainActor func testGlowColorControlCommitsAndRestores() throws {
+        let editor = LyricsEditor()
+        _ = editor.view
+        editor.setAvailable(true)
+        func find(_ view: NSView) -> NSColorWell? {
+            if view.identifier?.rawValue == "lyrics.glowColor" { return view as? NSColorWell }
+            return view.subviews.lazy.compactMap { find($0) }.first
+        }
+        let well = try XCTUnwrap(find(editor.view))
+        var saved = [LyricsTrack]()
+        editor.onChange = { saved.append($0) }
+        well.color = .red
+        XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(well.action), to: well.target, from: well))
+        XCTAssertEqual(editor.track.glowColor, RGBColor(red: 1, green: 0, blue: 0))
+        XCTAssertEqual(editor.track.outlineColor, .black)
+        XCTAssertEqual(saved.count, 1)
+        var restored = editor.track
+        restored.glowColor = RGBColor(red: 0, green: 0, blue: 1)
+        editor.restore(restored)
+        XCTAssertEqual(RGBColor(well.color), restored.glowColor)
+        editor.setAvailable(false)
+        XCTAssertFalse(well.isEnabled)
+    }
+
+    @MainActor func testGlowWidthEditingAndReset() throws {
+        let editor = LyricsEditor()
+        _ = editor.view
+        editor.setAvailable(true)
+        func find(_ view: NSView) -> DragValueField? {
+            if view.identifier?.rawValue == "lyrics.glowWidth" { return view as? DragValueField }
+            return view.subviews.lazy.compactMap { find($0) }.first
+        }
+        let field = try XCTUnwrap(find(editor.view))
+        var changes = 0
+        editor.onChange = { _ in changes += 1 }
+        field.stringValue = "24"
+        editor.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: field))
+        XCTAssertEqual(editor.track.glowWidth, 24)
+        XCTAssertEqual(editor.track.outlineWidth, 3)
+        XCTAssertEqual(changes, 1)
+        XCTAssertTrue(field.resetValue())
+        XCTAssertEqual(editor.track.glowWidth, 0)
+        XCTAssertEqual(changes, 2)
+    }
+
     @MainActor func testAutomaticTextAndTimeChangesPreserveEditingState() throws {
         let editor = LyricsEditor()
         _ = editor.view

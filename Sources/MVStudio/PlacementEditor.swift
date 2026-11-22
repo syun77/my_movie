@@ -3,12 +3,13 @@ import AppKit
 @MainActor
 final class PlacementEditor: NSViewController {
     enum Tab: Int {
-        case lyrics, visuals, spectrum
+        case lyrics, visuals, spectrum, project
     }
 
     let lyrics = LyricsEditor()
     let visuals = VisualEditor()
     let spectrum = SpectrumEditor()
+    let projectSettings = NSStackView()
     var timeline: TimelineView { lyrics.timeline }
     var onVisibleSpanChange: ((Double) -> Void)?
     var onSnapDivisionChange: ((TimelineSnapDivision) -> Void)?
@@ -16,7 +17,7 @@ final class PlacementEditor: NSViewController {
     var onTabChange: (() -> Void)?
     var onModeChange: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
-    private let tabs = NSSegmentedControl(labels: ["歌詞", "クリップ", "スペクトラム"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["歌詞", "クリップ", "スペクトラム", "プロジェクト設定"], trackingMode: .selectOne, target: nil, action: nil)
     private let zoom = NSSlider(value: TimelineDisplaySettings.defaultSpan, minValue: TimelineDisplaySettings.spanRange.lowerBound, maxValue: TimelineDisplaySettings.spanRange.upperBound, target: nil, action: nil)
     private let zoomLabel = NSTextField(labelWithString: "12.0秒")
     private let wholeSong = NSButton(checkboxWithTitle: "曲全体", target: nil, action: nil)
@@ -72,7 +73,7 @@ final class PlacementEditor: NSViewController {
         tabs.target = self; tabs.action = #selector(changePlacementMode); tabs.selectedSegment = 0
         tabs.identifier = NSUserInterfaceItemIdentifier("placement.mode")
         tabs.setToolTip("画像・動画・Spine・演出用クリップ", forSegment: 1)
-        tabs.setAccessibilityLabel("歌詞・クリップ・スペクトラムの編集切替")
+        tabs.setAccessibilityLabel("歌詞・クリップ・スペクトラム・プロジェクト設定の切替")
         zoom.target = self; zoom.action = #selector(changeZoom)
         wholeSong.target = self; wholeSong.action = #selector(changeWholeSong)
         wholeSong.identifier = NSUserInterfaceItemIdentifier("timeline.wholeSong")
@@ -102,6 +103,8 @@ final class PlacementEditor: NSViewController {
         inspector.addArrangedSubview(tabs)
         inspector.addArrangedSubview(visuals.inspectionHeader)
         visuals.inspectionHeader.widthAnchor.constraint(equalTo: inspector.widthAnchor).isActive = true
+        inspector.addArrangedSubview(visuals.filterBar)
+        visuals.filterBar.widthAnchor.constraint(equalTo: inspector.widthAnchor).isActive = true
         inspector.addArrangedSubview(inspectorScroll)
         inspectorScroll.hasVerticalScroller = true
         inspectorScroll.scrollerStyle = .overlay
@@ -125,8 +128,9 @@ final class PlacementEditor: NSViewController {
         if selectedTab == .spectrum && tab != .spectrum { spectrum.endColorEditing() }
         selectedTab = tab
         visuals.inspectionHeader.isHidden = tab != .visuals
+        visuals.filterBar.isHidden = tab != .visuals
         tabs.selectedSegment = tab.rawValue
-        if tab != .spectrum {
+        if tab == .lyrics || tab == .visuals {
             timeline.visualMode = tab == .visuals
             updatePreferredTimelineHeight()
         }
@@ -135,6 +139,7 @@ final class PlacementEditor: NSViewController {
         case .lyrics: child = lyrics.view
         case .visuals: child = visuals.view
         case .spectrum: child = spectrum.view
+        case .project: child = projectSettings
         }
         inspectorDocument.subviews.first?.removeFromSuperview()
         child.translatesAutoresizingMaskIntoConstraints = false
@@ -192,7 +197,7 @@ final class PlacementEditor: NSViewController {
             return
         }
         restoreTab(tab)
-        if tab != .spectrum { onModeChange?(visualMode) }
+        if tab == .lyrics || tab == .visuals { onModeChange?(visualMode) }
     }
     private func updateDisplayRange() {
         wheelZoomTimer?.invalidate()
@@ -397,6 +402,7 @@ final class PlacementEditor: NSViewController {
         for field in DragValueField.fields(in: inspector) { field.cancelNumberDrag() }
     }
     func finishEditing() -> Bool {
+        if selectedTab == .project { return projectSettings.window?.makeFirstResponder(nil) ?? true }
         if selectedTab == .spectrum { return spectrum.finishEditing() }
         return visualMode ? visuals.finishEditing() : lyrics.finishEditing()
     }

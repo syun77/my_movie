@@ -1,3 +1,249 @@
+# 項目選択時のスクロール（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 「項目を選んで編集…」で基本パラメータを選んだときも編集欄へスクロールする。
+- 実装/整理: メニューの選択アクションに基本項目のレイアウト確定と編集欄へのスクロールを追加。共通選択処理には追加せず、ノブ操作やタイムライン選択への影響を避ける。既存の未コミット変更は保持。
+- 変更: VisualEditor.swift、InspectorFilterTests.swift、docs/CLIP_INSPECTOR.md、AGENTS.md、PROGRESS.md。
+- 検証: InspectorFilterTests全11件成功（/tmp/my-movie-picker-scroll-tests.log）。画面下部からの基本項目選択とモデル不変を確認。git diff --check成功。
+- ビルド: 制限環境のdsymutil失敗後、許可環境で./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-picker-scroll-build.log）。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# 項目選択ドロップダウンの説明（完了）
+
+- 最終更新: 2026-11-23 JST。要件: クリップタブの「項目を選んで編集…」の役割を確認。
+- 確認結果: 変更のみ表示で隠れた項目を一時表示する編集入口。選択だけでは値を変更しない。素材・再生設定と演出全項目の表示入口も含む。
+- 確認: VisualEditor.swiftのrefreshFilterとdocs/CLIP_INSPECTOR.md。コード変更・実行中処理・障害なし。変更ファイルはPROGRESS.mdのみ。ビルド不要。
+- 次: ユーザーへ役割を説明する。
+
+# チェーンのバイパス配置（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 「チェーンをバイパス」を「＋ 演出を追加」の隣へ移動。
+- 方針: 既存コントロールを見出し行へ移し、不要な単独行追加ループを整理する。
+- 実装/整理: 見出し行を「追加演出・追加ボタン・バイパス・区間外表示」の順へ変更。単独要素になった一覧追加ループを直接追加へ整理。
+- 変更: ImageEffectsEditor.swift、docs/CLIP_INSPECTOR.md、AGENTS.md、PROGRESS.md。
+- 検証: AppLifecycleTests/InspectorFilterTests計13件すべて成功（/tmp/my-movie-bypass-header-tests.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-bypass-header-build.log）。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# 演出パラメータの表示維持（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 演出チェーンの同じ演出をクリックしてもパラメータを閉じない。
+- 方針: 選択演出の詳細は常時表示し、不要な開閉状態と矢印を除去。既存変更を保持。
+- 実装/整理: ImageEffectsEditor/EffectChainListの開閉状態と矢印・表示分岐を削除。関連テストとdocs/EFFECT_CHAIN、EFFECT_CHAIN_DRAG、AGENTSを現仕様へ更新。
+- 変更: ImageEffectsEditor.swift、EffectChainList.swift、EffectChainDragTests.swift、EffectCategoryTests.swift、docs/EFFECT_CHAIN.md、docs/EFFECT_CHAIN_DRAG.md、AGENTS.md、PROGRESS.md。
+- 検証: 関連18件＋カテゴリ/再クリック回帰試験3件すべて成功（/tmp/my-movie-effect-details-tests.log、/tmp/my-movie-effect-details-category-tests.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功、最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-effect-details-build.log）。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# 再生・停止ボタンの移動（完了）
+
+- 最終更新: 2026-11-23 JST。要件: シークバーの右、現在時間/トータル時間の左へ再生・停止ボタンを移動。
+- 現在: App.swiftのtransport行で順序を指定していることを確認。既存の未コミット変更を保持し、配置だけ修正する。
+- 実装/整理: transportの既存コントロールの順序だけを変更。重複や不要コードは追加せず、既存の再生/シーク経路を共有。AGENTSへ配置仕様を記録。
+- 検証: AppLifecycleTests 2件成功（/tmp/my-movie-transport-tests.log）。git diff --check成功。
+- ビルド: 制限環境のdsymutil権限エラー後、許可環境で./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-transport-build.log）。
+- 変更: App.swift、AGENTS.md、PROGRESS.md。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# 追加演出の操作配置（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 追加演出の有効/削除ボタンを廃止し、演出を追加だけ見出し横へ移動。
+- 実装/整理: 追加ボタンを見出しと同じ行へ移動し、有効/削除ボタン・専用アクション・状態更新・旧ツールバーを削除。チェーンの切替/削除経路は維持。既存変更を保持。
+- 変更: ImageEffectsEditor.swift、docs/CLIP_INSPECTOR.md、AGENTS.md、PROGRESS.md。
+- 検証: InspectorFilterTests/AppLifecycleTests/EffectChainTests計24件すべて成功（/tmp/my-movie-effects-header-tests.log）。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-effects-header-build.log）。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# クリップ出力の説明削除（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 追加演出の「↓ クリップ出力（不透明度）」を削除。
+- 実装/整理: 説明ラベルの定義と配置参照を削除。仕様書・AGENTSも更新し、不要な参照がないことを確認。既存変更を保持。
+- 変更: ImageEffectsEditor.swift、docs/EFFECT_CHAIN.md、AGENTS.md、PROGRESS.md。
+- 検証: git diff --check成功。表示ラベルのみの削除のためテスト追加なし。
+- ビルド: ./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-remove-output-label-build.log）。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。実行中処理・今回の未解決障害なし。
+
+# 追加演出の見出し整理（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 追加演出の全体折りたたみを廃止し「追加演出」の見出しだけにする。「素材・基本変形 ↓ 上から下へ適用」を削除。
+- 実装/整理: 見出しをラベル化し、全体の開閉状態・操作・表示分岐を削除。演出個別の詳細開閉は維持。既存変更を保持。
+- 変更: ImageEffectsEditor.swift、ShapeTests.swift、UndoTests.swift、docs/CLIP_INSPECTOR.md、docs/EFFECT_CHAIN.md、AGENTS.md、PROGRESS.md。
+- ビルド: 制限環境のdsymutil権限エラー後、許可環境で./scripts/build-app.sh成功。最新dist/MV Studio.app生成・署名済み（/tmp/my-movie-effects-heading-build.log）。
+- 検証: 関連32件中30件成功。ShapeTestsの旧「直下段のマスクを設定」ボタン参照とUndoTestsの旧scene.bpm参照の2件は既存UI変更との不一致で失敗（/tmp/my-movie-effects-heading-tests.log）。Metal関連の制限環境エラーは許可環境で解消。git diff --check成功。
+- 次: 最新アプリを再起動して利用する。手動GUI未確認。上記の既存テスト参照不一致が残る。実行中処理なし。
+
+# 直下段マスクのガイド表示切替（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 直下段マスクにアウトライン表示チェックボックスを追加。
+- 方針: 初期ONのプレビュー専用UI状態とし、保存モデル/MP4/マスク効果から独立させる。
+- 実装/整理: 独立カテゴリにチェックボックスを追加し、既存編集通知と分けてPreviewViewのフレーム無効化へ接続。MetalSceneRendererで直下段ガイドだけを切り替える。状態は起動時ON、マスク設定/履歴/MP4と独立。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-mask-guide-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 検証: EffectChainTests/AppLifecycleTests/InspectorFilterTests計24件成功（/tmp/my-movie-mask-guide-tests.log）。初期ON/ON-OFF通知/モデル非変更の回帰試験を追加。git diff --check成功。
+- 変更: ImageEffectsEditor/VisualEditor/App/PreviewView/MetalSceneRenderer、EffectChainTests、docs/SHAPES_AND_MASKS、AGENTS、PROGRESS。
+- 次: 最新アプリを再起動してチェックボックスを利用する。手動GUI確認は未実施。実行中処理・未解決障害なし。
+
+# マスクガイドのMP4出力確認（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 直下段マスクのアウトラインがMP4に表示されるか確認。
+- 確認: MetalSceneRendererは!video時だけguidePipelineでガイドを描画。VideoExporterはvideo: trueで呼び出すためアウトラインは出力しない。マスク効果そのものは出力する。仕様書とも一致。
+- コード変更なし、ビルド不要。実MP4の追加検証は未実施。実行中処理・障害なし。次: 確認結果を回答する。
+
+# 直下段マスク寸法の表示倍率（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 幅/高さの表示を内部値の1/10にし、操作増分を内部値で10倍にする。
+- 方針: numericの既存10倍単位変換を共用。内部px・保存・描画は維持し、表示1単位=10pxにする。
+- 実装/整理: numericの既存10倍単位変換へbelowMaskWidth/Heightを追加。重複変換は作らず、直接入力/ドラッグ/初期化/範囲を共有。仕様とAGENTS更新。
+- 検証: EffectChainTests/InspectorFilterTests計22件成功（/tmp/my-movie-mask-size-tests.log）。表示1/10・通常ドラッグ+10px・直接入力×10・初期化を確認。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-mask-size-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 変更: ImageEffectsEditor.swift、EffectChainTests.swift、docs/SHAPES_AND_MASKS.md、AGENTS、PROGRESS。既存変更を保持。
+- 次: 最新アプリを再起動し、直下段マスクの幅/高さを操作する。手動GUI確認は未実施。実行中処理・未解決障害なし。
+
+# 直下段マスクのカテゴリ移動（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 追加演出内の直下段マスクをクリップタブ最下部の独立カテゴリへ移動。
+- 方針: 既存の設定・数値・自動化・保存経路を共有し、表示先と有効/削除操作を分離する。既存変更を保持。
+- 実装/整理: belowMaskSectionをVisualEditorの最終カテゴリとして配置。既存数値欄を移動し、有効/削除を専用操作へ分離。チェーン出力のマスク表示を除去し、項目ジャンプ先も独立カテゴリへ更新。README/仕様/AGENTSを更新。
+- 検証: 最終整理後のEffectChainTests/VisualEditorTests/AppLifecycleTests/InspectorFilterTests計28件成功（/tmp/my-movie-mask-category-tests.log）。独立表示・有効/削除の回帰試験を追加。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-mask-category-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 変更: ImageEffectsEditor.swift、VisualEditor.swift、EffectChainTests.swift、README、docs/SHAPES_AND_MASKS.md、docs/EFFECT_CHAIN.md、docs/CLIP_INSPECTOR.md、AGENTS、PROGRESS。
+- 次: 最新アプリを再起動し、クリップタブ最下部の「直下段のマスク」を利用する。手動GUI確認は未実施。実行中処理・未解決障害なし。
+
+# マスク操作の違いの確認（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 直下段マスクと「演出を追加 > このクリップのマスク」の重複有無を確認。
+- 確認: ImageEffectsEditor/EffectChainとdocs/SHAPES_AND_MASKS.mdを照合。前者は直下1段の完成結果、後者は自クリップのチェーン内でその位置までの結果に作用。独立して併用可能。表示名は「最下段」ではなく「直下段」。
+- コード変更なし、ビルド不要。次: 違いを説明し、UI変更は追加指示時に実施する。未解決障害・実行中処理なし。
+
+# 素材と配置のレイヤー欄削除（完了）
+
+- 最終更新: 2026-11-23 JST。要件: レイヤー選択欄を削除し、上下ドラッグで段移動する。
+- 実装/整理: レイヤー欄・候補生成・選択同期を削除。時刻確定はapplyTimingEditへ改名し所属段を維持。1行だけになった時刻欄の不要な縦コンテナを除去。仕様書/AGENTS更新、既存変更を保持。
+- 検証: 整理後VisualEditorTests/AppLifecycleTests/VariableLayerTests/VisualTrackTests計20件成功（/tmp/my-movie-remove-layer-field-tests.log）。上下ドラッグの時刻維持/衝突拒否/取消を含む。git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-remove-layer-field-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 変更: VisualEditor.swift、docs/CLIP_INSPECTOR.md、docs/IMAGE_TIMELINE.md、docs/VARIABLE_VISUAL_LAYERS.md、AGENTS、PROGRESS。
+- 次: 最新アプリを再起動して利用する。手動GUI確認は未実施。実行中処理・未解決障害なし。
+
+# 素材と配置の操作メニュー（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 見出し横の三メニューへ配置/削除/素材変更を集約。
+- 調査: 配置操作はchooseImage/importFileへ接続済みで未使用ではないため維持。既存未コミット変更を保持。
+- 実装/整理: InspectorSection.headingAccessoryを追加し、3操作をプルダウンへ移動。不要なボタン行・ボタン参照を削除し、編集可否をメニュー項目へ反映。README/仕様/AGENTS更新。
+- 検証: VisualEditorTests/AppLifecycleTests計6件成功（/tmp/my-movie-placement-menu-tests.log）。制限環境のペーストボード失敗は許可環境で解消。git diff --check成功。
+- ビルド: 制限環境のdsymutil失敗後、許可環境で./scripts/build-app.sh成功（/tmp/my-movie-placement-menu-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 変更: VisualEditor.swift、InspectorSection.swift、README、docs/IMAGE_TIMELINE.md、docs/CLIP_INSPECTOR.md、AGENTS、PROGRESS。
+- 未実施: 手動GUIでのメニュー選択。実行中処理・未解決障害なし。次: 最新アプリを再起動して見出し横の三メニューを利用する。
+
+# プロジェクト設定タブ（完了）
+
+- 最終更新: 2026-11-23 JST。要件: BPM・拍開始・素材管理・音声選択（「温泉選択」と解釈）・MP4出力を設定タブへ集約。
+- 方針: 右インスペクターへ4番目のタブを追加し、直前のタイムラインを保持。出力形式も移動し、進捗/キャンセルは全タブで表示。
+- 現状: 構成と既存変更を確認。素材管理は取り外されたクリップview.windowに依存するため、共通timeline.windowで開くよう修正する。
+- 完了: 4番目の設定タブ、4カテゴリへの操作移動、共通領域整理、素材管理のシート親修正、README/ARCHITECTURE/AGENTS更新。
+- 整理: 既存InspectorSectionと数値欄/保存/履歴経路を再利用し、旧素材管理ボタン・共通設定列を除去。操作群の命名を用途に合わせた。
+- 検証: 関連8件成功（AppLifecycleTests/VisualEditorTests/DragValueFieldTests、/tmp/my-movie-project-settings-tests.log）。4タブの最小配置、選択/タイムライン維持、設定タブからの素材管理シート表示、数値欄を確認。制限環境のペーストボード試験失敗はmacOSサービスへアクセス可能な環境で解消。最小高さの試験はプレビューとインスペクター両方の最小サイズを許容するよう更新。
+- 最終検証: 整理後AppLifecycleTests 2件成功（/tmp/my-movie-project-settings-final-tests.log）。設定画面PNGを目視確認（/tmp/my_movie-knob-project.png）。数値入力確定はスペクトラムと同じフォーカス解除経路へ整理。
+- ビルド: 制限環境のdsymutil失敗後、許可環境で./scripts/build-app.sh成功（/tmp/my-movie-project-settings-build.log）。最新dist/MV Studio.app生成、署名検証・git diff --check成功。
+- 変更: App.swift、PlacementEditor.swift、VisualEditor.swift、AppLifecycleTests.swift、README、docs/ARCHITECTURE.md、AGENTS、PROGRESS。既存未コミット変更を保持。
+- 未実施: 実音声による手動GUI/MP4出力（出力実装の変更なし）。実行中処理・未解決障害なし。次: 最新アプリを再起動して「プロジェクト設定」タブを利用する。
+
+# 同一レイヤーのクロスフェード（完了）
+
+- 最終更新: 2026-11-23 JST。要件: 重なり全体で透過ブレンドと対称S字の交差線。画像/動画/Spine/空クリップ、順方向ペアのみ、保存v21/読込v18〜21。
+- 実装完了: LayerCrossfadeの区間検証/係数、同段2ソース取得、完成RGBA加重和、所有マスク混合、交差線・左右選択/端トリム・ツールチップ・仮変更/取消、v21移行。既存未コミット変更は保持。
+- 整理完了: PreparedLayerとcomposeへ段合成を分離。動画sourceキャッシュをクリップ別へ整理。追加中間面は全段共通1枚を順次再利用しGPU完了まで保持。文字の表示範囲を重なり中央で分割。
+- 変更: LayerCrossfade.swift/CrossfadeTests.swift/v21.json新規、VisualTrack/VisualEditor/TimelineView/MetalSceneRenderer/Scene.metal/ProjectFile/ProjectMigrator、既存配置/移行/LFO/演出試験、README/関連仕様/AGENTS/PROGRESS。
+- 検証: 関連62件成功（/tmp/my-movie-crossfade-related.log）。整理後34件は外部Spineサンプル未指定1件skip・失敗なし（/tmp/my-movie-crossfade-final-tests.log）。最終調整後17件成功（/tmp/my-movie-crossfade-polish-tests.log、新規CrossfadeTestsは11件）。
+- 確認内容: 配置・係数・履歴・保存/移行、RGBA/透過/加算光の画素比較、段間マスク、操作/取消、両動画の独立時計、4種類の混在素材、2動画MP4全12フレーム一致、50段100有効クリップの検証。交差線の描画PNGを目視確認（/tmp/my-movie-crossfade-timeline.png）。
+- ビルド: 初回は制限環境のdsymutilで失敗後、許可環境で./scripts/build-app.sh成功（/tmp/my-movie-crossfade-build.log）。最終コードから最新dist/MV Studio.appを生成。署名検証・同梱シェーダー一致・git diff --check成功。
+- 未検証: 実ユーザー素材での手動GUI、長時間/50段同時描画の性能。3段480x270混合はCPU約3.8ms/GPU約2.4ms、追加面1,036,800bytes。外部Spine受入サンプルは未指定。
+- 次: 最新アプリを再起動し、同じ段のクリップを前後に重ねて利用する。未解決障害・実行中の処理なし。
+
+# 歌詞の光彩色（完了）
+
+- 最終更新: 2026-11-22 JST。要件: 歌詞の光彩の色を指定可能にする。
+- 方針: 光彩カテゴリへ色選択を追加し、glowColorを保存/プリセット/共通描画へ接続。未指定は白。既存変更は保持。
+- 完了: LyricsTrack/LyricsStyle.glowColor、光彩色UI、旧JSONの白補完、共通描画へ接続。プリセット適用時は色パネルを解除し、復元時の色欄も同期。
+- 整理: 既存RGBColor・LyricsStyleキャッシュ・変更通知を共有し、アウトラインの色と独立して保存する。
+- 検証: 関連9件成功（/tmp/my-movie-lyric-glow-color-tests.log）。赤/青の描画像素、モデル/プリセット保存復元、旧JSON、不正色、色欄の通知/復元/無効化を確認。git diff --check成功。
+- 変更: Lyrics.swift、LyricsEditor.swift、LyricsTests.swift、LyricsEditorTests.swift、PresetStoreTests.swift、README、docs/TIMELINE.md、AGENTS、PROGRESS。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-lyric-glow-color-build.log）。最新dist/MV Studio.app生成・署名検証成功。
+- 次: 最新アプリを再起動して「歌詞 → 光彩 → 色」を利用する。手動GUI・MP4の色画素比較は未実施。実行中処理・未解決障害なし。
+
+# 歌詞タイムラインの追加と編集操作（完了）
+
+- 最終更新: 2026-11-22 JST。要件: ダブルクリック/右クリックで歌詞追加、右クリック/⌘Cでコピー、⌘V貼付、⌘D複製。
+- 調査: コピー/貼付/複製はPlacementEditor/StudioWindow/TimelineViewに歌詞対応済み。既存変更を保持し、新規追加を共通の歌詞追加経路へ接続する。
+- 完了: 空白ダブルクリック/右クリックからクリック時刻で歌詞を追加。共通追加処理に集約し、スナップ/区間検証/選択/保存/履歴の既存経路を共有。メニュー表示だけではシークしない。
+- 整理: 時刻指定追加とボタン追加の重複を避け、追加候補判定を共通化。メニュー実行時も編集可否と空白を再確認する。既存コピー/貼付/複製は重複実装せず共有。
+- 検証: 関連24件成功（/tmp/my-movie-lyric-actions-tests.log）。新規イベント試験でダブルクリック/メニュー追加、右クリックコピー、⌘C/V/D、処理中の禁止を確認。既存重なり/曲末拒否とドラッグ/スナップも成功。初回コンパイルのaddClipセレクター曖昧性はヘルパー名を分けて解消。
+- 変更: LyricsEditor.swift、TimelineView.swift、ClipShortcutTests.swift、README、docs/TIMELINE.md、AGENTS、PROGRESS。
+- 最終検証: 整理後のClipShortcutTests 3件成功（/tmp/my-movie-lyric-actions-final-tests.log）。./scripts/build-app.sh成功（/tmp/my-movie-lyric-actions-build.log）、最新dist/MV Studio.app生成済み。署名検証・git diff --check成功。
+- 次: 最新アプリを再起動して歌詞タイムラインの空白ダブルクリック/右クリックを利用する。手動GUIは未実施。実行中処理・未解決障害なし。
+
+# 歌詞の光彩幅（完了）
+
+- 最終更新: 2026-11-22 JST。要件: アウトラインとは独立した光彩（ぼかし）の幅。
+- 方針: 白い光彩、1080p基準0〜50px、初期0。共通数値欄、保存/プリセット/Undo/共通描画へ接続。既存未コミット変更を保持。
+- 完了: モデル/旧JSONの0px補完/プリセット/数値欄/共通描画を接続。整理で既存の編集通知・LyricsStyleキャッシュ・描画経路を共有し重複を抑制。
+- 検証: LyricsTests/LyricsEditorTests/PresetStoreTestsの7件成功（/tmp/my-movie-lyrics-glow-tests.log）。光彩の画素面積、アウトラインとの独立、保存往復、旧JSON、範囲、数値入力/初期化を確認。git diff --check成功。
+- ビルド: 制限環境のdsymutilで失敗後、許可環境で./scripts/build-app.sh成功（/tmp/my-movie-lyrics-glow-build.log）。最新dist/MV Studio.app生成、署名検証成功。実行中処理・未解決障害なし。
+- 次: 最新アプリを再起動し、歌詞の「光彩」で幅を調整する。
+- 変更: Lyrics.swift、LyricsEditor.swift、LyricsTests.swift、LyricsEditorTests.swift、README、docs/TIMELINE.md、AGENTS、PROGRESS。
+- 未実施: 手動GUI・光彩を含むMP4の画素検証。
+
+# 同一レイヤーのクロスフェード（仕様提案完了・未実装）
+
+- 最終更新: 2026-11-22 JST。要件: 同段クリップの重なり時間による透過ブレンドと添付例の交差曲線。実装依頼ではない。
+- 完了: docs/CLIP_CROSSFADE.mdへ区間・対称S字・完成RGBA混合・包含/3重拒否・選択/端操作・取消・マスク・保存v21案・影響範囲・受入条件を記録。
+- 調査: 現行の重複禁止、素材provider、Metalの単一マスク所有者判定、プレビュー静止画再利用、保存v20/読込v17〜20を確認。既存未コミット変更を保持。
+- 整理: 混合率と既存不透明度を分離し、派生区間を保存しない。交差線と映像を共通評価、段間マスクも両所有クリップから評価する仕様へ整理。
+- 変更: docs/CLIP_CROSSFADE.md新規、docs/ARCHITECTURE.md、AGENTS.md、PROGRESS.md。
+- 検証: 仕様を現行コードと照合。文書のみのためコード試験とアプリ生成は対象外。git diff --check成功。
+- 未解決: 実装・実機検証は未着手。対称S字/重複制限などは提案でありユーザー確定要件ではない。実行中処理なし。
+- 次: 実装依頼時は共通配置検証と保存v21境界から着手し、合成・操作・整理・試験後にアプリを生成する。
+
+# プレビューとタイムラインの境界色（完了）
+
+- 最終更新: 2026-11-22 JST。要件: ドラッグ可能な境界ラインを少し目立つ色にする。
+- 状態: AGENTS/PROGRESSとTimelineDividerを確認。既存の未コミット変更を保持。
+- 方針: 境界線を控えめな水色、中央のつまみを明るい水色へ調整する。
+- 変更: Sources/MVStudio/TimelineDivider.swift、PROGRESS.md。
+- 完了: 境界線を半透明の水色、中央つまみを明るい水色へ変更。整理フェーズで描画処理の責務・重複を確認し、色指定2箇所の変更に限定。
+- 検証: git diff --check・署名検証成功。色のみの低影響変更のため新規テストは追加せず、GUI目視は未実施。
+- ビルド: 初回は制限環境のdsymutilで失敗。許可環境で./scripts/build-app.sh成功、最新dist/MV Studio.app生成済み（ログ: /tmp/my-movie-divider-color-build.log）。
+- 次: 最新アプリを再起動して利用する。
+- 未解決障害・実行中処理なし。
+
+# 変更のみ表示のチェックボックス化（完了）
+
+- 最終更新: 2026-11-22 JST。要件: 「変更のみ」のチェックボックスをONで変更項目だけ、OFFですべて表示する。
+- 状態: AGENTS/PROGRESSと前回のフィルター実装を確認。既存未コミット変更を保持。
+- 方針: 既存の判定・保存・編集維持を共有し、切替UIと既存試験・説明を更新する。
+- 完了: 切替UIをNSButtonのチェックボックスへ置換。ON/OFFの判定・保存復元・「すべて表示」操作をstateへ統一し、既存試験/README/仕様/AGENTSを更新。
+- 整理: セグメント番号による参照を除去し、既存のフィルター処理を共有。不要な互換処理なし。
+- 検証: 関連20件成功（/tmp/my-movie-filter-checkbox-tests.log）、git diff --check成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-filter-checkbox-build.log）。最新dist/MV Studio.app生成済み、codesign --verify --deep --strict成功。
+- 変更: VisualEditor.swift、InspectorFilterTests.swift、README、docs/CLIP_INSPECTOR.md、AGENTS.md、PROGRESS.md。
+- 次: 最新アプリを再起動して利用。実行中処理・未解決障害なし。
+
+# 変更項目フィルターの実装（完了）
+
+- 最終更新: 2026-11-22 JST。ユーザーがdocs/CLIP_INSPECTOR.md第10節の実装を承認。
+- 要件: クリップタブにすべて/変更のみ、初期値差分と保持自動化の判定、未変更項目の呼出、編集中の表示維持、追加直後の演出詳細、UI設定保存。
+- 現状: 前回のクリップタブとv20の渦巻きぼかしは完了・git作業ツリーは開始時クリーン。AGENTS/PROGRESSと現行編集経路を確認。
+- 方針: 共通の差分判定を追加し、共有対象メニューを再利用。まずクリップタブに適用する。
+- 実装: 固定表示列/初期値差分/保持自動化/演出詳細/未変更項目と素材再生設定の呼出/追加直後の詳細/入力中保持/UI設定保存を接続。
+- 初回検証: 新規9件と既存7件の計16件成功（/tmp/my-movie-filter-tests.log）。試験のprivateメソッド直接参照、動画fixtureの素材登録不足を修正して成功。
+- 整理中: 表示復元を共通クラスへ分離、再生設定の判定を専用メソッドへ整理、Undo後の有効な編集対象を保持。
+- 広域検証: 関連48件成功（/tmp/my-movie-filter-related-final.log）。新規11件で直接入力のfield editor/カーソル維持、演出追加直後の詳細、色、固定表示列、450pt幅も確認。
+- 初回広域試験: 制限環境のペーストボード/動画不可と、直接入力試験のReturn確定不足を確認。試験操作を実操作に合わせ、macOSサービス環境で48件成功。隠した動画欄を再表示しても無効状態が残る実装箇所も修正・検証済み。
+- 目視: /tmp/my-movie-filter-inspector.pngで固定の表示列、片側だけのXY、初期値項目の省略、演出一覧を確認。
+- 整理: フィルター非表示復元の共通化、再生設定判定の分離、重複選択通知・不要な無効化・重複判定を削除。消滅項目の一時表示も破棄する。
+- 文書: README/CLIP_INSPECTOR/AGENTSを実装状態へ更新。歌詞・スペクトラムのフィルターは対象外。
+- 最終検証: 整理後の66件成功（/tmp/my-movie-filter-final-tests.log）。新規11件に加え最小ウィンドウ、履歴、入力、LFO/音楽同期、図形/渦巻きの演出UIとMP4回帰も成功。
+- ビルド: ./scripts/build-app.sh成功（/tmp/my-movie-filter-build.log）。最終コードから最新dist/MV Studio.app生成済み。codesign --verify --deep --strictとgit diff --check成功。
+- 変更: InspectorFilter.swift/InspectorFilterTests.swift新規、VisualEditor/ImageEffectsEditor/PlacementEditor/DragValueField、README/docs/CLIP_INSPECTOR/AGENTS/PROGRESS。
+- 次: 最新appを再起動し「クリップ → 表示 → 変更のみ」を利用する。実素材での手動GUI操作は未実施。実行中のテスト/ビルド・未解決障害なし。
+
 # 渦巻き粒子の周囲ぼかし（完了）
 
 - 最終更新: 2026-11-22 JST。要件: 標準粒子の周囲ぼかしの幅と強さを追加。

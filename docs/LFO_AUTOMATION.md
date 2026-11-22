@@ -95,7 +95,7 @@ Tilt=0・Curve=+100%でサイン状、Tilt端点・Curve=0でのこぎり、Curv
 
 LFOSettingsはtimebase、frequencyHz、beatsPerCycle（分子/分母）、tilt、curve、amount、bipolar、phaseDegrees、phaseOrigin、clockOffsetSecondsを保存する。基準値は既存fixedValues/演出値、表示上下限はautomationRangesに一意に保持する。キー曲線の最小/最大との二重管理は移行時に解消する。共有NumericCurveはキーの補間に専念し、SpineブレンドへLFOが暗黙適用されない構造にする。
 
-保存はv20、読込はv17〜20。旧curvesをkeysモードへ変換し、音楽同期・ノードID・キーIDと表示範囲を保持する。旧版payloadへのautomations混入・未来版・非有限値・無効周期・重複項目は拒否し、読込失敗時に上書きしない。
+保存はv21、読込はv18〜21。旧curvesをkeysモードへ変換し、音楽同期・ノードID・キーIDと表示範囲を保持する。旧版payloadへのautomations混入・未来版・非有限値・無効周期・重複項目は拒否し、読込失敗時に上書きしない。
 
 選択/レーン開閉は既存UI状態、設定はEditHistoryの値スナップショットへ含める。演出削除、発生源番号変更、コピー/複製の新ID発行、素材変更、レイヤーロック、全パラメーター列挙を新モデルへ揃える。LFOは素材を必要としない。休止キーも複製時のID再発行とトリム処理の対象。
 

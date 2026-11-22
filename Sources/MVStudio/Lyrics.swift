@@ -54,10 +54,15 @@ struct LyricsStyle: PresetSettings, Equatable {
     var outlineWidth: Double
     var outlineColor: RGBColor
     var typography: LyricsTypography
+    var glowWidth = 0.0
+    var glowColor = RGBColor.white
 
     func validate() throws {
         guard outlineWidth.isFinite, (0...12).contains(outlineWidth), outlineColor.isValid else {
             throw StudioError.message("縁取りの設定が不正です。")
+        }
+        guard glowWidth.isFinite, (0...50).contains(glowWidth), glowColor.isValid else {
+            throw StudioError.message("光彩の設定が不正です。")
         }
         guard typography.isValid else {
             throw StudioError.message("歌詞のフォントまたは描画位置の設定が不正です。")
@@ -69,14 +74,18 @@ struct LyricsTrack: Codable, Sendable, Equatable {
     var clips: [LyricClip] = []
     var outlineWidth = 3.0
     var outlineColor = RGBColor.black
+    var glowWidth = 0.0
+    var glowColor = RGBColor.white
     var typography = LyricsTypography()
 
     var style: LyricsStyle {
-        get { LyricsStyle(outlineWidth: outlineWidth, outlineColor: outlineColor, typography: typography) }
+        get { LyricsStyle(outlineWidth: outlineWidth, outlineColor: outlineColor, typography: typography, glowWidth: glowWidth, glowColor: glowColor) }
         set {
             outlineWidth = newValue.outlineWidth
             outlineColor = newValue.outlineColor
             typography = newValue.typography
+            glowWidth = newValue.glowWidth
+            glowColor = newValue.glowColor
         }
     }
 
@@ -109,6 +118,8 @@ extension LyricsTrack {
         clips = try values.decode([LyricClip].self, forKey: .clips)
         outlineWidth = try values.decode(Double.self, forKey: .outlineWidth)
         outlineColor = try values.decode(RGBColor.self, forKey: .outlineColor)
+        glowWidth = try values.decodeIfPresent(Double.self, forKey: .glowWidth) ?? 0
+        glowColor = try values.decodeIfPresent(RGBColor.self, forKey: .glowColor) ?? .white
         typography = try values.decodeIfPresent(LyricsTypography.self, forKey: .typography) ?? LyricsTypography()
     }
 }
@@ -152,6 +163,12 @@ enum LyricsRenderer {
             let frame = CTFramesetterCreateFrame(setter, CFRange(location: 0, length: 0), CGPath(rect: box, transform: nil), nil)
             CTFrameDraw(frame, context)
         }
+        if track.glowWidth > 0 {
+            context.saveGState()
+            context.setShadow(offset: .zero, blur: track.glowWidth * scaleY, color: track.glowColor.cgColor())
+            drawFrame(attributes)
+            context.restoreGState()
+        }
         if track.outlineWidth > 0 {
             let width = track.outlineWidth * size.height / 720
             attributes[NSAttributedString.Key(kCTStrokeColorAttributeName as String)] = track.outlineColor.cgColor()
@@ -161,5 +178,16 @@ enum LyricsRenderer {
             attributes.removeValue(forKey: NSAttributedString.Key(kCTStrokeWidthAttributeName as String))
         }
         drawFrame(attributes)
+    }
+}
+
+extension LyricsStyle {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        outlineWidth = try values.decode(Double.self, forKey: .outlineWidth)
+        outlineColor = try values.decode(RGBColor.self, forKey: .outlineColor)
+        typography = try values.decode(LyricsTypography.self, forKey: .typography)
+        glowWidth = try values.decodeIfPresent(Double.self, forKey: .glowWidth) ?? 0
+        glowColor = try values.decodeIfPresent(RGBColor.self, forKey: .glowColor) ?? .white
     }
 }

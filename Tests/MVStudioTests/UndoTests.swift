@@ -289,8 +289,6 @@ final class UndoTests: XCTestCase {
         delegate.redoEdit()
         XCTAssertEqual(shapeWidth.doubleValue, 440)
         delegate.undoEdit()
-        let disclosure = try XCTUnwrap(find(editor.visuals.view, "visuals.effects") as? NSButton)
-        disclosure.performClick(nil)
         let addEffect = try XCTUnwrap(find(editor.visuals.view, "visuals.effects.add") as? NSPopUpButton)
         let addBlur = try XCTUnwrap(addEffect.menu?.effectItem(titled: "ガウスブラー"))
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(addBlur.action), to: addBlur.target, from: addBlur))

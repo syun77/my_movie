@@ -3,6 +3,68 @@ import XCTest
 @testable import MVStudio
 
 final class ClipShortcutTests: XCTestCase {
+    @MainActor func testLyricTimelineCreationAndCopyShortcuts() throws {
+        _ = NSApplication.shared
+        let editor = PlacementEditor()
+        let window = StudioWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 300),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = editor.view
+        window.clipEditor = editor
+        defer { window.close() }
+        editor.duration = 20
+        editor.visibleSpan = 20
+        editor.setAvailable(hasAudio: true, isBusy: false)
+        editor.timeline.frame = NSRect(x: 0, y: 0, width: 900, height: 160)
+        var commits = 0
+        var seeks = [Double]()
+        editor.lyrics.onChange = { _ in commits += 1 }
+        editor.lyrics.onSeek = { seeks.append($0) }
+        func mouse(_ type: NSEvent.EventType, time: Double, count: Int = 1, y: Double = 58) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type,
+                location: editor.timeline.convert(NSPoint(x: editor.timeline.x(at: time), y: y), to: nil),
+                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: count, pressure: 1))
+        }
+        let menu = try XCTUnwrap(editor.timeline.menu(for: mouse(.rightMouseDown, time: 1)))
+        XCTAssertTrue(seeks.isEmpty)
+        let add = try XCTUnwrap(menu.item(withTitle: "歌詞クリップを追加"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(add.action), to: add.target, from: add))
+        XCTAssertEqual(editor.lyrics.track.clips.first?.start, 1)
+        XCTAssertEqual(commits, 1)
+        XCTAssertNil(try editor.timeline.menu(for: mouse(.rightMouseDown, time: 1.5))?.item(withTitle: "歌詞クリップを追加"))
+        editor.timeline.mouseDown(with: try mouse(.leftMouseDown, time: 4, count: 2))
+        editor.timeline.mouseUp(with: try mouse(.leftMouseUp, time: 4, count: 2))
+        let source = try XCTUnwrap(editor.lyrics.track.clips.last)
+        XCTAssertEqual(source.start, 4)
+        XCTAssertEqual(commits, 2)
+        XCTAssertEqual(editor.timeline.selectedID, source.id)
+        func key(_ character: String) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: character,
+                charactersIgnoringModifiers: character, isARepeat: false, keyCode: 0))
+            XCTAssertTrue(window.performKeyEquivalent(with: event))
+        }
+        try key("c")
+        editor.currentTime = 7
+        try key("v")
+        XCTAssertEqual(editor.lyrics.track.clips.last?.start, 7)
+        XCTAssertEqual(editor.lyrics.track.clips.last?.text, source.text)
+        try key("d")
+        XCTAssertEqual(editor.lyrics.track.clips.last?.start, 9)
+        let copyMenu = try XCTUnwrap(editor.timeline.menu(for: mouse(.rightMouseDown, time: 1.5)))
+        let copy = try XCTUnwrap(copyMenu.item(withTitle: "コピー"))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(copy.action), to: copy.target, from: copy))
+        editor.currentTime = 12
+        try key("v")
+        XCTAssertEqual(editor.lyrics.track.clips.last?.start, 12)
+        XCTAssertEqual(commits, 5)
+        editor.setAvailable(hasAudio: true, isBusy: true)
+        XCTAssertNil(try editor.timeline.menu(for: mouse(.rightMouseDown, time: 16)))
+        editor.timeline.mouseDown(with: try mouse(.leftMouseDown, time: 16, count: 2))
+        XCTAssertEqual(commits, 5)
+    }
+
     @MainActor func testLyricCutPasteAndDuplicate() throws {
         _ = NSApplication.shared
         let editor = PlacementEditor()

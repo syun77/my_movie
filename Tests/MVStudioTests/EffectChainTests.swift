@@ -7,6 +7,60 @@ import XCTest
 @testable import MVStudio
 
 final class EffectChainTests: XCTestCase {
+    @MainActor func testBelowMaskCategoryIsIndependentOfChainDisclosure() throws {
+        _ = NSApplication.shared
+        let editor = ImageEffectsEditor()
+        let root = NSStackView(views: [editor, editor.belowMaskSection])
+        var clip = VisualClip(start: 0, end: 3, effects: ImageEffects(belowMask: .init(), snow: .init()))
+        let track = VisualTrack()
+        editor.onCommit = { value in
+            clip.effects = value
+            editor.load(clip, editable: true, track: track)
+        }
+        editor.load(clip, editable: true, track: track)
+        func find(_ view: NSView, _ id: String) -> NSView? {
+            if view.identifier?.rawValue == id { return view }
+            return view.subviews.lazy.compactMap { find($0, id) }.first
+        }
+        let width = try XCTUnwrap(find(root, "visuals.value.belowMaskWidth") as? DragValueField)
+        XCTAssertTrue(width.isDescendant(of: editor.belowMaskSection))
+        XCTAssertFalse(width.isDescendant(of: editor))
+        XCTAssertFalse(width.isHiddenOrHasHiddenAncestor)
+        let guide = try XCTUnwrap(find(root, "visuals.effects.belowMaskGuide") as? NSButton)
+        let unchanged = clip
+        var guideStates: [Bool] = []
+        editor.onBelowMaskGuideChange = { guideStates.append($0) }
+        XCTAssertEqual(guide.state, .on)
+        guide.performClick(nil)
+        XCTAssertFalse(editor.showsBelowMaskGuide)
+        guide.performClick(nil)
+        XCTAssertEqual(guideStates, [false, true])
+        XCTAssertEqual(clip, unchanged)
+        let height = try XCTUnwrap(find(root, "visuals.value.belowMaskHeight") as? DragValueField)
+        for (field, original) in [(width, clip.effects!.belowMask!.geometry.width), (height, clip.effects!.belowMask!.geometry.height)] {
+            XCTAssertEqual(field.doubleValue, original / 10)
+            XCTAssertEqual(field.onDragStart?(), true)
+            field.onDragChange?(1)
+            field.onDragEnd?()
+        }
+        XCTAssertEqual(clip.effects?.belowMask?.geometry.width, ShapeGeometry().width + 10)
+        XCTAssertEqual(clip.effects?.belowMask?.geometry.height, ShapeGeometry().height + 10)
+        width.stringValue = "123"
+        editor.controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: width))
+        XCTAssertEqual(clip.effects?.belowMask?.geometry.width, 1230)
+        width.onReset?()
+        XCTAssertEqual(clip.effects?.belowMask?.geometry.width, ShapeGeometry().width)
+        let enabled = try XCTUnwrap(find(root, "visuals.effects.belowMaskEnabled") as? NSButton)
+        enabled.performClick(nil)
+        XCTAssertEqual(clip.effects?.belowMask?.isEnabled, false)
+        XCTAssertNotNil(clip.effects?.snow)
+        let remove = try XCTUnwrap(find(root, "visuals.effects.belowMaskRemove") as? NSButton)
+        remove.performClick(nil)
+        XCTAssertNil(clip.effects?.belowMask)
+        XCTAssertTrue(width.isHiddenOrHasHiddenAncestor)
+        XCTAssertNotNil(clip.effects?.snow)
+    }
+
     func testNodeOwnedAutomationReorderTrimAndRoundTrip() throws {
         var effects = ImageEffects(mask: .init(), belowMask: .init(), snow: .init(seed: 42), colorCorrection: .init())
         let snow = try XCTUnwrap(effects.nodes.first { $0.kind == .snow })
@@ -52,7 +106,7 @@ final class EffectChainTests: XCTestCase {
     }
 
     func testMigrationPreservesNodeIDsAndOutputMask() throws {
-        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v17", withExtension: "json", subdirectory: "Fixtures/Projects"))
+        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "v18", withExtension: "json", subdirectory: "Fixtures/Projects"))
         let data = try Data(contentsOf: fixture)
         let url = URL(fileURLWithPath: "/tmp/chain-migrate.mvproject")
         let first = try ProjectMigrator.read(data, at: url)

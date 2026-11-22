@@ -11,7 +11,7 @@ final class PresetStoreTests: XCTestCase {
         let lyrics = PresetStore<LyricsStyle>(directory: directory)
         let spectrum = PresetStore<SpectrumSettings>(directory: directory)
         let typography = LyricsTypography(fontName: "Helvetica-Bold", fontSize: 72, x: 640, y: 840)
-        let lyricsStyle = LyricsStyle(outlineWidth: 6, outlineColor: RGBColor(red: 0, green: 0, blue: 1), typography: typography)
+        let lyricsStyle = LyricsStyle(outlineWidth: 6, outlineColor: RGBColor(red: 0, green: 0, blue: 1), typography: typography, glowWidth: 24, glowColor: RGBColor(red: 1, green: 0, blue: 0))
         let spectrumStyle = SpectrumStyle(shape: .line, resolution: .minimal, layout: SpectrumLayout(x: 10))
         XCTAssertTrue(try lyrics.load().isEmpty)
         XCTAssertTrue(try spectrum.load().isEmpty)

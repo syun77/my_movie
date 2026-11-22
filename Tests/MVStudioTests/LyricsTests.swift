@@ -74,6 +74,53 @@ final class LyricsTests: XCTestCase {
         XCTAssertEqual(whiteBounds(try render(track: track, time: 0.5)), enlarged)
     }
 
+    func testGlowIsIndependentAndPersists() throws {
+        var track = LyricsTrack(clips: [LyricClip(start: 0, end: 1, text: "Music")], outlineWidth: 0)
+        let plain = try render(track: track, time: 0.5)
+        track.glowWidth = 40
+        let glowing = try render(track: track, time: 0.5)
+        func coverage(_ image: CGImage) -> Int {
+            let data = image.dataProvider!.data! as Data
+            return stride(from: 3, to: data.count, by: 4).filter { data[$0] > 5 }.count
+        }
+        XCTAssertGreaterThan(coverage(glowing), coverage(plain) * 2)
+        XCTAssertEqual(track.outlineWidth, 0)
+        XCTAssertEqual(try JSONDecoder().decode(LyricsTrack.self, from: JSONEncoder().encode(track)), track)
+        XCTAssertEqual(try JSONDecoder().decode(LyricsStyle.self, from: JSONEncoder().encode(track.style)), track.style)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(track)) as? [String: Any])
+        legacy.removeValue(forKey: "glowWidth")
+        XCTAssertEqual(try JSONDecoder().decode(LyricsTrack.self, from: JSONSerialization.data(withJSONObject: legacy)).glowWidth, 0)
+        for invalid in [-1.0, 51, .infinity, .nan] {
+            track.glowWidth = invalid
+            XCTAssertThrowsError(try track.validate())
+        }
+    }
+
+    func testGlowColorRenderingPersistenceAndLegacyDefault() throws {
+        var track = LyricsTrack(clips: [LyricClip(start: 0, end: 1, text: "Music")], outlineWidth: 0)
+        track.glowWidth = 30
+        track.glowColor = RGBColor(red: 1, green: 0, blue: 0)
+        let red = try render(track: track, time: 0.5)
+        track.glowColor = RGBColor(red: 0, green: 0, blue: 1)
+        let blue = try render(track: track, time: 0.5)
+        func tintedPixels(_ image: CGImage, channel: Int) -> Int {
+            let data = image.dataProvider!.data! as Data
+            return stride(from: 0, to: data.count, by: 4).filter { Int(data[$0 + channel]) > Int(data[$0 + 1]) + 5 }.count
+        }
+        XCTAssertGreaterThan(tintedPixels(red, channel: 0), 100)
+        XCTAssertEqual(tintedPixels(red, channel: 2), 0)
+        XCTAssertGreaterThan(tintedPixels(blue, channel: 2), 100)
+        XCTAssertEqual(try JSONDecoder().decode(LyricsTrack.self, from: JSONEncoder().encode(track)), track)
+        XCTAssertEqual(try JSONDecoder().decode(LyricsStyle.self, from: JSONEncoder().encode(track.style)), track.style)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(track)) as? [String: Any])
+        legacy.removeValue(forKey: "glowColor")
+        XCTAssertEqual(try JSONDecoder().decode(LyricsTrack.self, from: JSONSerialization.data(withJSONObject: legacy)).glowColor, .white)
+        legacy.removeValue(forKey: "clips")
+        XCTAssertEqual(try JSONDecoder().decode(LyricsStyle.self, from: JSONSerialization.data(withJSONObject: legacy)).glowColor, .white)
+        track.glowColor.red = .nan
+        XCTAssertThrowsError(try track.validate())
+    }
+
     private func whiteBounds(_ image: CGImage) -> CGRect {
         let data = image.dataProvider!.data! as Data
         var bounds = CGRect.null

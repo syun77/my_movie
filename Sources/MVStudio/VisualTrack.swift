@@ -155,7 +155,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
     func clip(_ id: UUID?) -> VisualClip? { clips.first { $0.id == id } }
     func layerID(of id: UUID) -> UUID? { layers.first { $0.clips.contains { $0.id == id } }?.id }
     func active(at time: Double) -> [VisualClip] {
-        layers.filter(\.isVisible).compactMap { $0.clips.first { $0.start <= time && time < $0.end } }
+        layers.filter(\.isVisible).flatMap { $0.clips.filter { $0.start <= time && time < $0.end } }
     }
     func uses(_ id: UUID) -> [VisualClip] { clips.filter { $0.assetID == id } }
     func particleUses(_ id: UUID) -> [VisualClip] { clips.filter { $0.particleAssetIDs.contains(id) } }
@@ -170,13 +170,13 @@ struct VisualTrack: Codable, Sendable, Equatable {
         for layer in layers {
             guard Self.validName(layer.name) else { throw StudioError.message("レイヤー名が不正です。") }
             guard ids.insert(layer.id).inserted else { throw StudioError.message("素材レイヤーのIDが重複しています。") }
-            var previousEnd = 0.0
+            try LayerCrossfade.validate(layer.clips)
             for clip in layer.clips {
                 guard ids.insert(clip.id).inserted, (clip.assetID.map { assetIDs.contains($0) } ?? (clip.content == .still)),
-                      clip.start.isFinite, clip.end.isFinite, clip.start >= previousEnd,
+                      clip.start.isFinite, clip.end.isFinite, clip.start >= 0,
                       clip.end - clip.start >= 1.0 / 30 - 1e-9,
                       duration.map({ clip.end <= $0 + 1e-9 }) ?? true else {
-                    throw StudioError.message("素材の区間は曲内で、同じレイヤー内では重ならないようにしてください（最小1フレーム）。")
+                    throw StudioError.message("素材の区間は曲内に配置し、最小1フレームにしてください。")
                 }
                 switch (asset(clip.assetID)?.kind, clip.content) {
                 case (nil, .still) where clip.assetID == nil: break
@@ -203,7 +203,6 @@ struct VisualTrack: Codable, Sendable, Equatable {
                     for id in playback.keyIDs { guard ids.insert(id).inserted else { throw StudioError.message("制御点のIDが重複しています。") } }
                 }
                 try clip.validateAnimation(ids: &ids)
-                previousEnd = clip.end
             }
         }
     }
@@ -255,10 +254,9 @@ struct VisualTrack: Codable, Sendable, Equatable {
 
     func placement(at time: Double, layerID: UUID, duration: Double, grid: TimelineSnapGrid) throws -> (start: Double, end: Double) {
         try requireEditable(layerID)
-        guard time.isFinite, time >= 0, time < duration, let layer = layers.first(where: { $0.id == layerID }) else { throw StudioError.message("曲の範囲内の素材行を選んでください。") }
+        guard time.isFinite, time >= 0, time < duration, layers.contains(where: { $0.id == layerID }) else { throw StudioError.message("曲の範囲内の素材行を選んでください。") }
         let start = try grid.snap(time, within: 0...duration)
-        guard !layer.clips.contains(where: { $0.start <= start && start < $0.end }) else { throw StudioError.message("配置先が素材と重なっています。空白または別のレイヤーを選んでください。") }
-        let limit = min(duration, layer.clips.first(where: { $0.start >= start })?.start ?? duration)
+        let limit = duration
         guard limit - start >= 1.0 / 30 - 1e-9 else { throw StudioError.message("素材を配置する空き時間がありません。") }
         let end = try grid.snap(min(start + 2, limit), within: (start + 1.0 / 30)...limit)
         return (start, end)
@@ -269,8 +267,7 @@ struct VisualTrack: Codable, Sendable, Equatable {
         guard let asset = asset(assetID) else { throw StudioError.message("素材が見つかりません。") }
         var content = VisualContent.still
         if let length = asset.kind.videoDuration {
-            let nextStart = layers.first { $0.id == layerID }?.clips.first { $0.start >= range.start }?.start ?? duration
-            let limit = min(duration, nextStart, range.start + length)
+            let limit = min(duration, range.start + length)
             guard limit - range.start >= 1.0 / 30 else { throw StudioError.message("動画を配置する長さがありません。") }
             range.end = try grid.snap(limit, within: (range.start + 1.0 / 30)...limit)
             content = .video(sourceIn: 0)
@@ -312,21 +309,19 @@ struct VisualTrack: Codable, Sendable, Equatable {
         try validate(duration: duration)
         guard delta.isFinite, let layerID = layerID(of: id), let layer = layers.first(where: { $0.id == layerID }), let index = layer.clips.firstIndex(where: { $0.id == id }) else { throw StudioError.message("素材の移動量が不正です。") }
         var clip = layer.clips[index]
-        let before = index > 0 ? layer.clips[index - 1].end : 0
-        let after = index + 1 < layer.clips.count ? layer.clips[index + 1].start : duration
         switch part {
         case .move:
-            let start = try grid.snap(clip.start + delta, within: before...(min(after, duration) - (clip.end - clip.start)))
+            let start = try grid.snap(clip.start + delta, within: 0...(duration - (clip.end - clip.start)))
             clip.end += start - clip.start; clip.start = start
         case .start:
             let sourceStart = clip.content.sourceIn.map { clip.start - $0 / clip.content.speed } ?? 0
-            clip.trimStart(to: try grid.snap(clip.start + delta, within: max(before, sourceStart)...(clip.end - 1.0 / 30)))
+            clip.trimStart(to: try grid.snap(clip.start + delta, within: max(0, sourceStart)...(clip.end - 1.0 / 30)))
         case .end:
             let sourceEnd: Double
             if let sourceIn = clip.content.sourceIn, let length = asset(clip.assetID)?.kind.videoDuration {
                 sourceEnd = clip.start + (length - sourceIn) / clip.content.speed
             } else { sourceEnd = duration }
-            clip.end = try grid.snap(clip.end + delta, within: (clip.start + 1.0 / 30)...min(after, duration, sourceEnd))
+            clip.end = try grid.snap(clip.end + delta, within: (clip.start + 1.0 / 30)...min(duration, sourceEnd))
         }
         return try updating(clip, layerID: layerID, duration: duration)
     }

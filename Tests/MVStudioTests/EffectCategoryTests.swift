@@ -67,7 +67,14 @@ final class EffectCategoryTests: XCTestCase {
         XCTAssertEqual(commits, 1)
         XCTAssertEqual(clip.effects?.nodes.map(\.kind), [.blur, .snow])
         XCTAssertEqual(list.selectedID, clip.effects?.nodes.last?.id)
-        XCTAssertTrue(list.detailsOpen)
+        let selectedID = try XCTUnwrap(list.selectedID)
+        let visibleFields = all(editor).compactMap { $0 as? DragValueField }.filter { !$0.isHiddenOrHasHiddenAncestor }
+        XCTAssertFalse(visibleFields.isEmpty)
+        for _ in 0..<2 {
+            list.onSelect?(selectedID)
+            XCTAssertTrue(visibleFields.allSatisfy { !$0.isHiddenOrHasHiddenAncestor })
+        }
+        XCTAssertEqual(commits, 1)
         XCTAssertEqual(editor.time, 2)
         try invoke(snow) // A menu retained across a commit must not add a duplicate.
         XCTAssertEqual(commits, 1)

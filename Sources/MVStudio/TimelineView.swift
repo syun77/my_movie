@@ -124,6 +124,7 @@ final class TimelineView: NSView {
     var selectedID: UUID? { didSet { needsDisplay = true } }
     var isEnabled = false { didSet { if !isEnabled { cancelDrag() }; needsDisplay = true } }
     var canPerformClipCommand: ((ClipEditCommand) -> Bool)?
+    var onCreateLyricClip: ((Double) -> Void)?
     var onClipCommand: ((ClipEditCommand) -> Void)?
     var onBeginEdit: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
@@ -332,12 +333,73 @@ final class TimelineView: NSView {
 
     private func imageHit(at point: NSPoint, layerID: UUID) -> ClipHit? {
         guard graphViewport.contains(point), let layer = visuals.layers.first(where: { $0.id == layerID }) else { return nil }
-        for clip in layer.clips {
-            if let hit = clipHit(id: clip.id, at: point, rect: imageRect(clip, layerID: layerID), viewport: graphViewport) {
-                return hit
-            }
+        let hits = layer.clips.compactMap { clip -> ClipHit? in
+            clipHit(id: clip.id, at: point, rect: imageRect(clip, layerID: layerID), viewport: graphViewport)
         }
-        return nil
+        let trims = hits.filter { $0.part != .move }.sorted { a, b in
+            if (a.id == selectedImageID) != (b.id == selectedImageID) { return a.id == selectedImageID }
+            @MainActor func distance(_ hit: ClipHit) -> CGFloat {
+                guard let clip = layer.clips.first(where: { $0.id == hit.id }) else { return .infinity }
+                return abs(point.x - x(at: hit.part == .start ? clip.start : clip.end))
+            }
+            if distance(a) != distance(b) { return distance(a) < distance(b) }
+            return a.part == .start && b.part != .start
+        }
+        if let trim = trims.first { return trim }
+        if let transition = crossfade(at: point, layer: layer) {
+            let midpoint = x(at: (transition.start + transition.end) / 2)
+            let id = point.x < midpoint ? transition.outgoingID : transition.incomingID
+            return hits.first { $0.id == id }
+        }
+        return hits.first
+    }
+
+    private func crossfade(at point: NSPoint, layer: VisualLayer) -> LayerCrossfade? {
+        LayerCrossfade.transitions(in: layer.clips).first { transition in
+            guard let clip = layer.clips.first(where: { $0.id == transition.outgoingID }) else { return false }
+            let rect = imageRect(clip, layerID: layer.id)
+            return point.x >= x(at: transition.start) && point.x < x(at: transition.end)
+                && point.y >= rect.minY && point.y < rect.maxY
+        }
+    }
+
+    private func drawCrossfades(_ layer: VisualLayer) {
+        for transition in LayerCrossfade.transitions(in: layer.clips) {
+            guard let clip = layer.clips.first(where: { $0.id == transition.outgoingID }) else { continue }
+            let row = imageRect(clip, layerID: layer.id)
+            let left = x(at: transition.start), right = x(at: transition.end)
+            let rect = NSRect(x: left, y: row.minY, width: right - left, height: row.height)
+            let visible = rect.intersection(graphViewport)
+            guard !visible.isEmpty else { continue }
+            NSColor.black.withAlphaComponent(0.18).setFill(); visible.fill()
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: visible).addClip()
+            let steps = max(2, Int(ceil(visible.width / 2)))
+            for incoming in [false, true] {
+                let path = NSBezierPath(); path.lineWidth = 1.5
+                for index in 0...steps {
+                    let px = visible.minX + visible.width * CGFloat(index) / CGFloat(steps)
+                    let t = transition.start + Double((px - left) / (right - left)) * transition.duration
+                    let f = transition.incomingWeight(at: t)
+                    let value = incoming ? f : 1 - f
+                    let point = NSPoint(x: px, y: row.minY + 3 + (row.height - 6) * (1 - value))
+                    if index == 0 { path.move(to: point) } else { path.line(to: point) }
+                }
+                NSColor.white.withAlphaComponent(layer.isVisible ? 0.9 : 0.4).setStroke(); path.stroke()
+            }
+            NSColor.white.withAlphaComponent(0.5).setStroke()
+            for px in [left, right] {
+                let line = NSBezierPath(); line.move(to: NSPoint(x: px, y: row.minY)); line.line(to: NSPoint(x: px, y: row.maxY)); line.stroke()
+            }
+            if visible.width < 3 {
+                NSColor.white.setFill(); NSRect(x: visible.midX - 0.5, y: row.minY + 2, width: 1, height: row.height - 4).fill()
+            }
+            if rect.width >= 155 && row.height >= 54 {
+                label(String(format: "クロスフェード %.2f秒", transition.duration),
+                      rect: NSRect(x: left + 5, y: row.maxY - 15, width: rect.width - 10, height: 13), color: .white, size: 9)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+        }
     }
 
     private func drawTrimHighlight(_ hit: ClipHit?) {
@@ -355,6 +417,12 @@ final class TimelineView: NSView {
             if point.x < Self.gutter, let id = layerID(at: point), let layer = visuals.layer(id) {
                 let target = visuals.layers.firstIndex(where: { $0.id == id }).flatMap { $0 > 0 ? visuals.layers[$0 - 1].name : nil } ?? "なし"
                 return layer.name + " / 直下段マスク対象: " + target
+            }
+            if visualMode, graphViewport.contains(point), let id = layerID(at: point), let layer = visuals.layer(id),
+               let transition = crossfade(at: point, layer: layer) {
+                @MainActor func name(_ id: UUID) -> String { visuals.asset(visuals.clip(id)?.assetID)?.name ?? "空のクリップ" }
+                return name(transition.outgoingID) + " → " + name(transition.incomingID)
+                    + String(format: " / クロスフェード %.6f秒", transition.duration)
             }
             return spineLane.tooltip(at: point)
         } ?? defaultToolTip
@@ -387,6 +455,10 @@ final class TimelineView: NSView {
         mouseMoved(with: event)
         if visualMode {
             imageMouseDown(event)
+            return
+        }
+        if event.clickCount == 2, let time = lyricCreationTime(at: point) {
+            onCreateLyricClip?(time)
             return
         }
         let frozen = geometry
@@ -468,6 +540,13 @@ final class TimelineView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard canEditClips else { return super.menu(for: event) }
         let point = convert(event.locationInWindow, from: nil)
+        if let time = lyricCreationTime(at: point), window?.makeFirstResponder(self) != false {
+            let menu = NSMenu()
+            let item = menu.addItem(withTitle: "歌詞クリップを追加", action: #selector(createLyricClip(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = time
+            return menu
+        }
         if visualMode, point.x < Self.gutter, let id = layerID(at: point), headerRect(id).contains(point) { return layerMenu(id) }
         if visualMode, onCreateEmptyClip != nil, point.x >= Self.gutter,
            point.x <= bounds.width - TimelineGeometry.inset, let layerID = layerID(at: point),
@@ -531,6 +610,23 @@ final class TimelineView: NSView {
             item.isEnabled = canPerformClipCommand?(command) == true
         }
         return menu
+    }
+
+    private func lyricCreationTime(at point: NSPoint) -> Double? {
+        guard !visualMode, canEditClips, onCreateLyricClip != nil,
+              lyricViewport.contains(point), rowBoundary(at: point) == nil,
+              lyricHit(at: point) == nil else { return nil }
+        let time = geometry.time(at: point.x - Self.gutter)
+        guard time >= 0, time < duration,
+              !track.clips.contains(where: { $0.start <= time && time < $0.end }),
+              (try? track.adding(at: time, duration: duration, grid: snapGrid)) != nil else { return nil }
+        return time
+    }
+
+    @objc private func createLyricClip(_ item: NSMenuItem) {
+        guard !visualMode, canEditClips, let time = item.representedObject as? Double,
+              !track.clips.contains(where: { $0.start <= time && time < $0.end }) else { return }
+        onCreateLyricClip?(time)
     }
 
     private struct EmptyClipTarget {
@@ -1037,13 +1133,30 @@ final class TimelineView: NSView {
                 let missing = clip.assetID.map { missingAssets.contains($0) } ?? false
                 (missing ? NSColor.systemRed : NSColor(calibratedRed: 0.22, green: 0.42, blue: 0.57, alpha: 1)).setFill()
                 NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 0), xRadius: 4, yRadius: 4).fill()
-                if clip.id == selectedImageID { NSColor.cyan.setStroke(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).stroke() }
-                let title = (missing ? "⚠ " : "") + (clip.content.sourceIn == nil ? "" : "▶ ") + (displayed.asset(clip.assetID)?.name ?? "空のクリップ")
-                drawClipLabels(title, timing: clipTiming(start: clip.start, end: clip.end), in: clipRect, visible: rect)
-                drawClipGrips(in: clipRect, visible: rect)
                 if !layer.isVisible {
                     NSColor(calibratedWhite: 0.08, alpha: 0.6).setFill(); rect.fill()
                 }
+            }
+            drawCrossfades(layer)
+            for clip in layer.clips {
+                let clipRect = imageRect(clip, layerID: layer.id)
+                let rect = clipRect.intersection(clipBounds)
+                guard !rect.isEmpty else { continue }
+                let missing = clip.assetID.map { missingAssets.contains($0) } ?? false
+                let title = (missing ? "⚠ " : "") + (clip.content.sourceIn == nil ? "" : "▶ ") + (displayed.asset(clip.assetID)?.name ?? "空のクリップ")
+                var textRect = rect
+                for transition in LayerCrossfade.transitions(in: layer.clips) {
+                    let midpoint = x(at: (transition.start + transition.end) / 2)
+                    if transition.outgoingID == clip.id { textRect.size.width = max(0, min(textRect.maxX, midpoint) - textRect.minX) }
+                    if transition.incomingID == clip.id {
+                        let end = textRect.maxX
+                        textRect.origin.x = max(textRect.minX, midpoint)
+                        textRect.size.width = max(0, end - textRect.minX)
+                    }
+                }
+                drawClipLabels(title, timing: clipTiming(start: clip.start, end: clip.end), in: clipRect, visible: textRect)
+                drawClipGrips(in: clipRect, visible: rect)
+                if clip.id == selectedImageID { NSColor.cyan.setStroke(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4).stroke() }
             }
         }
         let highlight = highlightedKey(in: lanes)
@@ -1127,7 +1240,7 @@ final class TimelineView: NSView {
                 drag.error = nil
                 NSCursor.closedHand.set()
             } catch {
-                drag.draft = drag.original; drag.error = error.localizedDescription
+                drag.error = error.localizedDescription
                 NSCursor.operationNotAllowed.set(); onError?(error)
             }
             imageDrag = drag; onImagePreview?(drag.draft); needsDisplay = true
@@ -1143,7 +1256,8 @@ final class TimelineView: NSView {
         NSCursor.arrow.set()
         if let drag = imageDrag {
             imageDrag = nil
-            if drag.original != drag.draft { onImageCommit?(drag.draft, drag.id) }
+            if drag.error == nil, drag.original != drag.draft { onImageCommit?(drag.draft, drag.id) }
+            else { onImagePreview?(drag.original) }
         }
         scrubGeometry = nil; needsDisplay = true
     }
@@ -1161,7 +1275,7 @@ final class TimelineView: NSView {
     func fileDrop(at point: NSPoint, pasteboard: NSPasteboard) throws -> (url: URL, layerID: UUID, start: Double, end: Double) {
         guard visualMode, isEnabled, imageDrag == nil, keyDrag == nil, drag == nil, rowResize == nil, let url = droppedURL(pasteboard),
               point.x >= Self.gutter + TimelineGeometry.inset, point.x <= bounds.width - TimelineGeometry.inset,
-              let layerID = layerID(at: point), point.y < rowY(layerID) + rowHeight(.visual(layerID)) else { throw StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行の空白にドロップしてください。") }
+              let layerID = layerID(at: point), point.y < rowY(layerID) + rowHeight(.visual(layerID)) else { throw StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行にドロップしてください。") }
         let range = try visuals.placement(at: geometry.time(at: point.x - Self.gutter), layerID: layerID, duration: duration, grid: snapGrid)
         return (url, layerID, range.start, range.end)
     }
@@ -1178,7 +1292,7 @@ final class TimelineView: NSView {
     override func concludeDragOperation(_ sender: NSDraggingInfo?) { draggingExited(sender) }
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard draggingUpdated(sender) == .copy, let candidate = dropCandidate, let url = droppedURL(sender.draggingPasteboard) else {
-            onError?(StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行の空白にドロップしてください。")); draggingExited(sender); return false
+            onError?(StudioError.message("画像・動画を1ファイルずつ、配置可能な素材行にドロップしてください。")); draggingExited(sender); return false
         }
         onBeginEdit?()
         onDropImage?(url, candidate.layerID, candidate.start)

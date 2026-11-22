@@ -7,7 +7,7 @@ final class InspectorSection: NSStackView {
     nonisolated static let labelWidth: CGFloat = 72
     nonisolated static let numberWidth: CGFloat = 86
 
-    init(_ title: String?, id: String, rows: [NSView]) {
+    init(_ title: String?, id: String, rows: [NSView], headingAccessory: NSView? = nil) {
         super.init(frame: .zero)
         identifier = NSUserInterfaceItemIdentifier("inspector.section." + id)
         orientation = .vertical
@@ -20,7 +20,11 @@ final class InspectorSection: NSStackView {
         if let title {
             let heading = NSTextField(labelWithString: title)
             heading.font = .boldSystemFont(ofSize: 12)
-            addArrangedSubview(heading)
+            if let headingAccessory {
+                addArrangedSubview(Self.row([heading, headingAccessory]))
+            } else {
+                addArrangedSubview(heading)
+            }
         }
         for row in rows {
             addArrangedSubview(row)

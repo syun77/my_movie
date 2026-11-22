@@ -30,6 +30,7 @@ final class MetalSceneRenderer {
     private let shapePipeline: MTLRenderPipelineState
     private let maskedClipPipeline: MTLRenderPipelineState
     private let guidePipeline: MTLRenderPipelineState
+    private let crossfadePipeline: MTLRenderPipelineState
     private let imagePipeline: MTLRenderPipelineState
     private let particleImagePipeline: MTLRenderPipelineState
     private let particleImageAddPipeline: MTLRenderPipelineState
@@ -67,6 +68,14 @@ final class MetalSceneRenderer {
         var cost: Int { image.width * image.height * 8 }
     }
 
+    private struct PreparedLayer {
+        let clip: VisualClip
+        let image: ProcessedImage
+        let layerID: UUID
+        let order: Int
+        let maskOwnerID: UUID?
+    }
+
     private struct SourceImage {
         let image: VisualFrame
         let texture: MTLTexture
@@ -88,7 +97,7 @@ final class MetalSceneRenderer {
     private var sourceCache: [UUID: SourceImage] = [:]
     private var imageCache: [UUID: ProcessedImage] = [:]
     private var spectrumTarget: OverlayTarget?
-    private var maskTargets: [UUID: MTLTexture] = [:]
+    private var compositionScratch: MTLTexture?
     private var chainScratch: [MTLTexture] = []
     private var generatorScratch: MTLTexture?
     private var glowScratch: MTLTexture?
@@ -116,7 +125,7 @@ final class MetalSceneRenderer {
         radialBlurRenderer = try RadialBlurRenderer(device: device, library: library)
         crossGlareRenderer = try CrossGlareRenderer(device: device, library: library)
         func pipeline(_ vertex: String, _ fragment: String, format: MTLPixelFormat = .rgba16Float,
-                      blending: Bool = true, additive: Bool = false) throws -> MTLRenderPipelineState {
+                      blending: Bool = true, additive: Bool = false, weighted: Bool = false) throws -> MTLRenderPipelineState {
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = library.makeFunction(name: vertex)
             descriptor.fragmentFunction = library.makeFunction(name: fragment)
@@ -124,9 +133,9 @@ final class MetalSceneRenderer {
             color.pixelFormat = format
             color.isBlendingEnabled = blending
             color.sourceRGBBlendFactor = .one
-            color.destinationRGBBlendFactor = additive ? .one : .oneMinusSourceAlpha
+            color.destinationRGBBlendFactor = (additive || weighted) ? .one : .oneMinusSourceAlpha
             color.sourceAlphaBlendFactor = additive ? .zero : .one
-            color.destinationAlphaBlendFactor = additive ? .one : .oneMinusSourceAlpha
+            color.destinationAlphaBlendFactor = (additive || weighted) ? .one : .oneMinusSourceAlpha
             return try device.makeRenderPipelineState(descriptor: descriptor)
         }
         chainEmissionPipeline = try pipeline("fullscreen", "chainCopy", additive: true)
@@ -138,6 +147,7 @@ final class MetalSceneRenderer {
         maskedClipPipeline = try pipeline("fullscreen", "maskedClip")
         guidePipeline = try pipeline("fullscreen", "maskGuide")
         imagePipeline = try pipeline("fullscreen", "imageLayer")
+        crossfadePipeline = try pipeline("fullscreen", "imageLayer", weighted: true)
         particleImagePipeline = try pipeline("imageParticleQuad", "imageParticle")
         particleImageAddPipeline = try pipeline("imageParticleQuad", "imageParticle", additive: true)
         spiralPipeline = try pipeline("particleQuad", "spiralLight", additive: true)
@@ -164,7 +174,7 @@ final class MetalSceneRenderer {
 
     // The caller keeps one frame in flight per renderer.
     func encode(visuals: [VisualRenderLayer], features: AudioFeatures?, settings: SceneSettings, lyrics: LyricsTrack,
-                time: Double, target: MTLTexture, video: Bool, guideClipID: UUID? = nil) throws -> MTLCommandBuffer {
+                time: Double, target: MTLTexture, video: Bool, guideClipID: UUID? = nil, showsBelowMaskGuide: Bool = true) throws -> MTLCommandBuffer {
         if framesSinceCleanup == Self.filterCacheCleanupInterval {
             filters.clearCaches()
             framesSinceCleanup = 0
@@ -172,7 +182,7 @@ final class MetalSceneRenderer {
         framesSinceCleanup += 1
         guard let commands = queue.makeCommandBuffer() else { throw Self.renderError }
         var usedParticleTextures = Set<UUID>()
-        var prepared: [(clip: VisualClip, image: ProcessedImage, layerID: UUID, order: Int, maskOwnerID: UUID?)] = []
+        var prepared: [PreparedLayer] = []
         var nextSources: [UUID: SourceImage] = [:]
         var nextCache: [UUID: ProcessedImage] = [:]
         var cost = 0
@@ -190,7 +200,7 @@ final class MetalSceneRenderer {
             let key = ImageKey(source: frame, particleImages: layer.particleImages,
                                transform: transform(frame, clip: layer.clip, at: time, settings: settings, features: features),
                                chain: chain, localTime: chain.needsClock ? time - clip.start : 0)
-            let sourceID = clip.assetID ?? clip.id
+            let sourceID = clip.content == .still ? clip.assetID ?? clip.id : clip.id
             let source = try sourceTexture(frame, cached: nextSources[sourceID] ?? sourceCache[sourceID], commands: commands)
             nextSources[sourceID] = source
             for (id, frame) in layer.particleImages {
@@ -200,7 +210,7 @@ final class MetalSceneRenderer {
             let previous = imageCache[clip.id]
             let image = try (previous?.key == key ? previous : nil)
                 ?? process(key, source: source.texture, reusing: previous, commands: commands)
-            prepared.append((clip, image, layer.layerID, layer.order, layer.maskOwnerID))
+            prepared.append(PreparedLayer(clip: clip, image: image, layerID: layer.layerID, order: layer.order, maskOwnerID: layer.maskOwnerID))
             if cost + image.cost <= Self.cacheLimit {
                 nextCache[clip.id] = image
                 cost += image.cost
@@ -209,33 +219,8 @@ final class MetalSceneRenderer {
         particleTextureCache = particleTextureCache.filter { usedParticleTextures.contains($0.key) }
         let overlays = try foreground(features: features, settings: settings, lyrics: lyrics, time: time)
 
-        let clear = MTLClearColor(red: Self.linear(0.025), green: Self.linear(0.035), blue: Self.linear(0.065), alpha: 1)
-        var composition = try encoder(commands, target: scene, clear: clear)
-        var intermediates: [UUID: MTLTexture] = [:]
-        for item in prepared.sorted(by: { $0.order < $1.order }) {
-            let (clip, layer, layerID, _, maskOwnerID) = item
-            let maskOwner = prepared.first { $0.layerID == maskOwnerID && $0.clip.effects?.belowMask?.isEnabled == true }
-            var intermediate: MTLTexture?
-            if maskOwner != nil {
-                composition.endEncoding()
-                let texture = try filterTexture(bounds: canvas, reusing: maskTargets[layerID])
-                intermediate = texture
-                intermediates[layerID] = texture
-                composition = try encoder(commands, target: texture, clear: MTLClearColorMake(0, 0, 0, 0))
-            }
-            try drawClip(clip, image: layer, at: time, settings: settings, features: features, encoder: composition)
-            if let intermediate, let maskOwner {
-                composition.endEncoding()
-                composition = try encoder(commands, target: scene, clear: clear, load: true)
-                let ownerOpacity = ParameterEvaluator.value(.opacity, clip: maskOwner.clip, at: time, settings: settings, features: features) / 100
-                var mask = ShapeRenderer.mask(maskOwner.clip.effects?.belowMask, opacity: ownerOpacity)
-                composition.setRenderPipelineState(maskedClipPipeline)
-                composition.setFragmentTexture(intermediate, index: 0)
-                composition.setFragmentBytes(&mask, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
-                quad(composition)
-            }
-        }
-        if !video, let guide = prepared.first(where: { $0.clip.id == guideClipID }), let mask = (guide.clip.effects?.mask ?? guide.clip.effects?.belowMask), mask.isEnabled {
+        let composition = try compose(prepared, commands: commands, time: time, settings: settings, features: features)
+        if !video, let guide = prepared.first(where: { $0.clip.id == guideClipID }), let mask = (guide.clip.effects?.mask ?? (showsBelowMaskGuide ? guide.clip.effects?.belowMask : nil)), mask.isEnabled {
             var uniforms = ShapeRenderer.uniforms(mask.geometry)
             composition.setRenderPipelineState(guidePipeline)
             composition.setFragmentBytes(&uniforms, length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
@@ -262,18 +247,62 @@ final class MetalSceneRenderer {
         output.setFragmentBytes(&transfer, length: MemoryLayout<UInt32>.size, index: 0)
         quad(output)
         output.endEncoding()
-        commands.addCompletedHandler { [intermediates] _ in _ = visuals; _ = intermediates }
+        commands.addCompletedHandler { [compositionScratch] _ in _ = visuals; _ = compositionScratch }
         sourceCache = nextSources
-        maskTargets = intermediates
         imageCache = nextCache
         return commands
     }
 
+    private func compose(_ prepared: [PreparedLayer], commands: MTLCommandBuffer, time: Double,
+                         settings: SceneSettings, features: AudioFeatures?) throws -> MTLRenderCommandEncoder {
+        let clear = MTLClearColor(red: Self.linear(0.025), green: Self.linear(0.035), blue: Self.linear(0.065), alpha: 1)
+        var composition = try encoder(commands, target: scene, clear: clear)
+        let groups = Dictionary(grouping: prepared, by: \.layerID)
+        for group in groups.values.sorted(by: { $0[0].order < $1[0].order }) {
+            let ordered = group.sorted { $0.clip.start < $1.clip.start }
+            let owners = ordered[0].maskOwnerID.flatMap { groups[$0] }?.sorted { $0.clip.start < $1.clip.start } ?? []
+            let hasMask = owners.contains { $0.clip.effects?.belowMask?.isEnabled == true }
+            let transition = ordered.count == 2 ? LayerCrossfade(ordered[0].clip, ordered[1].clip) : nil
+            if transition != nil || hasMask {
+                composition.endEncoding()
+                let texture = try filterTexture(bounds: canvas, reusing: compositionScratch)
+                compositionScratch = texture
+                composition = try encoder(commands, target: texture, clear: MTLClearColorMake(0, 0, 0, 0))
+                for (index, item) in ordered.enumerated() {
+                    let incoming = transition?.incomingWeight(at: time) ?? 0
+                    let weight = transition == nil ? 1 : (index == 0 ? 1 - incoming : incoming)
+                    try drawClip(item.clip, image: item.image, at: time, settings: settings, features: features,
+                                 encoder: composition, weight: weight, weighted: transition != nil)
+                }
+                composition.endEncoding()
+                composition = try encoder(commands, target: scene, clear: clear, load: true)
+                var masks = owners.prefix(2).map { owner in
+                    ShapeRenderer.mask(owner.clip.effects?.belowMask,
+                                       opacity: ParameterEvaluator.value(.opacity, clip: owner.clip, at: time, settings: settings, features: features) / 100)
+                }
+                while masks.count < 2 { masks.append(ShapeRenderer.Uniforms()) }
+                var blend = Float(owners.count == 2 ? LayerCrossfade(owners[0].clip, owners[1].clip)?.incomingWeight(at: time) ?? 0 : 0)
+                composition.setRenderPipelineState(maskedClipPipeline)
+                composition.setFragmentTexture(texture, index: 0)
+                composition.setFragmentBytes(&masks[0], length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 0)
+                composition.setFragmentBytes(&masks[1], length: MemoryLayout<ShapeRenderer.Uniforms>.stride, index: 1)
+                composition.setFragmentBytes(&blend, length: MemoryLayout<Float>.size, index: 2)
+                quad(composition)
+            } else {
+                for item in ordered {
+                    try drawClip(item.clip, image: item.image, at: time, settings: settings, features: features, encoder: composition)
+                }
+            }
+        }
+        return composition
+    }
+
     private func drawClip(_ clip: VisualClip, image: ProcessedImage, at time: Double,
-                          settings: SceneSettings, features: AudioFeatures?, encoder: MTLRenderCommandEncoder) throws {
-        let opacity = Float(ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features) / 100)
+                          settings: SceneSettings, features: AudioFeatures?, encoder: MTLRenderCommandEncoder,
+                          weight: Double = 1, weighted: Bool = false) throws {
+        let opacity = Float(ParameterEvaluator.value(.opacity, clip: clip, at: time, settings: settings, features: features) / 100 * weight)
         var values = SIMD4(Float(scene.width) / Float(image.image.width), Float(scene.height) / Float(image.image.height), 0, opacity)
-        encoder.setRenderPipelineState(imagePipeline)
+        encoder.setRenderPipelineState(weighted ? crossfadePipeline : imagePipeline)
         encoder.setFragmentTexture(image.image, index: 0)
         encoder.setFragmentBytes(&values, length: MemoryLayout.size(ofValue: values), index: 0)
         quad(encoder)
@@ -449,7 +478,7 @@ final class MetalSceneRenderer {
         chainScratch.removeAll(); generatorScratch = nil; glowScratch = nil
         spineRenderer.discardCache()
         crossGlareRenderer.discardCache()
-        maskTargets.removeAll()
+        compositionScratch = nil
         particleTextureCache.removeAll()
         sourceCache.removeAll()
         imageCache.removeAll()

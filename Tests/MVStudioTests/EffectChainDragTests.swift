@@ -44,7 +44,6 @@ final class EffectChainDragTests: XCTestCase {
         let list = fixture.list
         let original = list.nodes
         list.selectedID = original.last?.id
-        list.detailsOpen = false
         try fixture.down()
         XCTAssertNil(list.dragPresentation)
         try fixture.move(10, 13)
@@ -59,7 +58,7 @@ final class EffectChainDragTests: XCTestCase {
         XCTAssertEqual(presentation.floatingRect.minY, 4)
         XCTAssertEqual(presentation.floatingRect.minX, 0)
         XCTAssertEqual(presentation.floatingRect.width, list.bounds.width)
-        XCTAssertEqual(list.selectedID, original.last?.id); XCTAssertFalse(list.detailsOpen)
+        XCTAssertEqual(list.selectedID, original.last?.id)
         XCTAssertEqual(list.nodes, original)
         try fixture.up(11, 14)
         XCTAssertNil(list.dragPresentation)

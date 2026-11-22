@@ -10,6 +10,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     var onEndTextEditing: (() -> Void)?
     var onChange: ((VisualTrack) -> Void)?
     var onPreview: ((VisualTrack) -> Void)?
+    var onBelowMaskGuideChange: ((Bool) -> Void)?
+    var showsBelowMaskGuide: Bool { effectsEditor.showsBelowMaskGuide }
     var onSeek: ((Double) -> Void)?
     var onBeginEdit: (() -> Void)?
     var currentTime = 0.0 { didSet { effectsEditor.time = currentTime; updateInspectionStatus() } }
@@ -47,7 +49,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private let spineWeight = DragValueField(frame: .zero)
     private let spineAnimation = NSPopUpButton()
     private let spineLoop = NSButton(checkboxWithTitle: "ループ", target: nil, action: nil)
-    private let layerID = NSPopUpButton()
     let lfoEditor = LFOEditor(frame: .zero)
     let musicEditor = AudioModulationEditor(frame: .zero)
     private let keySnap = NSButton(checkboxWithTitle: "制御点スナップ", target: nil, action: nil)
@@ -62,6 +63,16 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private var inspectionClipID: UUID?
     private var rememberedParameters: [UUID: ImageParameter] = [:]
     private var synchronizingInspection = false
+    let filterBar = NSStackView()
+    private var revealSourceSettings = false
+    private let filterControl = NSButton(checkboxWithTitle: "変更のみ", target: nil, action: nil)
+    private let filterPicker = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let filterNotice = NSTextField(wrappingLabelWithString: "")
+    private let showAll = NSButton(title: "すべて表示", target: nil, action: nil)
+    private var modifiedOnly = UserDefaults.standard.bool(forKey: InspectorFilter.defaultsKey)
+    private var revealedParameter: ImageParameter?
+    private var parameterGroups: [ImageParameter: NSView] = [:]
+    private var transformRows: [NSStackView] = []
     private var transformSection: InspectorSection!
     private var effectsSection: InspectorSection!
     private var automationSection: InspectorSection!
@@ -126,20 +137,26 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     }
     private var drafts: [ImageParameter: String] = [:]
     private var rangeParameter: ImageParameter?
-    private let message = NSTextField(labelWithString: "画像・動画・Spineを空白へドロップするか、ボタンで配置できます")
+    private let message = NSTextField(labelWithString: "画像・動画・Spineをドロップして配置。同じ段で重ねるとクロスフェードします")
     private var controls: [NSControl] = []
-    private weak var placementButton: NSButton?
+    private let placementMenu = NSPopUpButton(frame: .zero, pullsDown: true)
     private var clipControls: [NSControl] = []
     private var manager: VisualAssetManager?
     private var importTask: Task<Void, Never>?
 
     override func loadView() {
         let root = NSStackView(); root.orientation = .vertical; root.spacing = 12; view = root
-        let add = NSButton(title: "＋素材を配置…", target: self, action: #selector(addImage))
-        placementButton = add
-        let remove = NSButton(title: "配置を削除", target: self, action: #selector(removeClip))
-        let manage = NSButton(title: "素材管理…", target: self, action: #selector(openManager))
-        let replace = NSButton(title: "素材を変更…", target: self, action: #selector(changeImage))
+        placementMenu.identifier = NSUserInterfaceItemIdentifier("visual.source.menu")
+        placementMenu.toolTip = "素材と配置の操作"
+        placementMenu.setAccessibilityLabel("素材と配置の操作")
+        placementMenu.addItem(withTitle: "")
+        placementMenu.item(at: 0)?.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: "素材と配置の操作")
+        placementMenu.menu?.autoenablesItems = false
+        for (title, action) in [("＋素材を配置…", #selector(addImage)), ("配置を削除", #selector(removeClip)), ("素材を変更…", #selector(changeImage))] {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            placementMenu.menu?.addItem(item)
+        }
         start.delegate = self; end.delegate = self; sourceIn.delegate = self
         sourceIn.identifier = NSUserInterfaceItemIdentifier("visual.sourceIn")
         sourceIn.stringValue = "0"
@@ -185,7 +202,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         start.identifier = NSUserInterfaceItemIdentifier("visuals.start"); end.identifier = NSUserInterfaceItemIdentifier("visuals.end")
         for field in [start, end] { field.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true }
 
-        layerID.target = self; layerID.action = #selector(changePlacement)
         keySnap.state = .on
         keySnap.identifier = NSUserInterfaceItemIdentifier("visuals.keySnap")
         keySnap.target = self; keySnap.action = #selector(changeKeySnap)
@@ -200,7 +216,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             }
             field.widthAnchor.constraint(equalToConstant: 82).isActive = true
         }
-        let toolbar = row([add, remove, manage])
         inspectionHeader.orientation = .vertical
         inspectionHeader.alignment = .leading
         inspectionHeader.spacing = 4
@@ -214,18 +229,28 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         }
         name.identifier = NSUserInterfaceItemIdentifier("clip.header.name")
         clipKind.identifier = NSUserInterfaceItemIdentifier("clip.header.kind")
-        let selection = row([replace])
-        let timing = NSStackView(views: [
-            row([InspectorSection.label("開始"), start, InspectorSection.label("終了", width: 40), end]),
-            row([InspectorSection.label("レイヤー"), layerID])
-        ])
-        timing.orientation = .vertical
-        timing.alignment = .leading
-        timing.spacing = 4
+        filterControl.identifier = NSUserInterfaceItemIdentifier("clip.filter.mode")
+        filterControl.state = modifiedOnly ? .on : .off
+        filterControl.target = self; filterControl.action = #selector(changeFilter)
+        filterControl.toolTip = "初期値との差、キー・LFO・音楽同期の設定がある項目を表示します"
+        filterPicker.identifier = NSUserInterfaceItemIdentifier("clip.filter.pick")
+        filterNotice.identifier = NSUserInterfaceItemIdentifier("clip.filter.notice")
+        filterNotice.font = .systemFont(ofSize: 11)
+        filterNotice.textColor = .secondaryLabelColor
+        showAll.target = self; showAll.action = #selector(showAllParameters)
+        filterPicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        filterPicker.widthAnchor.constraint(lessThanOrEqualToConstant: 190).isActive = true
+        filterBar.spacing = InspectorSection.spacing
+        filterBar.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        for child in [NSTextField(labelWithString: "表示"), filterControl, filterPicker] { filterBar.addArrangedSubview(child) }
+        sourceIn.onSelect = { [weak self] in self?.revealSourceSettings = true }
+        playbackSpeed.onSelect = { [weak self] in self?.revealSourceSettings = true }
+        let timing = row([InspectorSection.label("開始"), start, InspectorSection.label("終了", width: 40), end])
         let effect = row([keySnap])
         let horizontal = row([parameterControls(.x), parameterControls(.y)])
         let vertical = row([parameterControls(.scale), parameterControls(.rotation)])
         let opacity = row([parameterControls(.opacity)])
+        transformRows = [horizontal, vertical, opacity]
         let graphs = graphSettings
         graphs.spacing = 6
         for child in [NSTextField(labelWithString: "表示範囲"), NSTextField(labelWithString: "最小"), minimum, NSTextField(labelWithString: "最大"), maximum] { graphs.addArrangedSubview(child) }
@@ -241,12 +266,13 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         targetStatus.font = .systemFont(ofSize: 11); targetStatus.textColor = .secondaryLabelColor
         targetSummary.font = .systemFont(ofSize: 11); targetSummary.textColor = .secondaryLabelColor
         automationSection = InspectorSection("選択項目の自動化", id: "visual.automation", rows: [targetPath, row([targetPicker]), targetSummary, targetStatus, lfoEditor, musicEditor, effect, graphs])
-        placementDetails = [selection, timing, sourceRow, speedRow, spineRow, spineBlendRow]
-        let sections: [NSView] = [
-            InspectorSection("素材と配置", id: "visual.source", rows: [toolbar] + placementDetails),
-            transformSection, effectsSection, automationSection, message
+        placementDetails = [timing, sourceRow, speedRow, spineRow, spineBlendRow]
+        let sections: [NSView] = [filterNotice, showAll,
+            InspectorSection("素材と配置", id: "visual.source", rows: placementDetails, headingAccessory: placementMenu),
+            transformSection, effectsSection, automationSection, message, effectsEditor.belowMaskSection
         ]
         for child in sections { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        effectsEditor.onBelowMaskGuideChange = { [weak self] in self?.onBelowMaskGuideChange?($0) }
         effectsEditor.onSelectNode = { [weak self] id in self?.selectInspectionNode(id) }
         effectsEditor.onSelectParameter = { [weak self] parameter in self?.selectInspectionParameter(parameter) }
         effectsEditor.onSelectEmitter = { [weak self] index in
@@ -281,8 +307,8 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             if let effects { self.applyEffects(effects, preview: true) }
             else { self.onPreview?(self.track) }
         }
-        clipControls += [remove, replace, start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, spineAutomation, spineMaximum, spineWeight, layerID, minimum, maximum]
-        controls = [add, manage, keySnap] + clipControls
+        clipControls += [start, end, sourceIn, playbackSpeed, spineAnimation, spineLoop, spineAutomation, spineMaximum, spineWeight, minimum, maximum]
+        controls = [placementMenu, keySnap] + clipControls
         refreshControls()
     }
     private func row(_ views: [NSView]) -> NSStackView { InspectorSection.row(views) }
@@ -337,12 +363,14 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     func restore(_ value: VisualTrack) {
         let selection = selectedID, layerID = selectedLayerID
         let inspection = (inspectionClipID, inspectionNodeID, inspectionParameter, rememberedParameters)
+        let filterSelection = revealedParameter
         let parameter = timeline?.selectedParameter
         let key = timeline?.selectedKeyID
         replaceTrack(value, projectURL: projectURL)
         selectedID = value.clip(selection)?.id; selectedLayerID = selectedID.flatMap { value.layerID(of: $0) } ?? (value.layer(layerID) != nil ? layerID : value.layers[0].id)
         inspectionClipID = inspection.0; inspectionNodeID = inspection.1
         inspectionParameter = inspection.2; rememberedParameters = inspection.3
+        revealedParameter = selectedID == selection ? filterSelection : nil
         refreshSelection(); manager?.reload()
         if let parameter, let curve = value.clip(selectedID)?.displayCurve(parameter) {
             timeline?.selectGraph(parameter, key: curve.keys.first { $0.id == key }?.id, reveal: true)
@@ -360,14 +388,15 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private func refreshControls() {
         onSelectionChange?(selectedID)
         controls.forEach { $0.isEnabled = available && !processing && manager == nil }
-        placementButton?.isEnabled = available && !processing && manager == nil && track.canEdit(selectedLayerID)
+        let canEditPlacement = available && !processing && manager == nil && track.canEdit(selectedLayerID)
+        for item in placementMenu.itemArray.dropFirst() {
+            item.isEnabled = canEditPlacement && (item.action == #selector(addImage) || track.clip(selectedID) != nil)
+        }
         clipControls.forEach { $0.isEnabled = available && !processing && manager == nil && track.clip(selectedID) != nil && track.canEdit(selectedLayerID) }
         timeline?.isEnabled = available && !processing && manager == nil
         syncParticleThumbnails()
         effectsEditor.load(track.clip(selectedID), editable: available && !processing && manager == nil && track.canEdit(selectedLayerID), track: track)
         refreshInspection()
-        sourceIn.isEnabled = sourceIn.isEnabled && !sourceRow.isHidden
-        playbackSpeed.isEnabled = playbackSpeed.isEnabled && !speedRow.isHidden
     }
     var onColorSession: ((UUID?) -> Void)? {
         didSet { effectsEditor.onColorSession = onColorSession }
@@ -421,12 +450,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     private func refreshSelection() {
         timingIsValid = true
         refreshing = true; defer { refreshing = false }
-        layerID.removeAllItems()
-        for (index, layer) in track.layers.reversed().enumerated() {
-            layerID.addItem(withTitle: "\(index + 1). \(layer.name)")
-            layerID.lastItem?.representedObject = layer.id
-            layerID.lastItem?.isEnabled = !layer.isLocked
-        }
         timeline?.selectedImageID = selectedID; timeline?.selectedLayerID = selectedLayerID
         if let clip = track.clip(selectedID) {
             name.stringValue = "\(track.layer(selectedLayerID)?.name ?? "レイヤー") / \(track.asset(clip.assetID)?.name ?? "演出用クリップ")"
@@ -446,7 +469,6 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
                     spineWeight.doubleValue = blend.baseWeight * 100
                 }
             }
-            layerID.selectItem(at: Array(track.layers.reversed()).firstIndex { $0.id == selectedLayerID } ?? 0)
         } else { name.stringValue = "画像・動画・Spine・演出用クリップを選択してください" }
         refreshAnimationValues()
         refreshControls()
@@ -473,7 +495,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         guard !processing else { return false }
         cancelValueDrag()
         if let editor = view.window?.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
-        changePlacement()
+        applyTimingEdit()
         guard timingIsValid else { return false }
         guard view.window?.makeFirstResponder(nil) != false else { return false }
         drafts.removeAll()
@@ -501,7 +523,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             drafts[parameter] = field.stringValue
         } else if field === start || field === end || field === sourceIn || field === playbackSpeed {
             if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
-            changePlacement()
+            applyTimingEdit()
         }
     }
 
@@ -514,7 +536,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
     }
 
     private func finishTimingEdit() {
-        changePlacement()
+        applyTimingEdit()
         refreshSelection()
         onEndTextEditing?()
     }
@@ -566,7 +588,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         finishTimingEdit()
     }
 
-    @objc private func changePlacement() {
+    private func applyTimingEdit() {
         guard available, !refreshing, !processing, var clip = track.clip(selectedID) else { return }
         guard track.canEdit(selectedLayerID) else { timingIsValid = true; return }
         guard let begin = Double(start.stringValue), let finish = Double(end.stringValue),
@@ -592,7 +614,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
             } else { clip.content.setSourceIn(value) }
         }
         do {
-            let value = try track.updating(clip, layerID: (layerID.selectedItem?.representedObject as? UUID) ?? selectedLayerID, duration: duration)
+            let value = try track.updating(clip, layerID: selectedLayerID, duration: duration)
             timingIsValid = true
             end.stringValue = String(clip.end)
             commit(value, selectedID: clip.id, refreshEditor: false)
@@ -819,7 +841,7 @@ final class VisualEditor: NSViewController, NSTextFieldDelegate {
         }
     }
     @objc func openManager() {
-        guard available, !processing, manager == nil, finishEditing(), let window = view.window else { return }
+        guard available, !processing, manager == nil, finishEditing(), let window = timeline?.window ?? view.window else { return }
         timeline?.cancelDrag(); onBeginEdit?()
         let controller = VisualAssetManager(editor: self)
         manager = controller; refreshControls()
@@ -863,6 +885,7 @@ private extension VisualEditor {
         clipControls.append(field)
         let group = row([label, field, unit])
         group.spacing = 5
+        parameterGroups[parameter] = group
         return group
     }
     private func editMusic(_ parameter: ImageParameter) {
@@ -1189,6 +1212,8 @@ private extension VisualEditor {
             inspectionNodeID = nil
             inspectionParameter = .scale
             rememberedParameters.removeAll()
+            revealedParameter = nil
+            revealSourceSettings = false
         }
         let parameters = clip.map(inspectionParameters) ?? []
         let nodes = clip?.effects?.allNodes ?? []
@@ -1199,6 +1224,7 @@ private extension VisualEditor {
             inspectionNodeID = nil; inspectionParameter = .scale
         }
         if let parameter = inspectionParameter, !parameters.contains(parameter) { inspectionParameter = nil }
+        if let parameter = revealedParameter, !parameters.contains(parameter) { revealedParameter = nil }
         for row in placementDetails { row.isHidden = clip == nil }
         sourceRow.isHidden = clip?.content.sourceIn == nil
         speedRow.isHidden = clip?.content.isVideo != true
@@ -1207,6 +1233,7 @@ private extension VisualEditor {
         else { spineBlendRow.isHidden = true }
         transformSection.isHidden = clip == nil
         effectsSection.isHidden = clip == nil
+        effectsEditor.belowMaskSection.isHidden = clip == nil
         automationSection.isHidden = clip == nil
         targetPicker.isEnabled = clip != nil
         rebuildInspectionMenu(clip, parameters: parameters)
@@ -1231,6 +1258,7 @@ private extension VisualEditor {
         refreshGraphControls()
         updateInspectionStatus()
         synchronizeInspectionGraph()
+        refreshFilter()
     }
 
     func rebuildInspectionMenu(_ clip: VisualClip?, parameters: [ImageParameter]) {
@@ -1259,10 +1287,15 @@ private extension VisualEditor {
         guard let raw = item.representedObject as? String, let parameter = ImageParameter(rawValue: raw),
               view.window?.makeFirstResponder(nil) != false else { return }
         selectInspectionParameter(parameter)
+        if let group = parameterGroups[parameter] {
+            view.window?.contentView?.layoutSubtreeIfNeeded()
+            group.scrollToVisible(group.bounds)
+        }
     }
 
     func selectInspectionNode(_ id: UUID) {
         guard let clip = track.clip(selectedID), clip.effects?.allNodes.contains(where: { $0.id == id }) == true else { return }
+        revealedParameter = nil
         inspectionNodeID = id
         inspectionParameter = rememberedParameters[id]
         synchronizeInspectionGraph()
@@ -1323,15 +1356,104 @@ extension VisualEditor {
         guard !synchronizingInspection, let clip = track.clip(selectedID), inspectionParameters(in: clip).contains(parameter) else { return }
         let node = clip.effects?.node(for: parameter)
         let changed = inspectionParameter != parameter || inspectionNodeID != node?.id
+        revealedParameter = parameter
+        revealSourceSettings = false
         inspectionParameter = parameter
         inspectionNodeID = node?.id
         if let node { rememberedParameters[node.id] = parameter }
         if let node, changed { effectsEditor.selectNode(node.id, parameter: parameter) }
         if !fromTimeline { synchronizeInspectionGraph() }
         if changed { refreshInspection() }
-        else { refreshGraphControls() }
+        else { refreshGraphControls(); refreshFilter() }
         if fromTimeline, !automationSection.visibleRect.contains(automationSection.bounds) {
             automationSection.scrollToVisible(automationSection.bounds)
         }
+    }
+}
+
+private extension VisualEditor {
+    @objc func changeFilter() {
+        guard finishEditing() else { filterControl.state = modifiedOnly ? .on : .off; return }
+        modifiedOnly = filterControl.state == .on
+        UserDefaults.standard.set(modifiedOnly, forKey: InspectorFilter.defaultsKey)
+        revealedParameter = nil
+        revealSourceSettings = false
+        effectsEditor.clearFilterReveal()
+        refreshInspection()
+    }
+
+    @objc func showAllParameters() {
+        filterControl.state = .off
+        changeFilter()
+    }
+
+    @objc func revealSource() {
+        guard finishEditing() else { return }
+        revealSourceSettings = true
+        refreshInspection()
+        sourceRow.scrollToVisible(sourceRow.bounds)
+    }
+
+    @objc func revealEffect(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? UUID, finishEditing() else { return }
+        selectInspectionNode(id)
+        effectsEditor.revealFilterNode(id)
+        let section = track.clip(selectedID)?.effects?.allNodes.first(where: { $0.id == id })?.kind == .belowMask
+            ? effectsEditor.belowMaskSection : effectsSection!
+        section.scrollToVisible(section.bounds)
+    }
+
+    func refreshPlaybackFilter(_ clip: VisualClip?) -> Bool {
+        guard let clip else { return false }
+        let sourceChanged = InspectorFilter.differs(clip.content.sourceIn ?? 0, from: 0)
+        let speedChanged = InspectorFilter.differs(clip.content.speed, from: 1)
+        let editing = revealSourceSettings || sourceIn.isNumberInteractionActive || playbackSpeed.isNumberInteractionActive
+        sourceRow.isHidden = clip.content.sourceIn == nil || (modifiedOnly && !editing && !sourceChanged)
+        speedRow.isHidden = !clip.content.isVideo || (modifiedOnly && !editing && !speedChanged)
+        var spineChanged = false
+        if let playback = clip.content.spinePlayback {
+            let initialName = track.asset(clip.assetID)?.kind.spineDescriptor?.animations.first?.name
+            let animationChanged = playback.hasLane || playback.animationName != initialName
+            spineChanged = animationChanged || !playback.loop
+            spineRow.isHidden = modifiedOnly && !editing && !spineChanged
+            spineAnimation.isHidden = modifiedOnly && !editing && !animationChanged
+            spineLabel.isHidden = spineAnimation.isHidden
+            spineLoop.isHidden = modifiedOnly && !editing && playback.loop
+        }
+        return sourceChanged || speedChanged || spineChanged
+    }
+
+    func refreshFilter() {
+        guard valueDrag == nil, !valueFields.values.contains(where: { $0.isNumberInteractionActive }) else { return }
+        let clip = track.clip(selectedID)
+        filterPicker.menu = targetPicker.menu?.copy() as? NSMenu
+        filterPicker.menu?.items.first?.title = "項目を選んで編集…"
+        if let clip, let menu = filterPicker.menu {
+            menu.addItem(.separator())
+            if clip.content.sourceIn != nil {
+                let item = menu.addItem(withTitle: "素材・再生設定を編集…", action: #selector(revealSource), keyEquivalent: "")
+                item.target = self
+            }
+            for node in clip.effects?.allNodes ?? [] {
+                let item = menu.addItem(withTitle: node.kind.title + "の全項目を編集…", action: #selector(revealEffect(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = node.id
+            }
+        }
+        filterPicker.isEnabled = clip != nil
+        let changed = clip.map { clip in inspectionParameters(in: clip).filter { InspectorFilter.isModified($0, in: clip) } } ?? []
+        let visible = Set(changed + [revealedParameter].compactMap { $0 })
+        for (parameter, group) in parameterGroups {
+            group.isHidden = modifiedOnly && !visible.contains(parameter)
+        }
+        for row in transformRows { row.isHidden = row.arrangedSubviews.allSatisfy(\.isHidden) }
+        transformSection.isHidden = clip == nil || (modifiedOnly && transformRows.allSatisfy(\.isHidden))
+        let changedPlayback = refreshPlaybackFilter(clip)
+        let hasChanges = !changed.isEmpty || effectsEditor.hasModifiedProperties || changedPlayback
+        let editing = modifiedOnly && revealedParameter.map { !changed.contains($0) } == true
+        filterNotice.stringValue = editing ? "編集中：" + (revealedParameter.map { $0.title } ?? "") : "変更したパラメータはありません"
+        filterNotice.isHidden = !modifiedOnly || clip == nil || (!editing && hasChanges)
+        showAll.isHidden = !modifiedOnly || clip == nil || hasChanges
+        automationSection.isHidden = clip == nil || (modifiedOnly && !(inspectionParameter.map { visible.contains($0) } ?? false))
+        effectsEditor.setFilter(modifiedOnly: modifiedOnly, parameter: revealedParameter)
     }
 }

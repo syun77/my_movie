@@ -22,6 +22,8 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private let width = NSSlider(value: 3, minValue: 0, maxValue: 12, target: nil, action: nil)
     private let widthLabel = NSTextField(labelWithString: "3.0 px")
     private let color = NSColorWell()
+    private let glowColor = NSColorWell()
+    private let glowWidth = DragValueField(frame: .zero)
     private let font = NSPopUpButton()
     private lazy var presets = PresetMenu<LyricsStyle>(
         finishEditing: { [weak self] in self?.finishEditing() ?? false },
@@ -54,6 +56,15 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         let toolbar = NSStackView(views: [title, add, remove, presets.button]); toolbar.spacing = 10
         let style = NSStackView(views: [InspectorSection.label("色"), color, NSTextField(labelWithString: "太さ"), width, widthLabel])
         style.spacing = 10
+        glowColor.identifier = NSUserInterfaceItemIdentifier("lyrics.glowColor")
+        glowColor.setAccessibilityLabel("光彩の色")
+        glowColor.color = .white
+        glowColor.target = self
+        glowColor.action = #selector(changeGlowColor)
+        glowColor.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        let glowColorRow = typographyRow([InspectorSection.label("色"), glowColor])
+        configureGlowWidth()
+        let glow = typographyRow([InspectorSection.label("幅"), glowWidth, NSTextField(labelWithString: "px")])
         configureFontMenu()
         let fontRow = typographyRow([InspectorSection.label("フォント"), font])
         let positionX = typographyField(.x, title: "描画位置 X")
@@ -100,6 +111,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         list.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
         detail.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
         message.font = .systemFont(ofSize: 11); message.textColor = .secondaryLabelColor; message.lineBreakMode = .byTruncatingTail
+        timeline.onCreateLyricClip = { [weak self] time in self?.addLyric(at: time) }
         timeline.onBeginEdit = { [weak self] in _ = self?.onCapturePlaybackTime?() }
         timeline.onSeek = { [weak self] time in self?.onSeek?(time) }
         timeline.onSelect = { [weak self] id in self?.selectFromTimeline(id) }
@@ -110,9 +122,10 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
             InspectorSection("本文・区間", id: "lyrics.content", rows: [toolbar, content]),
             InspectorSection("書式（全歌詞共通）", id: "lyrics.typography", rows: [fontRow, size]),
             InspectorSection("配置（全歌詞共通・1080p基準px）", id: "lyrics.position", rows: [placement]),
-            InspectorSection("縁取り（全歌詞共通）", id: "lyrics.outline", rows: [style]), message
+            InspectorSection("縁取り（全歌詞共通）", id: "lyrics.outline", rows: [style]),
+            InspectorSection("光彩（全歌詞共通・1080p基準px）", id: "lyrics.glow", rows: [glowColorRow, glow]), message
         ] { root.addArrangedSubview(child); child.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
-        editControls = [add, remove, start, end, color, width, chain, font, presets.button] + Array(typographyFields.values)
+        editControls = [add, remove, start, end, color, width, glowColor, glowWidth, chain, font, presets.button] + Array(typographyFields.values)
         updateTypographyControls()
         setAvailable(false)
     }
@@ -192,10 +205,14 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     }
     func cancelTimelineEdit() { timeline.cancelDrag() }
     @objc private func addClip() {
+        addLyric(at: nil)
+    }
+
+    private func addLyric(at requestedTime: Double?) {
         guard available else { return }
         do {
-            let time = onCapturePlaybackTime?() ?? currentTime
-            let result = try track.adding(at: time, duration: duration, grid: snapGrid)
+            let playbackTime = onCapturePlaybackTime?() ?? currentTime
+            let result = try track.adding(at: requestedTime ?? playbackTime, duration: duration, grid: snapGrid)
             commit(result.track, selectedID: result.clip.id)
             onSeek?(result.clip.start)
         } catch { message.stringValue = error.localizedDescription }
@@ -245,6 +262,9 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
                 ?? track.typography[keyPath: parameter.keyPath]
             commitTypography(track.typography.updating(parameter, to: value))
             onEndTextEditing?()
+        } else if field === glowWidth {
+            commitGlowWidth(Double(field.stringValue) ?? track.glowWidth)
+            onEndTextEditing?()
         } else {
             finishTimingEdit()
         }
@@ -274,6 +294,8 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
         } catch { timingIsValid = false; message.stringValue = error.localizedDescription }
     }
     private func updateStyleControls() {
+        glowColor.color = track.glowColor.nsColor
+        glowWidth.doubleValue = track.glowWidth
         width.doubleValue = track.outlineWidth
         color.color = track.outlineColor.nsColor
         updateWidthLabel()
@@ -283,6 +305,7 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     private func applyPreset(_ style: LyricsStyle) {
         guard style != track.style else { return }
         color.deactivate()
+        glowColor.deactivate()
         track.style = style
         updateStyleControls()
         timeline.track = track
@@ -290,6 +313,42 @@ final class LyricsEditor: NSViewController, NSTableViewDataSource, NSTableViewDe
     }
 
     private func updateWidthLabel() { widthLabel.stringValue = String(format: "%.1f px", track.outlineWidth) }
+
+    @objc private func changeGlowColor() {
+        guard available else { return }
+        let value = RGBColor(glowColor.color)
+        guard value != track.glowColor else { return }
+        track.glowColor = value
+        timeline.track = track
+        onChange?(track)
+    }
+
+    private func configureGlowWidth() {
+        glowWidth.identifier = NSUserInterfaceItemIdentifier("lyrics.glowWidth")
+        glowWidth.setAccessibilityLabel("光彩の幅")
+        glowWidth.delegate = self
+        glowWidth.alignment = .right
+        glowWidth.widthAnchor.constraint(equalToConstant: InspectorSection.numberWidth).isActive = true
+        glowWidth.knobRange = 0...50
+        glowWidth.toolTip = "光彩のぼかし幅。0で無効。\(DragValueField.numberEditingHint)"
+        glowWidth.bindNumber(current: { [weak self] in self?.track.glowWidth }, initial: { 0 },
+            normalize: { min(50, max(0, $0)).rounded() }, preview: { [weak self] value in
+                guard let self else { return }
+                var draft = self.track
+                if let value { draft.glowWidth = value }
+                self.onPreview?(draft)
+            }, commit: { [weak self] value in self?.commitGlowWidth(value) })
+    }
+
+    private func commitGlowWidth(_ value: Double) {
+        guard available else { return }
+        let normalized = value.isFinite ? min(50, max(0, value)).rounded() : track.glowWidth
+        glowWidth.doubleValue = normalized
+        guard normalized != track.glowWidth else { return }
+        track.glowWidth = normalized
+        timeline.track = track
+        onChange?(track)
+    }
 
     private func typographyRow(_ views: [NSView]) -> NSStackView {
         InspectorSection.row(views)

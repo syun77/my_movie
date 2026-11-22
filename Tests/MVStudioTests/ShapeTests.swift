@@ -73,7 +73,6 @@ final class ShapeTests: XCTestCase {
             let item = try XCTUnwrap(add.menu?.effectItem(titled: title))
             XCTAssertTrue(NSApplication.shared.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
         }
-        click(try button("▸ 追加演出"))
         try addEffect("図形")
         XCTAssertNotNil(clip.effects?.shape)
         let notice = try button("単色背景が有効")

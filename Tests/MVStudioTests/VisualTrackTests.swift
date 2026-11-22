@@ -17,7 +17,7 @@ final class VisualTrackTests: XCTestCase {
         XCTAssertTrue(initial.audioModulations.isEmpty)
         XCTAssertTrue(initial.curves.isEmpty)
         XCTAssertNil(initial.effects)
-        XCTAssertThrowsError(try visuals.adding(assetID: id, at: 2, layerID: visuals.layers[0].id, duration: 10, grid: TimelineSnapGrid()))
+        XCTAssertEqual(try visuals.adding(assetID: id, at: 2, layerID: visuals.layers[0].id, duration: 10, grid: TimelineSnapGrid()).track.active(at: 2.5).count, 2)
         let overlap = try visuals.adding(assetID: id, at: 2, layerID: visuals.layers[1].id, duration: 10, grid: TimelineSnapGrid())
         XCTAssertEqual(overlap.track.active(at: 2.5).count, 2)
         XCTAssertEqual(overlap.track.active(at: 3).count, 1)
@@ -32,9 +32,9 @@ final class VisualTrackTests: XCTestCase {
         let (visuals, id) = try sample()
         let more = try visuals.adding(assetID: id, at: 5, layerID: visuals.layers[0].id, duration: 10, grid: TimelineSnapGrid()).track
         let clip = more.layers[0].clips[0]
-        let moved = try more.dragging(id: clip.id, part: .move, delta: 100, duration: 10, grid: TimelineSnapGrid())
-        XCTAssertEqual(moved.layers[0].clips[0].start, 3)
-        XCTAssertEqual(moved.layers[0].clips[0].end, 5)
+        let moved = try more.dragging(id: clip.id, part: .move, delta: 3, duration: 10, grid: TimelineSnapGrid())
+        XCTAssertEqual(moved.layers[0].clips[0].start, 4)
+        XCTAssertEqual(moved.layers[0].clips[0].end, 6)
         XCTAssertEqual(moved.layers[0].clips[1], more.layers[0].clips[1])
         let trimmed = try more.dragging(id: clip.id, part: .start, delta: 1, duration: 10, grid: TimelineSnapGrid())
         XCTAssertEqual(trimmed.layers[0].clips[0].start, 2); XCTAssertEqual(trimmed.layers[0].clips[0].end, 3)
